@@ -32,19 +32,21 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _ENGINE = _REPO_ROOT / "alpha_bot_execution.py"
 
+# math_engine.py, regime_classifier.py and autotuner.py follow the hygiene-waves-3-4 edits.
 _PINNED_HASHES = {
-    "math_engine.py": "772886ead636e67e2c801339268608b39180d846a749fee924debd27c915de5e",
-    "regime_classifier.py": "b4ef08c7335e28d832ccc31060def85960eb5df8d4cca42bd5c30523c8c090e2",
-    "autotuner.py": "6ecdd9a0c94c000f0fafb6e3ba45557aae27f0f8f3563e1322405c4535226137",
+    "math_engine.py": "343d303c29ee9aa4c9f390791603a12f3130eec456fe589b3959732cd4477f79",
+    "regime_classifier.py": "04f8e1aa174c1802b8a4981522ce57d0fe9b801f7782323c298b719e3d9c1d52",
+    "autotuner.py": "9f2fe9455fe13521061308fbe932e5b1b62551f0d2e8e5a12ced01fe47ed9a4f",
     "synthetic_history.py": "7a7df0162e0895649e42e8915c98653f6336118ca5a3379ca09d6d4561bb2883",
     "migrations/027_regime_label_cache.sql": (
         "46b63e476670db9eb57afcccb6a15e8e78b8a9ddc08d7ca50680d6c2a26fe8d2"
     ),
 }
 
-# alpha_bot_execution.py at ff161d72 with the _regime_exit_ticks assignment cut.
+# alpha_bot_execution.py with the _regime_exit_ticks assignment cut; follows the
+# hygiene-waves-3-4 engine edits outside that statement.
 _PINNED_ENGINE_WITHOUT_REGIME_READ = (
-    "6f8762294a2f45408026da8361f77dcfed38d95773672c85df3e82e19c4e89fa"
+    "3d865b08ac6e2f977e48fc4078db59e3910e9be21158b2431a9e4e273295ad21"
 )
 
 

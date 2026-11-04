@@ -146,3 +146,29 @@ class TestSixNeverWiredColumnsDocumented:
             "— only that they are never populated by the CURRENT save_autotune_run "
             "path (a legacy accessor may have written a non-NULL value historically)"
         )
+
+
+class TestNoteNamesNoDeletedWriter:
+    """The note about the two columns an old writer filled must not describe that writer
+    as a function that exists: the writer is deleted, so a comment that points at it
+    sends a reader looking for code that is gone."""
+
+    def test_database_source_never_names_the_deleted_writer(self):
+        src = _DATABASE_PY.read_text(encoding="utf-8")
+        assert "record_autotune_run" not in src, (
+            "database.py must not name record_autotune_run: the function is deleted, so the "
+            "BL-10 note for account_id and sortino_sentinel_pct has to say they are never "
+            "populated by the current save_autotune_run path without pointing at it."
+        )
+
+    def test_the_two_formerly_orphan_written_columns_keep_a_signal_word(self):
+        src = _DATABASE_PY.read_text(encoding="utf-8")
+        lowered = _combined_search_region(src).lower()
+        for col in ("account_id", "sortino_sentinel_pct"):
+            positions = [m for m in range(len(lowered)) if lowered.startswith(col, m)]
+            assert positions, f"{col} is no longer mentioned near save_autotune_run"
+            assert any(
+                w in lowered[max(0, pos - 300) : pos + 300]
+                for pos in positions
+                for w in _NON_IMPLEMENTATION_SIGNAL_WORDS
+            ), f"{col} lost its non-implementation signal word"

@@ -15,19 +15,15 @@ import numpy as np
 _SORTINO_SENTINEL = 1e6
 
 
-def filter_sortino_sentinels(sortino_values: list[float]) -> list[float]:
-    """Remove sentinel values from a Sortino trial series before the selection haircut.
+def _zscore(values, mean, std):
+    """Standardize values by (mean, std); all zeros when std is exactly 0.0.
 
-    Returns a new list with all _SORTINO_SENTINEL (1e6) entries removed. The input
-    list is not mutated. Legitimate trial values — including negative Sortinos and 0.0
-    (empty-returns series) — are preserved unchanged.
-
-    Call this on the trial Sortino values BEFORE the Harvey & Liu selection haircut.
-    A sentinel's ~1e6 magnitude would produce a t-statistic so large its p-value
-    underflows to the clamp floor, letting a degenerate (zero-downside) trial win the
-    haircut over a genuinely-skilled one.
+    Shared by the three analog-matching distance computations (Monte Carlo, CVaR,
+    regime match quality) so the zero-spread branch is defined once.
     """
-    return [v for v in sortino_values if v != _SORTINO_SENTINEL]
+    if std == 0.0:
+        return np.zeros_like(values, dtype=float)
+    return (values - mean) / std
 
 
 def _reject_non_finite(**kwargs):
@@ -1353,13 +1349,8 @@ def run_monte_carlo(
     ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
     vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
 
-    def _z(values, mean, std):
-        if std == 0.0:
-            return np.zeros_like(values, dtype=float)
-        return (values - mean) / std
-
-    cand_returns_z = _z(cand_returns, ret_mean, ret_std)
-    cand_vols_z = _z(cand_vols, vol_mean, vol_std)
+    cand_returns_z = _zscore(cand_returns, ret_mean, ret_std)
+    cand_vols_z = _zscore(cand_vols, vol_mean, vol_std)
     today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
     today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
 
@@ -1789,13 +1780,8 @@ def compute_portfolio_cvar(
     ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
     vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
 
-    def _z(values, mean, std):
-        if std == 0.0:
-            return np.zeros_like(values, dtype=float)
-        return (values - mean) / std
-
-    cand_returns_z = _z(cand_returns, ret_mean, ret_std)
-    cand_vols_z = _z(cand_vols, vol_mean, vol_std)
+    cand_returns_z = _zscore(cand_returns, ret_mean, ret_std)
+    cand_vols_z = _zscore(cand_vols, vol_mean, vol_std)
     today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
     today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
 
@@ -2008,13 +1994,8 @@ def compute_regime_match_quality(
     ret_mean, ret_std = float(np.mean(cand_returns)), float(np.std(cand_returns))
     vol_mean, vol_std = float(np.mean(cand_vols)), float(np.std(cand_vols))
 
-    def _z(values, mean, std):
-        if std == 0.0:
-            return np.zeros_like(values, dtype=float)
-        return (values - mean) / std
-
-    cand_returns_z = _z(cand_returns, ret_mean, ret_std)
-    cand_vols_z = _z(cand_vols, vol_mean, vol_std)
+    cand_returns_z = _zscore(cand_returns, ret_mean, ret_std)
+    cand_vols_z = _zscore(cand_vols, vol_mean, vol_std)
     today_ret_z = 0.0 if ret_std == 0.0 else (spy_today_ret_dec - ret_mean) / ret_std
     today_vol_z = 0.0 if vol_std == 0.0 else (today_vol - vol_mean) / vol_std
 

@@ -1,0 +1,1262 @@
+{
+  "dip_sequence__None": [
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 1,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 1,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 2,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 2,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 3,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 1,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 4,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 2,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 5,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 3,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 6,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 3,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 7,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 3,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 8,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 3,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 9,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    }
+  ],
+  "dip_sequence__high-vol": [
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 1,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 1,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 2,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 2,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 3,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 1,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 4,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 2,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 5,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 3,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 6,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 3,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 7,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 3,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 8,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 3,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 9,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    }
+  ],
+  "dip_sequence__mean-reverting": [
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 1,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 1,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 2,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 2,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 3,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 1,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 4,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 2,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 5,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 3,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 6,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 4,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 7,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 5,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 8,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 5,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 9,
+        "mc_history": [],
+        "para_armed": true,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    }
+  ],
+  "dip_sequence__trending": [
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 1,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 1,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 2,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 2,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 2,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 3,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 2,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 4,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 2,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 5,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 2,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 6,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 2,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 7,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 2,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 8,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 0,
+        "armed": false,
+        "below_stop_count": 2,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 9,
+        "mc_history": [],
+        "para_armed": false,
+        "prev_return": 47.0,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Trailing Stop",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    }
+  ],
+  "take_profit_sequence__None": [
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 1,
+        "hwm_hold_ticks": 1,
+        "mc_history": [
+          1.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": true,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 2,
+        "hwm_hold_ticks": 2,
+        "mc_history": [
+          1.0,
+          1.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": true,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 1,
+        "armed": true,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 3,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": true,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 4,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 5,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 6,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 7,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 8,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    }
+  ],
+  "take_profit_sequence__mean-reverting": [
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 1,
+        "hwm_hold_ticks": 1,
+        "mc_history": [
+          1.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": true,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 0,
+        "armed": true,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 2,
+        "hwm_hold_ticks": 2,
+        "mc_history": [
+          1.0,
+          1.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": true,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 0,
+      "sells": [],
+      "state": {
+        "above_tp_count": 1,
+        "armed": true,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 3,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": true,
+        "triggered": false,
+        "triggered_reason": null,
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": false,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 4,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 5,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 6,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 7,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    },
+    {
+      "alerts": 1,
+      "sells": [
+        [
+          "actual-sym-pipeline-test-001",
+          "acct-pipeline-test-001"
+        ]
+      ],
+      "state": {
+        "above_tp_count": 2,
+        "armed": false,
+        "below_stop_count": 0,
+        "breakeven_locked": true,
+        "disarm_confirm_count": 0,
+        "hwm_hold_ticks": 8,
+        "mc_history": [
+          1.0,
+          1.0,
+          7.0,
+          7.0
+        ],
+        "para_armed": true,
+        "prev_return": 49.9,
+        "tp_armed": false,
+        "triggered": true,
+        "triggered_reason": "Take-Profit",
+        "vwap_bleed_ticks": 0,
+        "vwap_ticks": 0
+      }
+    }
+  ]
+}

@@ -24,6 +24,7 @@ import autotuner
 
 # Import our SQLite DB Manager
 import database
+import env_flags
 import market_calendar
 import math_engine
 import reporting
@@ -72,7 +73,7 @@ ALPACA_SECRET = os.getenv("ALPACA_SECRET")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 # --- EXECUTION MODE ---
-LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
+LIVE_EXECUTION = env_flags.is_true(os.getenv("LIVE_EXECUTION", "False"))
 EXECUTION_START_TIME = os.getenv("EXECUTION_START_TIME", "09:30")
 # Suppress VWAP-Breakdown and VWAP-Bleed-Cut for this many minutes after EXECUTION_START_TIME
 # to avoid open-volatility false exits (V2, AC-V2.1). TP and Trailing Stop are unaffected.
@@ -1545,7 +1546,7 @@ def main():
                 if bot_state[symphony_id]["armed"] and not bot_state[symphony_id]["triggered"]:
                     if new_below_stop_count > _prev_below_stop_count and new_below_stop_count == 1:
                         print(
-                            f"  ⚠️ {symphony_name[:35]} dipped below stop. Awaiting 3-tick confirmation..."  # noqa: E501  # un-wrappable long line
+                            f"  ⚠️ {symphony_name[:35]} dipped below stop. Awaiting {_regime_exit_ticks}-tick confirmation..."  # noqa: E501  # un-wrappable long line
                         )
                     elif new_below_stop_count == 0 and _prev_below_stop_count > 0:
                         print(

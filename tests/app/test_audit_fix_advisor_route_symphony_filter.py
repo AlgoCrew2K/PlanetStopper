@@ -124,10 +124,10 @@ def test_advisor_observations_route_uses_single_query_symphony_filter(flask_clie
         called_new_accessor["with_arg"] = symphony_id
         return list(expected_rows)
 
-    legacy_called = {"count": 0}
+    fan_out_called = {"count": 0}
 
-    def fake_legacy(subject_type, subject_id):
-        legacy_called["count"] += 1
+    def fake_role_reader(role, limit=50):
+        fan_out_called["count"] += 1
         return []
 
     # Patch whichever names exist.  Both names are accepted; at least one
@@ -143,7 +143,7 @@ def test_advisor_observations_route_uses_single_query_symphony_filter(flask_clie
         "single-query accessor must be added for S3-AUDIT-004."
     )
 
-    with patch.object(db_module, "get_advisor_observations_for_subject", side_effect=fake_legacy):
+    with patch.object(db_module, "get_advisor_observations_for_role", side_effect=fake_role_reader):
         # Apply all candidate patches.
         for p in patches:
             p.start()
@@ -161,9 +161,9 @@ def test_advisor_observations_route_uses_single_query_symphony_filter(flask_clie
         "S3-AUDIT-004 + S3-AUDIT-010: the route must use a one-shot SELECT "
         "via the symphony_id column added by migration 025."
     )
-    assert legacy_called["count"] == 0, (
-        f"Legacy get_advisor_observations_for_subject was called "
-        f"{legacy_called['count']}x during a symphony-filter request.  "
+    assert fan_out_called["count"] == 0, (
+        f"The per-role reader was called "
+        f"{fan_out_called['count']}x during a symphony-filter request.  "
         "S3-AUDIT-010: a single-query path replaces the 3x fan-out."
     )
     assert called_new_accessor["with_arg"] == "DefensiveAlpha", (

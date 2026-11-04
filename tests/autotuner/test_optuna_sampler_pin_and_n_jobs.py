@@ -26,13 +26,26 @@ without restoring the pin will still fail.
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib
+import io
 import json
 import pathlib
 import sys
 
 import optuna
 import pytest
+
+from tests.autotuner.test_autotune_runs_persistence import (  # noqa: F401  (isolated_db is autouse)
+    _ai_best_params,
+    _autotuner_patches,
+    _build_bot_state,
+    _fallback_params,
+    _make_phase1_spec_bundle,
+    isolated_db,
+)
+
+_UNSET_ENV = object()  # the variable is absent from the environment
 
 # ---------------------------------------------------------------------------
 # Fixture loading
@@ -228,35 +241,96 @@ def test_run_autotuner_sampler_is_tpe_with_seed_kwarg(autotuner_ast):
     assert not bad, "OPTUNA-1 sampler pin violations:\n  - " + "\n  - ".join(bad)
 
 
+def _module_constant_names_with_value(tree: ast.Module, value: str) -> set[str]:
+    """Module-level ``NAME = "<value>"`` assignments."""
+    names: set[str] = set()
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and node.value.value == value
+        ):
+            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return names
+
+
 def test_run_autotuner_sampler_seed_sourced_from_env_constant(
     autotuner_source: str, pin_contract: dict
 ):
     """The sampler seed must be sourced from os.environ keyed by the
-    OPTUNA-1 named env-var constant. Plain integer literals (e.g. seed=42)
-    or seed=None would defeat the audit fix."""
+    OPTUNA-1 named env-var constant: either the literal name inside
+    run_autotuner, or a Name bound to the module-level constant whose value is
+    that name (as ``test_run_autotuner_n_jobs_sourced_from_env_constant`` accepts
+    for n_jobs). Plain integer literals (e.g. seed=42) or seed=None would defeat
+    the audit fix.
+    """
     seed_env = pin_contract["constants"]["sampler_seed_env_var"]
-    # Look for the env-var name being read via os.environ / os.getenv inside
-    # the run_autotuner function body. AST-walk the function.
     tree = ast.parse(autotuner_source)
     func = _function_def(tree, _RUN_AUTOTUNER)
-    env_reads_for_seed = False
-    for node in ast.walk(func):
-        if not isinstance(node, ast.Constant):
-            continue
-        if node.value == seed_env:
-            env_reads_for_seed = True
-            break
-        # Allow the impl to reference the named module-level constant
-        # instead of the literal string; the constants-existence test
-        # above already pins the constant -> value mapping, so a literal
-        # of seed_env anywhere in the function is the explicit signal.
-    assert env_reads_for_seed, (
-        f"OPTUNA-1: the run_autotuner sampler seed must be sourced from the "
-        f"env var {seed_env!r} (literal name expected to appear in the "
-        f"function body, either as a module-level constant reference whose "
-        f"value the constants test pins, or as an explicit os.environ key). "
-        f"Could not find {seed_env!r} as a Constant inside run_autotuner."
+    constant_names = _module_constant_names_with_value(tree, seed_env)
+    found = any(
+        (isinstance(node, ast.Constant) and node.value == seed_env)
+        or (isinstance(node, ast.Name) and node.id in constant_names)
+        for node in ast.walk(func)
     )
+    assert found, (
+        f"OPTUNA-1: the run_autotuner sampler seed must be sourced from the env var "
+        f"{seed_env!r}, as the literal or through the module-level constant "
+        f"({sorted(constant_names)}). Neither appears inside run_autotuner."
+    )
+
+
+def test_run_autotuner_reads_the_seed_through_the_named_constant_not_a_literal(
+    autotuner_source: str, pin_contract: dict
+):
+    """the named constant is live. ``run_autotuner`` reads
+    ``os.environ.get(<the constant>)`` and carries no second copy of the variable name,
+    so ``test_autotuner_exposes_named_env_var_constants`` holds for the reason it was
+    written (the call site and the constant cannot drift apart)."""
+    seed_env = pin_contract["constants"]["sampler_seed_env_var"]
+    tree = ast.parse(autotuner_source)
+    func = _function_def(tree, _RUN_AUTOTUNER)
+    constant_names = _module_constant_names_with_value(tree, seed_env)
+    assert constant_names, f"no module-level constant carries {seed_env!r}"
+    literals = [
+        n.lineno for n in ast.walk(func) if isinstance(n, ast.Constant) and n.value == seed_env
+    ]
+    assert literals == [], f"run_autotuner repeats the literal {seed_env!r} at line(s) {literals}"
+    env_gets = [
+        n
+        for n in ast.walk(func)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "get"
+        and n.args
+        and isinstance(n.args[0], ast.Name)
+        and n.args[0].id in constant_names
+    ]
+    assert len(env_gets) == 1, (
+        f"expected exactly one os.environ.get(<seed constant>) in run_autotuner, "
+        f"found {len(env_gets)}"
+    )
+
+
+def test_run_autotuner_has_no_local_n_jobs_raw_read(autotuner_source: str, pin_contract: dict):
+    """``_n_jobs_raw`` existed only to satisfy a source-literal
+    test while the value used came from ``_resolve_optuna_n_jobs_from_env()``. The raw
+    read and the second literal of the variable name are gone; the resolver is the one
+    source."""
+    n_jobs_env = pin_contract["constants"]["n_jobs_env_var"]
+    func = _function_def(ast.parse(autotuner_source), _RUN_AUTOTUNER)
+    assigned = {
+        t.id
+        for node in ast.walk(func)
+        if isinstance(node, ast.Assign)
+        for t in node.targets
+        if isinstance(t, ast.Name)
+    }
+    assert "_n_jobs_raw" not in assigned
+    literals = [
+        n.lineno for n in ast.walk(func) if isinstance(n, ast.Constant) and n.value == n_jobs_env
+    ]
+    assert literals == [], f"run_autotuner repeats the literal {n_jobs_env!r} at line(s) {literals}"
 
 
 # ---------------------------------------------------------------------------
@@ -298,20 +372,37 @@ def test_run_autotuner_study_optimize_n_jobs_not_hardcoded_minus_one(autotuner_a
     assert not offenders, "OPTUNA-6 violations:\n  - " + "\n  - ".join(offenders)
 
 
-def test_run_autotuner_n_jobs_sourced_from_env_constant(autotuner_source: str, pin_contract: dict):
-    """The n_jobs value must be sourced from the OPTUNA-6 env-var constant
-    inside run_autotuner."""
-    n_jobs_env = pin_contract["constants"]["n_jobs_env_var"]
-    tree = ast.parse(autotuner_source)
-    func = _function_def(tree, _RUN_AUTOTUNER)
-    found = any(
-        isinstance(node, ast.Constant) and node.value == n_jobs_env for node in ast.walk(func)
-    )
-    assert found, (
-        f"OPTUNA-6: run_autotuner must reference the env var {n_jobs_env!r} "
-        f"to source n_jobs. Could not find {n_jobs_env!r} as a Constant "
-        f"inside the function body."
-    )
+def test_run_autotuner_n_jobs_sourced_from_env_constant(autotuner_source: str):
+    """``study.optimize(..., n_jobs=...)`` inside run_autotuner
+    takes its value from ``_resolve_optuna_n_jobs_from_env()`` (the resolver reads the
+    ``OPTUNA_N_JOBS`` constant), directly or through one local bound to that call.
+
+    Replaces a check that required the literal ``"OPTUNA_N_JOBS"`` inside the function,
+    which passed only through a dead ``_n_jobs_raw`` line."""
+    func = _function_def(ast.parse(autotuner_source), _RUN_AUTOTUNER)
+
+    def _is_resolver_call(expr) -> bool:
+        return (
+            isinstance(expr, ast.Call)
+            and isinstance(expr.func, ast.Name)
+            and expr.func.id == "_resolve_optuna_n_jobs_from_env"
+        )
+
+    bound_to_resolver = {
+        t.id
+        for node in ast.walk(func)
+        if isinstance(node, ast.Assign) and _is_resolver_call(node.value)
+        for t in node.targets
+        if isinstance(t, ast.Name)
+    }
+    calls = _study_optimize_calls(func)
+    assert calls, "AST: expected a study.optimize(...) call in run_autotuner."
+    for call in calls:
+        expr = _kw(call, "n_jobs")
+        assert expr is not None, f"line {call.lineno}: study.optimize has no n_jobs kwarg"
+        assert _is_resolver_call(expr) or (
+            isinstance(expr, ast.Name) and expr.id in bound_to_resolver
+        ), f"line {call.lineno}: n_jobs is not sourced from _resolve_optuna_n_jobs_from_env()"
 
 
 # ---------------------------------------------------------------------------
@@ -319,101 +410,85 @@ def test_run_autotuner_n_jobs_sourced_from_env_constant(autotuner_source: str, p
 # ---------------------------------------------------------------------------
 
 
-def test_env_seed_flows_through_to_create_study_sampler(
-    monkeypatch, autotuner_module, pin_contract
+def _drive_run_autotuner(monkeypatch, *, seed_raw=_UNSET_ENV, n_jobs_raw=_UNSET_ENV):
+    """One real ``run_autotuner`` call through the persistence harness (the study, the
+    storage, history and Composer are faked there), with the two Optuna env variables
+    set by monkeypatch. Returns the TPESampler kwargs captured at the study site, the
+    ``study.optimize`` kwargs, and the run result."""
+    import autotuner
+
+    for name, raw in (("OPTUNA_SAMPLER_SEED", seed_raw), ("OPTUNA_N_JOBS", n_jobs_raw)):
+        if raw is _UNSET_ENV:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, raw)
+
+    captured: list[dict] = []
+    real_tpe = optuna.samplers.TPESampler
+
+    class _CapturingTPE(real_tpe):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs):
+            captured.append(dict(kwargs))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(optuna.samplers, "TPESampler", _CapturingTPE)
+    bundle_id = _make_phase1_spec_bundle()
+    with _autotuner_patches(_ai_best_params(), _fallback_params()) as ctx:
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = autotuner.run_autotuner(
+                _build_bot_state(), "2026-05-10", ["acc-1"], spec_bundle_id=bundle_id
+            )
+    optimize = ctx["fake_study"].optimize
+    optimize_kwargs = optimize.call_args.kwargs if optimize.call_args else None
+    return captured, optimize_kwargs, result
+
+
+def _ref_seed(raw):
+    """The seed expression the site carried at the reference commit, verbatim."""
+    return int(raw) if raw is not None and raw.strip() else None
+
+
+@pytest.mark.parametrize("raw", ["1234567", None, "", "   "])
+def test_run_autotuner_study_sampler_seed_follows_the_env_variable(monkeypatch, raw):
+    """the sampler handed to ``optuna.create_study`` carries the seed the
+    reference expression gives (an int for a number, None for unset, empty or blank)."""
+    captured, _optimize, _result = _drive_run_autotuner(
+        monkeypatch, seed_raw=_UNSET_ENV if raw is None else raw
+    )
+    assert len(captured) == 1, "the study site must build exactly one TPESampler"
+    assert captured[0] == {"seed": _ref_seed(raw)}
+
+
+def test_run_autotuner_with_a_non_numeric_seed_builds_no_study_and_isolates_the_symphony(
+    monkeypatch,
 ):
-    """Set ``OPTUNA_SAMPLER_SEED`` in the environment and confirm that the
-    sampler passed to ``optuna.create_study`` carries that seed. The test
-    intercepts ``optuna.create_study`` via monkeypatch and inspects the
-    captured sampler.
+    """The ``abc`` case: at the reference the ``int()`` raises inside the
+    per-symphony loop, the loop's isolation catches it, no sampler or
+    study is built, ``study.optimize`` never runs and the run returns only its batch summary.
+    The deletion must leave exactly that outcome."""
+    captured, optimize_kwargs, result = _drive_run_autotuner(monkeypatch, seed_raw="abc")
+    assert captured == []
+    assert optimize_kwargs is None
+    assert set(result) == {"_batch_summary"}
 
-    The site is exercised by invoking the smallest run_autotuner-internal
-    construction path possible — but since run_autotuner has heavy
-    preconditions (spec bundles, history fetch, DB), we instead intercept
-    the import-time module reload + the helper that builds the sampler.
-    The impl is REQUIRED to expose a helper (any private name) that
-    constructs the sampler from env; this test pins behaviour via that
-    boundary by asserting that the seed of TPESampler used at the site
-    reflects the env.
 
-    For test-writability without re-running the full daemon, we observe
-    the env -> int conversion + TPESampler construction via a small
-    indirection: we patch ``optuna.samplers.TPESampler`` to capture init
-    kwargs, then call the public helper.
-    """
-    seed_env = pin_contract["constants"]["sampler_seed_env_var"]
-    monkeypatch.setenv(seed_env, "1234567")
-
-    # Capture TPESampler init kwargs.
-    captured: list[dict] = []
-    real_tpe = optuna.samplers.TPESampler
-
-    class _CapturingTPE(real_tpe):  # type: ignore[misc, valid-type]
-        def __init__(self, *args, **kwargs):  # noqa: D401
-            captured.append({"args": args, "kwargs": kwargs})
-            super().__init__(*args, **kwargs)
-
-    monkeypatch.setattr(optuna.samplers, "TPESampler", _CapturingTPE)
-    # The autotuner module captures ``optuna.samplers.TPESampler`` at
-    # call-time (it does ``optuna.samplers.TPESampler(...)`` inside the
-    # function, not at import), so the monkeypatch is visible.
-
-    # The impl MUST expose a helper that returns the sampler. Conventionally
-    # ``_build_optuna_sampler_from_env()``; the contract is "callable on
-    # the module that constructs a TPESampler from env-driven seed".
-    helper = getattr(autotuner_module, "_build_optuna_sampler_from_env", None)
-    assert helper is not None and callable(helper), (
-        "OPTUNA-1 implementation contract: autotuner.py must expose a "
-        "module-level helper `_build_optuna_sampler_from_env()` that reads "
-        "OPTUNA_SAMPLER_SEED from os.environ and returns "
-        "optuna.samplers.TPESampler(seed=...). This boundary is what the "
-        "RED behavioural tests pin so the run_autotuner site cannot drift "
-        "without breaking either the AST tests or this contract."
+@pytest.mark.parametrize(
+    ("raw", "expected_kind"),
+    [("3", "number"), (None, "default"), ("", "default"), ("abc", "default")],
+)
+def test_run_autotuner_optimize_n_jobs_follows_the_env_variable(
+    monkeypatch, pin_contract, raw, expected_kind
+):
+    """the ``n_jobs`` handed to ``study.optimize`` is the resolver's value: the
+    number for ``3``, the SQLite-safe default (from the contract fixture) for unset, empty
+    and non-numeric."""
+    _captured, optimize_kwargs, _result = _drive_run_autotuner(
+        monkeypatch, n_jobs_raw=_UNSET_ENV if raw is None else raw
     )
-
-    sampler = helper()
-    assert isinstance(sampler, real_tpe), (
-        f"_build_optuna_sampler_from_env() must return a TPESampler, got {type(sampler).__name__}"
-    )
-    assert captured, (
-        "TPESampler was not constructed by the helper — the helper must "
-        "instantiate optuna.samplers.TPESampler(seed=...)."
-    )
-    last_kwargs = captured[-1]["kwargs"]
-    assert "seed" in last_kwargs, (
-        "TPESampler(...) must be constructed with an explicit seed= kwarg "
-        f"(got kwargs={last_kwargs})"
-    )
-    assert last_kwargs["seed"] == 1234567, (
-        f"Env OPTUNA_SAMPLER_SEED=1234567 must flow through to "
-        f"TPESampler(seed=1234567); got seed={last_kwargs['seed']!r}."
-    )
-
-
-def test_unset_seed_env_yields_seed_none(monkeypatch, autotuner_module, pin_contract):
-    """When ``OPTUNA_SAMPLER_SEED`` is unset, the helper must return a
-    TPESampler with seed=None — preserving prior wall-clock-seeded
-    behaviour for operators who do not opt in to determinism."""
-    seed_env = pin_contract["constants"]["sampler_seed_env_var"]
-    monkeypatch.delenv(seed_env, raising=False)
-    captured: list[dict] = []
-    real_tpe = optuna.samplers.TPESampler
-
-    class _CapturingTPE(real_tpe):  # type: ignore[misc, valid-type]
-        def __init__(self, *args, **kwargs):  # noqa: D401
-            captured.append(kwargs)
-            super().__init__(*args, **kwargs)
-
-    monkeypatch.setattr(optuna.samplers, "TPESampler", _CapturingTPE)
-
-    helper = getattr(autotuner_module, "_build_optuna_sampler_from_env", None)
-    assert helper is not None
-    helper()
-    assert captured, "TPESampler must be constructed by the helper."
-    assert captured[-1].get("seed", "MISSING") is None, (
-        f"Unset OPTUNA_SAMPLER_SEED must produce seed=None (preserving "
-        f"prior wall-clock-seeded behaviour); got seed={captured[-1].get('seed')!r}"
-    )
+    assert optimize_kwargs is not None
+    default = int(pin_contract["parallelism_contract"]["n_jobs_default_when_unset_or_invalid"])
+    expected = int(raw) if expected_kind == "number" else default
+    assert optimize_kwargs["n_jobs"] == expected
 
 
 def test_env_n_jobs_parsed_to_int(monkeypatch, autotuner_module, pin_contract):

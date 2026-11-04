@@ -211,15 +211,13 @@ def init_db():
     # BL-10 (DE-AUDIT-BL10-001): account_id/sortino_sentinel_pct/fold_role are
     # added to autotune_runs via later ALTER TABLE migrations, not the CREATE
     # TABLE above.
-    #   account_id / sortino_sentinel_pct: have an ORPHANED writer --
-    #     database.record_autotune_run inserts both, but that function has
-    #     zero callers repo-wide -- never populated by the current
-    #     save_autotune_run path.
+    #   account_id / sortino_sentinel_pct: never populated by the current
+    #     save_autotune_run path (a legacy writer may have filled them in
+    #     older rows).
     #   fold_role (migration 019_fold_role_columns.sql): has a real intended
     #     semantic (train/validation/frozen_eval/None) and IS actively read
     #     by advisor_ro_query's defensive wall guard -- but has no writer
-    #     anywhere, not even the orphaned record_autotune_run. Not populated
-    #     by any current write path.
+    #     anywhere. Not populated by any current write path.
 
     # P3: Immutable append-only audit trail for Claude AI Config Advisor suggestions
     cursor.execute("""
@@ -1073,59 +1071,6 @@ def get_latest_autotune_run(
     return _autotune_run_row_to_dict(row)
 
 
-def record_autotune_run(
-    run_timestamp,
-    symphony_id,
-    math_mode="per_symphony",
-    oos_alpha=None,
-    train_alpha=None,
-    baseline_decision=None,
-    fallback_oos_alpha=None,
-    default_oos_alpha=None,
-    selection_tstat=None,
-    naive_sharpe=None,
-    validation_sharpe=None,
-    frozen_eval_sharpe=None,
-    account_id=None,
-    sortino_sentinel_pct=None,
-) -> None:
-    """Persist one autotune_runs row with port-mode fields.
-
-    Adds math_mode, account_id, sortino_sentinel_pct to the existing
-    save_autotune_run interface (AC-P2.11.1, F3, N3+N4).
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO autotune_runs
-            (run_timestamp, symphony_id, oos_alpha, train_alpha,
-             baseline_decision, fallback_oos_alpha, default_oos_alpha,
-             selection_tstat, naive_sharpe, validation_sharpe, frozen_eval_sharpe,
-             math_mode, account_id, sortino_sentinel_pct)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            run_timestamp,
-            symphony_id,
-            oos_alpha,
-            train_alpha,
-            baseline_decision,
-            fallback_oos_alpha,
-            default_oos_alpha,
-            selection_tstat,
-            naive_sharpe,
-            validation_sharpe,
-            frozen_eval_sharpe,
-            math_mode,
-            account_id,
-            sortino_sentinel_pct,
-        ),
-    )
-    conn.commit()
-    conn.close()
-
-
 def get_all_autotune_runs(limit: int = 50) -> list[dict]:
     """Return the most-recent autotune_runs rows across all symphonies.
 
@@ -1211,91 +1156,6 @@ def record_llm_suggestion(
     return row_id
 
 
-def _parse_llm_suggestion_row(row: tuple, columns: list[str]) -> dict:
-    """Convert a raw llm_suggestions tuple into a fully-typed dict.
-
-    JSON-blob columns (prompt_inputs, generation_settings, raw_response,
-    validation_results, oos_revalidation, before_value, after_value) are
-    deserialized from their stored TEXT representation so callers always receive
-    the original Python objects, not raw JSON strings.
-    """
-    JSON_COLUMNS = {
-        "prompt_inputs",
-        "generation_settings",
-        "raw_response",
-        "validation_results",
-        "oos_revalidation",
-        "before_value",
-        "after_value",
-    }
-    result = {}
-    for col, val in zip(columns, row):
-        if col in JSON_COLUMNS and val is not None:
-            result[col] = json.loads(val)
-        else:
-            result[col] = val
-    return result
-
-
-_LLM_SUGGESTION_COLUMNS = [
-    "id",
-    "session_id",
-    "created_at",
-    "symphony_name",
-    "operator_identity",
-    "prompt_inputs",
-    "model_id",
-    "generation_settings",
-    "raw_response",
-    "validation_results",
-    "param_name",
-    "operator_decision",
-    "decision_at",
-    "operator_note",
-    "before_value",
-    "after_value",
-    "oos_revalidation",
-]
-
-
-def get_suggestions_for_symphony(symphony_name: str) -> list[dict]:
-    """Return all llm_suggestions rows for a given symphony, oldest-first.
-
-    Returns an empty list if no rows exist — never raises for an unknown symphony.
-    Each element is a full-column dict with JSON-blob columns deserialized.
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT "
-        + ", ".join(_LLM_SUGGESTION_COLUMNS)
-        + " FROM llm_suggestions WHERE symphony_name = ? ORDER BY id ASC",
-        (symphony_name,),
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [_parse_llm_suggestion_row(row, _LLM_SUGGESTION_COLUMNS) for row in rows]
-
-
-def get_suggestions_for_session(session_id: str) -> list[dict]:
-    """Return all llm_suggestions rows for a given session_id.
-
-    Returns an empty list if no rows exist — never raises for an unknown session.
-    Each element is a full-column dict with JSON-blob columns deserialized.
-    """
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT "
-        + ", ".join(_LLM_SUGGESTION_COLUMNS)
-        + " FROM llm_suggestions WHERE session_id = ? ORDER BY id ASC",
-        (session_id,),
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [_parse_llm_suggestion_row(row, _LLM_SUGGESTION_COLUMNS) for row in rows]
-
-
 # --- 017: Advisor Observations ---
 
 _ADVISOR_OBSERVATION_COLUMNS = [
@@ -1312,6 +1172,34 @@ _ADVISOR_OBSERVATION_COLUMNS = [
 ]
 
 
+def _row_with_json_columns(
+    row: tuple,
+    columns: list[str],
+    json_columns: tuple[str, ...],
+    tolerate_unreadable: bool = False,
+) -> dict:
+    """Pair a row's values with its column names, decoding the named JSON columns.
+
+    A stored value that is not JSON raises the decoder's exception, unless
+    tolerate_unreadable: then the column comes back as {} and the row gains
+    ``raw_response_unreadable`` True, so one bad row cannot take down a whole read.
+    """
+    result = {}
+    for col, val in zip(columns, row):
+        if col in json_columns and val is not None:
+            if not tolerate_unreadable:
+                result[col] = json.loads(val)
+                continue
+            try:
+                result[col] = json.loads(val)
+            except (TypeError, ValueError):
+                result[col] = {}
+                result["raw_response_unreadable"] = True
+        else:
+            result[col] = val
+    return result
+
+
 def _parse_advisor_observation_row(row: tuple, columns: list[str]) -> dict:
     """Convert a raw advisor_observations tuple into a typed dict.
 
@@ -1325,17 +1213,7 @@ def _parse_advisor_observation_row(row: tuple, columns: list[str]) -> dict:
     taking every other row of the same read down with it. A readable row carries no
     ``raw_response_unreadable`` key.
     """
-    result = {}
-    for col, val in zip(columns, row):
-        if col == "raw_response" and val is not None:
-            try:
-                result[col] = json.loads(val)
-            except (TypeError, ValueError):
-                result[col] = {}
-                result["raw_response_unreadable"] = True
-        else:
-            result[col] = val
-    return result
+    return _row_with_json_columns(row, columns, ("raw_response",), tolerate_unreadable=True)
 
 
 def insert_advisor_observation(
@@ -1391,31 +1269,6 @@ def insert_advisor_observation(
     row_id = cursor.lastrowid
     conn.close()
     return row_id
-
-
-def get_advisor_observations_for_subject(
-    subject_type: str,
-    subject_id: str,
-) -> list[dict]:
-    """Return all advisor_observations rows for a given subject, oldest-first.
-
-    Returns an empty list when no rows match — never raises for an unknown subject.
-    raw_response is deserialised from JSON so callers receive a Python dict.
-    Uses get_ro_connection() per architecture constraint 5 (dashboard read-only)
-    and Advisor scope-boundary integrity I-3 — read paths are structurally isolated
-    from the write path.
-    """
-    conn = get_ro_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT "
-        + ", ".join(_ADVISOR_OBSERVATION_COLUMNS)
-        + " FROM advisor_observations WHERE subject_type = ? AND subject_id = ? ORDER BY id ASC",
-        (subject_type, subject_id),
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
 
 
 def get_advisor_observations_for_role(
@@ -3662,6 +3515,31 @@ def prune_old_shadow_history(retention_days: int) -> int:
     return total_deleted
 
 
+def select_latest_shadow_row(
+    conn: sqlite3.Connection,
+    symphony_id: str,
+    trading_day: str,
+    et_cutoff: "str | None" = None,
+) -> "sqlite3.Row | None":
+    """Return the newest shadow_history row of a symphony and day on ``conn``, or None.
+
+    et_cutoff: optional ET time-of-day string ("HH:MM:SS") - only rows at or before it
+    qualify. The caller sets the connection's row_factory and handles failure.
+    """
+    params: list = [symphony_id, trading_day]
+    cutoff_clause = ""
+    if et_cutoff is not None:
+        cutoff_clause = "AND substr(ts_et, 12, 8) <= ? "
+        params.append(et_cutoff)
+    return conn.execute(
+        "SELECT * FROM shadow_history "
+        "WHERE symphony_id = ? AND trading_day = ? "
+        + cutoff_clause
+        + "ORDER BY ts_utc DESC LIMIT 1",
+        params,
+    ).fetchone()
+
+
 def load_latest_shadow_row(
     symphony_id: str, trading_day: str, et_cutoff: "str | None" = None
 ) -> "dict | None":
@@ -3676,18 +3554,7 @@ def load_latest_shadow_row(
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.row_factory = sqlite3.Row
-        params: list = [symphony_id, trading_day]
-        cutoff_clause = ""
-        if et_cutoff is not None:
-            cutoff_clause = "AND substr(ts_et, 12, 8) <= ? "
-            params.append(et_cutoff)
-        row = conn.execute(
-            "SELECT * FROM shadow_history "
-            "WHERE symphony_id = ? AND trading_day = ? "
-            + cutoff_clause
-            + "ORDER BY ts_utc DESC LIMIT 1",
-            params,
-        ).fetchone()
+        row = select_latest_shadow_row(conn, symphony_id, trading_day, et_cutoff)
         conn.close()
         if row is None:
             return None
@@ -3859,36 +3726,6 @@ def resume_shadow_baselines(bot_state: dict, trading_day: str) -> None:
         bot_state[s_id]["shadow_hwm"] = row["current_return"]
         if row["is_post_trigger"]:
             bot_state[s_id]["triggered_at_return"] = row["shadow_return"]
-
-
-def get_eod_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
-    """Return the last shadow_history row for (symphony_id, trading_day) by ts_utc DESC.
-
-    PA-M1F-5b: EOD divergence uses this row; it may not be the market-close row
-    if the engine was down for the session's final interval.
-    """
-    return load_latest_shadow_row(symphony_id, trading_day)
-
-
-def compute_shadow_hwm(symphony_id: str, trading_day: str) -> "float | None":
-    """Return shadow_hwm = MAX(current_return) for (symphony_id, trading_day).
-
-    BC-3: formula is max(current_return), NOT max(shadow_return). The shadow_hwm
-    represents the counterfactual peak Composer-reported value during the day.
-    Returns None when no rows exist for the given symphony+day.
-    """
-    try:
-        conn = sqlite3.connect(_db_file(), timeout=10.0)
-        row = conn.execute(
-            "SELECT MAX(current_return) FROM shadow_history "
-            "WHERE symphony_id = ? AND trading_day = ?",
-            (symphony_id, trading_day),
-        ).fetchone()
-        conn.close()
-        return float(row[0]) if row and row[0] is not None else None
-    except Exception as exc:
-        logging.error("compute_shadow_hwm failed for %s %s: %s", symphony_id, trading_day, exc)
-        return None
 
 
 def get_shadow_divergence(trading_day: str) -> dict:
@@ -4974,13 +4811,7 @@ def _parse_frontrunner_proposal_row(row: tuple, columns: list[str]) -> dict:
     rather than a raw JSON string (same precedent as advisor_observations'
     raw_response handling).
     """
-    result = {}
-    for col, val in zip(columns, row):
-        if col in ("candidate_tree", "metrics_json") and val is not None:
-            result[col] = json.loads(val)
-        else:
-            result[col] = val
-    return result
+    return _row_with_json_columns(row, columns, ("candidate_tree", "metrics_json"))
 
 
 def insert_frontrunner_proposal(
