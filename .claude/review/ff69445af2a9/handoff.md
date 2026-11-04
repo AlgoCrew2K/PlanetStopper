@@ -4,7 +4,7 @@ Plan: feature-plans/regime-label-producer.md; approach: feature-plans/approach/r
 Stub: regime_label_job.py at repo root (committed 3d53fbef; every function body raises NotImplementedError; constants, dataclasses and imports are real). Replace the bodies; keep the names and shapes.
 
 ## Contract the tests pin (beyond the approach text)
-- `target_session(start: aware datetime) -> date`: first NYSE trading day whose 09:30 ET open is strictly after `start` (09:30:00 exactly rolls to the next day).
+- `target_session(start: aware datetime) -> date | None` (PM ruling on S-1.5): `None` when `start` is inside a trading session (open <= start < `market_calendar.session_close(day)`, early closes included; 09:30:00 is inside, the close instant is outside); otherwise the first NYSE trading day whose 09:30 ET open is strictly after `start`. `run_regime_label_job` on a `None` target makes no HTTP call and no write and returns `RegimeLabelRun(session=None, outcomes=(), failure=None)`, logging summary reason `session_in_progress` (`REASON_SESSION_IN_PROGRESS` is in the stub).
 - `window_sessions(D) -> list[date]`: ONE parameter (the approach text has a second `newest_eligible` parameter; it is dropped here, and sessions later than `newest_eligible` are excluded in `compute_label`). 31 NYSE sessions oldest first: the 30 strictly before D plus one earlier, contiguous in trading days.
 - `fetch_sip_daily_closes(tickers, start: date, end: aware UTC datetime) -> SipCloses(closes, failed)`.
   - `start` is the oldest fetched session; the request `start` param is its midnight ET as `%Y-%m-%dT%H:%M:%SZ`. `end` is formatted `%Y-%m-%dT%H:%M:%SZ`.

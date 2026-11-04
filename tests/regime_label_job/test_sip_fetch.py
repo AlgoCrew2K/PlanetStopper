@@ -538,10 +538,11 @@ def test_bars_dated_d_and_after_returned_by_the_source_never_enter_the_stored_la
     assert rows == [(clean_label, D.isoformat())]
 
 
-def test_a_partial_bar_for_a_session_still_in_progress_is_never_used(job, monkeypatch):
-    # The job starts at 10:00 ET on 2026-11-04 (D is 2026-11-05). The request end is 09:40 ET, so the
-    # newest COMPLETED session is 2026-11-03; a partial 2026-11-04 bar the source returns is not a close.
-    start = datetime(2026, 11, 4, 10, 0, tzinfo=S.ET).astimezone(UTC)
+def test_a_session_whose_bar_was_incomplete_at_the_end_bound_is_never_used(job, monkeypatch):
+    # The job starts at 16:10 ET on 2026-11-04, after the close (D is 2026-11-05). The request end is
+    # 15:50 ET, before that session's close, so the newest COMPLETED session at the end bound is
+    # 2026-11-03; a 2026-11-04 bar the source returns may be partial and is not a close.
+    start = datetime(2026, 11, 4, 16, 10, tzinfo=S.ET).astimezone(UTC)
     closes, holdings = _golden()
     clean_run, _ = _run(job, monkeypatch, copy.deepcopy(closes), holdings, lambda: start)
     assert clean_run.session == date(2026, 11, 5)
@@ -557,3 +558,26 @@ def test_a_partial_bar_for_a_session_still_in_progress_is_never_used(job, monkey
 
     assert run.outcomes[0].window_last == NEWEST
     assert run.outcomes[0].label == clean_run.outcomes[0].label
+
+
+@pytest.mark.parametrize(
+    "start_et",
+    [datetime(2026, 11, 4, 9, 30), datetime(2026, 11, 4, 10, 0), datetime(2026, 11, 4, 15, 59, 59)],
+    ids=["at-open", "mid-session", "last-second"],
+)
+def test_a_start_inside_a_trading_session_requests_nothing_and_writes_nothing(
+    job, monkeypatch, start_et
+):
+    start = start_et.replace(tzinfo=S.ET).astimezone(UTC)
+    closes, holdings = _golden()
+
+    run, stub = _run(job, monkeypatch, closes, holdings, lambda: start)
+
+    assert stub.calls == [], "no price request for a run that targets nothing"
+    assert run.session is None
+    assert run.outcomes == ()
+    conn = sqlite3.connect(os.environ["DB_PATH"])
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM regime_label_cache").fetchone() == (0,)
+    finally:
+        conn.close()

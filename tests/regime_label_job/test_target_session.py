@@ -1,8 +1,9 @@
 """RED tests -- regime_label_job.target_session and window_sessions (AC-1: S-1.2 to S-1.5; DC-3).
 
 Contract (feature-plans/approach/regime-label-producer.md, Session arithmetic):
-  target_session(start)  -> the first NYSE trading day whose 09:30 ET open is strictly after the
-                            aware instant `start` (D is fixed from the job's start instant).
+  target_session(start)  -> None when `start` is inside a trading session (open <= start < close,
+                            early closes included; PM ruling on S-1.5); otherwise the first NYSE
+                            trading day whose 09:30 ET open is strictly after the aware instant.
   window_sessions(D)     -> list of 31 NYSE sessions, oldest first: the 30 sessions strictly before
                             D plus the one before the oldest of them.
 
@@ -24,10 +25,20 @@ from tests.regime_label_job import _sip as S
 _OPEN = time(9, 30)
 
 
-def _oracle_target(start: datetime) -> date:
-    """First trading day whose 09:30 ET open is after `start` (independent reference)."""
+def _in_session(start: datetime) -> bool:
+    """True when `start` lies in [open, close) of a trading day (independent reference)."""
     local = start.astimezone(S.ET)
     d = local.date()
+    return market_calendar.is_trading_day(d) and datetime.combine(
+        d, _OPEN, S.ET
+    ) <= start < datetime.combine(d, market_calendar.session_close(d), S.ET)
+
+
+def _oracle_target(start: datetime) -> date | None:
+    """None inside a trading session; else the first trading day whose 09:30 ET open is after `start`."""
+    if _in_session(start):
+        return None
+    d = start.astimezone(S.ET).date()
     for _ in range(15):
         if market_calendar.is_trading_day(d) and datetime.combine(d, _OPEN, S.ET) > start:
             return d
@@ -136,39 +147,59 @@ def test_04_30_utc_run_targets_the_trading_day_of_the_utc_date_in_both_offsets(j
 
 
 # ---------------------------------------------------------------------------
-# S-1.5  a run after 09:30 ET on a trading day never targets that day
+# S-1.5 (PM ruling): a start inside a trading session targets nothing (session_in_progress);
+# a start after the close, or before any open, targets the next session
 # ---------------------------------------------------------------------------
 
 
-def test_run_at_ten_et_on_a_trading_day_targets_the_next_trading_day(job):
+def test_run_at_ten_et_inside_a_trading_session_has_no_target(job):
     ten_et = datetime(2026, 11, 4, 10, 0, tzinfo=S.ET).astimezone(UTC)
-    got = job.target_session(ten_et)
-    assert got != date(2026, 11, 4)
-    assert got == _oracle_target(ten_et)
-    assert got > date(2026, 11, 4)
+    assert _in_session(ten_et), "precondition"
+    assert job.target_session(ten_et) is None
 
 
-def test_run_at_ten_et_on_a_friday_targets_monday(job):
+def test_run_at_ten_et_on_a_friday_has_no_target(job):
     ten_et = datetime(2026, 11, 6, 10, 0, tzinfo=S.ET).astimezone(UTC)
-    got = job.target_session(ten_et)
-    assert got == _oracle_target(ten_et)
-    assert got.weekday() == 0
+    assert job.target_session(ten_et) is None
 
 
 @pytest.mark.parametrize(
-    ("clock_et", "same_day"),
+    ("day", "clock_et"),
     [
-        (time(9, 29, 59), True),  # one second before the open: the open is still ahead
-        (time(9, 30, 0), False),  # exactly at the open: the open is not after the instant
-        (time(9, 30, 1), False),
+        (date(2026, 11, 4), time(9, 29, 59)),
+        (date(2026, 11, 4), time(9, 30, 0)),
+        (date(2026, 11, 4), time(9, 30, 1)),
+        (date(2026, 11, 4), time(15, 59, 59)),
+        (date(2026, 11, 4), time(16, 0, 0)),
+        (date(2026, 11, 4), time(16, 0, 1)),
+        (date(2026, 11, 27), time(12, 59, 59)),  # early close 13:00 the day after Thanksgiving
+        (date(2026, 11, 27), time(13, 0, 0)),
+        (date(2026, 11, 27), time(14, 0, 0)),
     ],
-    ids=["one-second-before-open", "at-open", "one-second-after-open"],
+    ids=lambda v: v.isoformat() if isinstance(v, (date, time)) else str(v),
 )
-def test_the_open_boundary_is_strict(job, clock_et, same_day):
-    instant = datetime.combine(date(2026, 11, 4), clock_et, S.ET).astimezone(UTC)
+def test_session_boundaries_open_inclusive_close_exclusive_early_closes_included(
+    job, day, clock_et
+):
+    assert market_calendar.is_trading_day(day)
+    instant = datetime.combine(day, clock_et, S.ET).astimezone(UTC)
     got = job.target_session(instant)
-    assert (got == date(2026, 11, 4)) is same_day
     assert got == _oracle_target(instant)
+    if _in_session(instant):
+        assert got is None
+    else:
+        assert got is not None
+        assert got != day or clock_et < _OPEN, "after the close the target is a LATER session"
+
+
+def test_start_exactly_at_the_close_targets_the_next_session(job):
+    at_close = datetime(2026, 11, 4, 16, 0, tzinfo=S.ET).astimezone(UTC)
+    assert job.target_session(at_close) == date(2026, 11, 5)
+
+
+def test_start_after_the_early_close_targets_the_next_session(job):
+    after = datetime(2026, 11, 27, 13, 30, tzinfo=S.ET).astimezone(UTC)
+    assert job.target_session(after) == date(2026, 11, 30)
 
 
 _instants = st.datetimes(
@@ -176,15 +207,20 @@ _instants = st.datetimes(
 )
 
 
-@settings(max_examples=120, deadline=None)
+@settings(max_examples=150, deadline=None)
 @given(instant=_instants)
-def test_target_is_the_earliest_trading_day_opening_after_the_instant(instant):
+def test_target_is_none_inside_a_session_else_the_earliest_session_opening_after_the_instant(
+    instant,
+):
     import regime_label_job as job
 
     got = job.target_session(instant)
+    if _in_session(instant):
+        assert got is None
+        return
+    assert got is not None
     assert market_calendar.is_trading_day(got)
     assert datetime.combine(got, _OPEN, S.ET) > instant
-    # minimality: no earlier trading day opens after the instant
     d = got - timedelta(days=1)
     while d >= instant.astimezone(S.ET).date():
         assert not (

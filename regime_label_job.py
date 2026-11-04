@@ -25,6 +25,7 @@ REASON_NO_CLASSIFIER_LABEL = "no_classifier_label"
 REASON_WRITE_FAILED = "write_failed"
 REASON_AFTER_OPEN = "after_open"
 REASON_UNEXPECTED_ERROR = "unexpected_error"
+REASON_SESSION_IN_PROGRESS = "session_in_progress"
 
 SIP_END_LAG = timedelta(minutes=20)
 SIP_BATCH_SIZE = 30
@@ -70,7 +71,7 @@ class LabelComputation:
     series: tuple = ()
 
 
-def target_session(start: datetime) -> date:
+def target_session(start: datetime) -> date | None:
     raise NotImplementedError
 
 
