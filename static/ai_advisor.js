@@ -1868,7 +1868,7 @@
     // is never repeated; a 200 carrying an error key shows the server's error
     // text (an exception type name). Every message is set with textContent,
     // never a thrown error's message. A refusal gets the negative-token class;
-    // the next attempt clears it.
+    // the next attempt clears it. A 409 with status market_open says the market-hours refusal.
     function retRunReview(btnEl) {
         if (!btnEl || btnEl.disabled) { return; }
         btnEl.disabled = true;
@@ -1890,7 +1890,11 @@
             } else if (res.status === 202) {
                 show('Review started: reload this page when it finishes', false);
             } else if (res.status === 409) {
-                show('a review is already running', false);
+                if (res.body && res.body.status === 'market_open') {
+                    show('Run tenure review is available outside market hours: the Composer API is shared with the live engine.', true);
+                } else {
+                    show('a review is already running', false);
+                }
             } else if (res.status === 401) {
                 show('Session expired: sign in again', true);
             } else if (res.status === 200) {

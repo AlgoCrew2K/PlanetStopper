@@ -12183,12 +12183,15 @@ def ai_advisor_retirement_run():
 def ai_advisor_retirement_review_run():
     """Start one on-demand symphony tenure review in the background.
 
-    Reads no body. Claims the single run slot (409 when a review is running),
-    runs the job on a daemon thread (a stop never waits on a review) and answers
+    Reads no body. Refuses with 409 market_open while the market is open (the
+    Composer API is shared with the live engine), before any slot is claimed.
+    Claims the single run slot (409 when a review is running), runs the job on a daemon thread (a stop never waits on a review) and answers
     202 at once. A thread that cannot be built or started gives the slot back
     and answers 200 with the exception type name only. Advisory only: no
     Composer write, no trade primitive.
     """
+    if get_market_state(datetime.now(_ET)) == "open":
+        return jsonify({"status": "market_open"}), 409
     from advisors import tenure_review  # lazy (CC-2)
 
     owner = tenure_review.REVIEW_RUN_STATE.try_start("on_demand")

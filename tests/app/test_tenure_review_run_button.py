@@ -674,3 +674,102 @@ class TestRefusalsAreStyledNegative:
         assert _is_negative(out["afterRefusal"])
         assert out["afterSuccess"]["message"] == MESSAGES[202]
         assert not _is_negative(out["afterSuccess"]), "the refusal's styling is still on"
+
+
+# ---------------------------------------------------------------------------
+# A request made while the market is open is refused with its own message.
+# ---------------------------------------------------------------------------
+
+MARKET_OPEN_MESSAGE = (
+    "Run tenure review is available outside market hours: "
+    "the Composer API is shared with the live engine."
+)
+REFUSED_CLASS = "tenure-review-run-message--refused"
+MARKET_OPEN_RUN = {
+    "mode": "status",
+    "status": 409,
+    "kind": "json",
+    "body": {"status": "market_open"},
+}
+
+
+class TestAMarketHoursRefusalIsSaidAsOne:
+    def test_the_message_names_the_market_hours_and_is_styled_as_a_refusal(self):
+        out = _run(_CLICK_AND_SETTLE, run=MARKET_OPEN_RUN, csrf_preset="tok")
+
+        state = out["state"]
+        assert state["message"] == MARKET_OPEN_MESSAGE
+        assert REFUSED_CLASS in state["classes"]
+        assert _is_negative(state), (
+            "a refusal uses the negative token; an already-running notice does not"
+        )
+
+    def test_the_button_is_released_and_exactly_one_request_was_sent(self):
+        out = _run(_CLICK_AND_SETTLE, run=MARKET_OPEN_RUN, csrf_preset="tok")
+
+        assert out["state"]["disabled"] is False
+        assert out["state"]["runCalls"] == 1, "a refused request is not sent again"
+
+    def test_text_in_the_body_never_replaces_the_fixed_message(self):
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={
+                "mode": "status",
+                "status": 409,
+                "kind": "json",
+                "body": {"status": "market_open", "message": HOSTILE, "error": HOSTILE},
+            },
+            csrf_preset="tok",
+        )
+
+        assert out["state"]["message"] == MARKET_OPEN_MESSAGE
+        assert not any("<img" in html for html in out["log"]["innerHtml"])
+
+    @pytest.mark.parametrize(
+        "body",
+        [{"status": "already_running"}, {"status": HOSTILE}, {}, {"status": "market_closed"}],
+        ids=["already running", "hostile status", "empty", "another status"],
+    )
+    def test_any_other_409_still_says_a_review_is_already_running_and_is_not_a_refusal(self, body):
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={"mode": "status", "status": 409, "kind": "json", "body": body},
+            csrf_preset="tok",
+        )
+
+        assert out["state"]["message"] == MESSAGES[409]
+        assert REFUSED_CLASS not in out["state"]["classes"]
+        assert not _is_negative(out["state"])
+
+    def test_a_409_whose_body_cannot_be_read_still_says_a_review_is_already_running(self):
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={"mode": "status", "status": 409, "kind": "html"},
+            csrf_preset="tok",
+        )
+
+        assert out["state"]["message"] == MESSAGES[409]
+        assert out["state"]["disabled"] is False
+
+    def test_the_refusal_styling_does_not_stay_on_the_message_of_the_next_success(self):
+        driver = """
+        retRunReview(__button);
+        await __flush();
+        out.afterRefusal = __state();
+        retRunReview(__button);
+        await __flush();
+        out.afterSuccess = __state();
+        """
+        out = _run(
+            driver,
+            run=[
+                MARKET_OPEN_RUN,
+                {"mode": "status", "status": 202, "kind": "json", "body": {"status": "started"}},
+            ],
+            csrf_preset="tok",
+        )
+
+        assert out["afterRefusal"]["message"] == MARKET_OPEN_MESSAGE
+        assert out["afterSuccess"]["message"] == MESSAGES[202]
+        assert REFUSED_CLASS not in out["afterSuccess"]["classes"]
+        assert out["afterSuccess"]["runCalls"] == 2
