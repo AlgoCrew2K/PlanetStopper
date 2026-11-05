@@ -596,42 +596,6 @@
       color: var(--studio-ink);
     }
 
-    /* Cash Now: a sell control, kept outlined in the danger colour and clearly a button. */
-    .cash-now-btn {
-      height: 28px;
-      padding: 0 12px;
-      border-radius: 8px;
-      background: transparent;
-      color: var(--studio-neg);
-      font-size: 12px;
-      font-weight: 500;
-      border: 1px solid var(--studio-neg);
-      cursor: pointer;
-      font-family: var(--studio-sans);
-      transition: color 120ms ease, background-color 120ms ease;
-    }
-    .cash-now-btn:hover {
-      background: var(--studio-neg);
-      color: var(--studio-white);
-    }
-    .cash-now-btn:disabled {
-      opacity: 0.4;
-      cursor: default;
-    }
-    .cash-now-btn:disabled:hover {
-      background: transparent;
-      color: var(--studio-neg);
-    }
-    /* The note a refused sale leaves hangs under the button, so the row keeps its columns. */
-    [data-testid="cash-now-note"] {
-      position: absolute;
-      top: calc(100% + 4px);
-      right: 0;
-      white-space: nowrap;
-      font-size: 11px;
-      color: var(--studio-neg);
-    }
-
     .triggered-verdict {
       font-size: 12px;
       color: var(--studio-ink-dim);
@@ -780,7 +744,6 @@
       .card-footer-grid .cfg-label .row-note { white-space: normal; text-align: right; }
       .page-dashboard .mini-stats { gap: 16px; flex-wrap: wrap; }
       .fleet-banner { flex-wrap: wrap; }
-      [data-testid="cash-now-note"] { position: static; flex-basis: 100%; text-align: right; white-space: normal; }
     }
 
     /* ---- Dashboard banners (hidden by default; the script shows them) ---- */
@@ -1712,7 +1675,6 @@
                       aria-label="Symphony settings"
                       data-symphony-id="{{ sym.get('id','') }}"
                       onclick="openSymphonySettings(event,'{{ sym.get('id','') }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-              <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
             </div>
           </div>
 
@@ -1808,7 +1770,6 @@
                       aria-label="Symphony settings"
                       data-symphony-id="{{ sym.get('id','') }}"
                       onclick="openSymphonySettings(event,'{{ sym.get('id','') }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-              <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
             </div>
           </div>
 
