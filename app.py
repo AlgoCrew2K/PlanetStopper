@@ -190,9 +190,105 @@ _auth_check_enabled: bool = True
 # Minimal set of endpoints exempt from the auth gate.  'static' must be
 # included so the login page renders its CSS/JS; 'login' and 'logout' are the
 # auth-flow routes themselves; 'get_csrf_token' is safe (no sensitive data).
-_AUTH_EXEMPT_ENDPOINTS: frozenset[str] = frozenset(
-    {"login", "logout", "static", "get_csrf_token", "health"}
+_AUTH_EXEMPT_ENDPOINTS: frozenset[str] = frozenset({"login", "static", "get_csrf_token", "health"})
+
+# Session lifetime: a session ends this many hours after its login, and requests never extend it.
+_SESSION_LIFETIME_HOURS_DEFAULT: int = 12  # hours
+_SESSION_LIFETIME_HOURS_MAX: int = 720  # hours (30 days)
+
+
+def _session_lifetime_hours(raw: str | None) -> int:
+    """Parse DASHBOARD_SESSION_LIFETIME_HOURS: whole hours 1..720, else the 12 h default.
+
+    A malformed value logs one warning that never prints the value.
+    """
+    if raw is None or raw == "":
+        return _SESSION_LIFETIME_HOURS_DEFAULT
+    if re.fullmatch(r"[0-9]+", raw, flags=re.ASCII):
+        hours = int(raw)
+        if 1 <= hours <= _SESSION_LIFETIME_HOURS_MAX:
+            return hours
+    logging.getLogger("alphabot").warning(
+        "DASHBOARD_SESSION_LIFETIME_HOURS is not a whole number of hours from 1 to %d; using %d",
+        _SESSION_LIFETIME_HOURS_MAX,
+        _SESSION_LIFETIME_HOURS_DEFAULT,
+    )
+    return _SESSION_LIFETIME_HOURS_DEFAULT
+
+
+app.permanent_session_lifetime = timedelta(
+    hours=_session_lifetime_hours(os.environ.get("DASHBOARD_SESSION_LIFETIME_HOURS"))
 )
+
+
+def _session_now_ns() -> int:
+    """The clock for session issue and expiry checks (a seam for tests)."""
+    return time.time_ns()
+
+
+_PROCESS_STARTED_NS: int = time.time_ns()
+
+# Sessions issued at or before this instant are refused. None until first read from the database.
+_session_revoked_before_ns: int | None = None
+_SESSION_REVOCATION_LOCK = threading.Lock()
+
+
+def _revocation_floor_ns() -> int:
+    """The revocation floor, read from the database once per process.
+
+    An unreadable record refuses every session issued before this process started.
+    """
+    global _session_revoked_before_ns
+    with _SESSION_REVOCATION_LOCK:
+        if _session_revoked_before_ns is None:
+            try:
+                _session_revoked_before_ns = database.get_session_revocation_floor_ns()
+            except Exception as exc:
+                _daemon_log.error(
+                    "Session revocation record unreadable (%s); refusing sessions issued"
+                    " before this process started",
+                    type(exc).__name__,
+                )
+                _session_revoked_before_ns = _PROCESS_STARTED_NS
+        return _session_revoked_before_ns
+
+
+def _revoke_sessions_issued_before(now_ns: int) -> bool:
+    """End every session issued before now_ns; False when the stored record could not be written.
+
+    The in-memory floor is raised first, so the running process refuses them either way.
+    """
+    global _session_revoked_before_ns
+    current = _revocation_floor_ns()
+    with _SESSION_REVOCATION_LOCK:
+        _session_revoked_before_ns = max(current, _session_revoked_before_ns or 0, now_ns)
+    try:
+        database.record_session_revocation(now_ns)
+    except Exception as exc:
+        _daemon_log.error(
+            "Session revocation could not be stored (%s); earlier sessions end only until"
+            " the daemon restarts",
+            type(exc).__name__,
+        )
+        return False
+    return True
+
+
+def _session_issue_is_valid(issued: object, now_ns: int) -> bool:
+    """True for an integer issue time after the revocation floor and within the lifetime."""
+    if not isinstance(issued, int) or isinstance(issued, bool):
+        return False
+    if issued <= _revocation_floor_ns():
+        return False
+    lifetime_ns = int(app.permanent_session_lifetime.total_seconds() * 1_000_000_000)
+    return now_ns - issued <= lifetime_ns
+
+
+def _session_is_valid() -> bool:
+    return session.get("authenticated") is True and _session_issue_is_valid(
+        session.get("issued_at_ns"), _session_now_ns()
+    )
+
 
 # In-memory throttle: maps client IP -> (fail_count, lockout_until_timestamp).
 # Reset per-process; intentionally simple — single-operator dashboard.
@@ -304,7 +400,7 @@ def _auth_before_request():
         return redirect(url_for("login"))
 
     # Authenticated session — let the request through.
-    if session.get("authenticated"):
+    if _session_is_valid():
         return None
 
     # Not authenticated — redirect HTML requests to login, 401 for API/XHR.
@@ -318,9 +414,14 @@ def login():
     """Login page: GET renders the form; POST processes the credential."""
     if request.method == "GET":
         # Already authenticated — send to dashboard (AC-13).
-        if session.get("authenticated"):
+        if _session_is_valid():
             return redirect(url_for("dashboard"))
-        return render_template("login.html", csrf_token=_CSRF_TOKEN, error=None)
+        notice = (
+            _LOGOUT_NOT_DURABLE_TEXT
+            if session.get("logout_notice") == _LOGOUT_NOT_DURABLE_FLAG
+            else None
+        )
+        return render_template("login.html", csrf_token=_CSRF_TOKEN, error=notice)
 
     # POST — process the login attempt.  Do NOT short-circuit on an authenticated
     # session here: the credential must be re-verified so a wrong-password POST
@@ -383,13 +484,24 @@ def login():
     _clear_failed_attempts(client_ip)
     session.clear()
     session["authenticated"] = True
+    # max(): a login in the same clock tick as a logout must still outrank the floor.
+    session["issued_at_ns"] = max(_session_now_ns(), _revocation_floor_ns() + 1)
     return redirect(url_for("dashboard"))
 
 
-@app.route("/logout", methods=["GET"])
+_LOGOUT_NOT_DURABLE_FLAG = "revocation_not_durable"
+_LOGOUT_NOT_DURABLE_TEXT = "Signed out. Other sessions are ended until the daemon restarts."
+
+
+@app.route("/logout", methods=["GET", "POST"])
 def logout():
-    """Clear the session and redirect to the login page."""
+    """GET shows the confirm page; POST ends every session issued before now."""
+    if request.method == "GET":
+        return render_template("login.html", csrf_token=_CSRF_TOKEN, confirm_logout=True)
+    durable = _revoke_sessions_issued_before(_session_now_ns())
     session.clear()
+    if not durable:
+        session["logout_notice"] = _LOGOUT_NOT_DURABLE_FLAG
     return redirect(url_for("login"))
 
 
@@ -5252,6 +5364,12 @@ def sse_events():
     """
 
     client_q: queue.Queue = queue.Queue()
+    # The generator runs outside the request context, so read the session here.
+    enforce_session = _auth_check_enabled
+    issued = session.get("issued_at_ns")
+
+    def session_ended() -> bool:
+        return enforce_session and not _session_issue_is_valid(issued, _session_now_ns())
 
     def generate():
         with _sse_clients_lock:
@@ -5261,8 +5379,12 @@ def sse_events():
             while True:
                 try:
                     name, data = client_q.get(timeout=_SSE_HEARTBEAT_S)
+                    if session_ended():
+                        return
                     yield f"event: {name}\ndata: {data}\n\n"
                 except queue.Empty:
+                    if session_ended():
+                        return
                     yield ": heartbeat\n\n"
         finally:
             # PEP 342: close() throws GeneratorExit into the generator; a `finally`
