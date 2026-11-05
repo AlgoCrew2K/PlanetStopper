@@ -10,10 +10,33 @@ migrated_db on our behalf and we seed into whatever DB path it returns.
 """
 
 import json
+import logging
 
 import pytest
 
-import database as db_module
+
+def _import_database_leaving_root_handlers_as_found():
+    """Import ``database`` without leaving a root-logger handler behind.
+
+    Importing ``database`` runs ``init_db()``, and a migration that finds its columns already
+    present logs through the root-level ``logging.info``. With no handler on the root logger
+    (the state at collection time) that call runs ``logging.basicConfig()``, which installs a
+    NOTSET stream handler on pytest's captured stderr for the rest of the session. Every logger
+    that propagates then reports that handler, so a test asserting that a logger's info lines
+    never reach standard error fails whenever this conftest is collected first.
+    """
+    root = logging.getLogger()
+    before = list(root.handlers)
+    import database  # noqa: PLC0415 - the import is what installs the handler
+
+    for handler in list(root.handlers):
+        if handler not in before:
+            root.removeHandler(handler)
+            handler.close()
+    return database
+
+
+db_module = _import_database_leaving_root_handlers_as_found()
 
 
 @pytest.fixture(autouse=True)
