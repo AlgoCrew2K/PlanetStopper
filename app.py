@@ -287,7 +287,6 @@ def _revoke_sessions_issued_before(now_ns: int) -> bool:
     try:
         # One statement stores both, so a logout is fully durable or reported not durable.
         database.record_session_logout(floor, generation)
-        database.record_session_revocation(floor)
     except Exception as exc:
         _daemon_log.error(
             "Session revocation could not be stored (%s); earlier sessions end only until"
