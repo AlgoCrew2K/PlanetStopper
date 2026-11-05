@@ -31,6 +31,7 @@ from unittest.mock import patch
 import pytest
 
 import math_engine
+from tests.execution import test_regime_label_session_read as session_read
 from tests.execution._dip_sequence import run_sequences
 from tests.execution.test_main_pipeline import (
     _SYMPHONY_NAME,
@@ -188,6 +189,42 @@ class TestOnlyTheCountDiffers:
         (line,) = _dip_lines(capsys.readouterr().out)
         mask = lambda s: re.sub(r"Awaiting \d+-tick", "Awaiting N-tick", s)  # noqa: E731
         assert mask(line) == mask(_REF_FORMAT)
+
+
+# The reference cuts the symphony name in the dip line to its first 35 characters; the default
+# harness name is shorter, so only a longer name reaches the cut.
+_REF_NAME_CUT = 35
+_LONG_NAME_BASE = "Risk-Parity Dynamic Allocation Overlay Strategy"
+
+
+class TestDipLineCutsTheNameWhereTheReferenceDoes:
+    @pytest.mark.parametrize(
+        "name_length",
+        [_REF_NAME_CUT - 1, _REF_NAME_CUT, _REF_NAME_CUT + 1, len(_LONG_NAME_BASE)],
+        ids=["one_short_of_the_cut", "at_the_cut", "one_past_the_cut", "well_past_the_cut"],
+    )
+    def test_the_name_portion_is_the_first_35_characters_and_the_rest_of_the_line_is_unchanged(
+        self,
+        engine,
+        capsys,
+        monkeypatch,
+        name_length,  # noqa: F811
+    ):
+        name = _LONG_NAME_BASE[:name_length]
+
+        def _payload_with_the_long_name(last_percent_change):
+            return {**_real_payload(last_percent_change), "name": name}
+
+        _real_payload = session_read._make_symphony_payload
+        monkeypatch.setattr(session_read, "_make_symphony_payload", _payload_with_the_long_name)
+        capsys.readouterr()
+        engine.tick(_QUALIFYING_PCT)
+        (line,) = _dip_lines(capsys.readouterr().out)
+
+        count = _expected_count(None, None)
+        assert line == (
+            f"  ⚠️ {name[:_REF_NAME_CUT]} dipped below stop. Awaiting {count}-tick confirmation..."
+        )
 
 
 class TestNoRepeatLineWhileCountingUp:
