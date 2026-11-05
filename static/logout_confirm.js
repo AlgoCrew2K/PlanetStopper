@@ -7,6 +7,9 @@
   var message = document.querySelector('[data-testid="logout-message"]');
   if (!form || !button || !message) return;
 
+  // The process token rendered with the page, used when the fetched token has not arrived yet.
+  var pageToken = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+
   function show(text) {
     message.textContent = text;
     message.hidden = false;
@@ -20,7 +23,7 @@
 
     PSRequest.postAction('/logout', {
       method: 'POST',
-      headers: { 'X-CSRF-Token': PSRequest.csrfToken() || '' }
+      headers: { 'X-CSRF-Token': PSRequest.csrfToken() || pageToken }
     }).then(function (res) {
       if (res.ok) {
         location.assign('/login');

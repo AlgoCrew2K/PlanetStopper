@@ -1886,7 +1886,7 @@
                 show('Request failed: network error', true);
             } else if (res.refused === 'csrf') {
                 // Nothing started and nothing is sent again: the next click sends one request.
-                show(PSRequest.notSentText(res, 'Click Run review now again.'), true);
+                show(PSRequest.notSentText(res, 'Choose Run tenure review again.'), true);
             } else if (res.status === 202) {
                 show('Review started: reload this page when it finishes', false);
             } else if (res.status === 409) {
