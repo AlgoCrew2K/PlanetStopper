@@ -288,6 +288,25 @@ class TestEngineFinishWaitExemption:
             "the exemption no longer matches the function by its name and file"
         )
 
+    def test_the_real_engine_finish_wait_is_not_recorded_but_another_event_wait_is(
+        self, monkeypatch
+    ):
+        """The wait is made for real here, so the verdict never depends on machine load."""
+        recorder = _SchedulerWaitRecorder(threading.current_thread().name)
+        recorder.install(monkeypatch)
+        recorder.active = True
+        exited_process = SimpleNamespace(poll=lambda: 0)
+        monkeypatch.setattr(
+            app_module, "_engine_process", ("cycle", exited_process, threading.Event())
+        )
+        monkeypatch.setattr(app_module, "_ENGINE_FINISH_WAIT_S", 0.01)
+
+        app_module._reap_exited_engine_run()
+        assert recorder.waits == [], "the engine run's finish wait is not a wait on the refresh"
+
+        threading.Event().wait(0.01)
+        assert recorder.waits == ["Event.wait"], "an Event wait from any other caller is recorded"
+
     def test_a_wait_from_any_other_function_is_not_exempt(self):
         def _reap_exited_engine_run():  # same name, defined in this file, not in app.py
             return sys._getframe(0).f_code
