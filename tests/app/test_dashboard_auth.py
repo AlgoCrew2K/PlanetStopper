@@ -298,6 +298,9 @@ class TestLoginFlow:
         mock_db.load_state.return_value = {}
         mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
         mock_db.get_symphony_strategy.return_value = None
+        # The session check reads the stored revocation instant; a bare MagicMock would answer
+        # a MagicMock where an integer is required.
+        mock_db.get_session_revocation_floor_ns.return_value = 0
 
         with patch.object(app_module, "database", mock_db):
             auth_client.post(
@@ -371,11 +374,13 @@ class TestLogout:
         assert "Sign out of Planet Stopper?" in page
         assert "Planet Stopper" in page and "login-card" in page
         assert re.search(r"<title>[^<]*Sign Out[^<]*</title>", page)
-        form = re.search(r"<form[^>]*>", page)
+        form = re.search(r"<form\b[^>]*>", page)
         assert form, "the confirm page has no form"
         assert 'id="logout-form"' in form.group(0)
         assert 'action="/logout"' in form.group(0) and 'method="post"' in form.group(0).lower()
-        button = re.search(r'<button[^>]*data-testid="logout-btn"[^>]*>(.*?)</button>', page, re.S)
+        button = re.search(
+            r'<button\b[^>]*data-testid="logout-btn"[^>]*>(.*?)</button>', page, re.S
+        )
         assert button and button.group(1).strip() == "Sign out"
 
     def test_the_confirm_page_has_no_password_field_and_no_form_token(self, auth_client_authed):
@@ -395,12 +400,12 @@ class TestLogout:
         names = [s.split("/static/", 1)[1].split("?", 1)[0] for s in sources if "/static/" in s]
         assert "request_guard.js" in names and "logout_confirm.js" in names, names
         assert names.index("request_guard.js") < names.index("logout_confirm.js")
-        inline = [m for m in re.findall(r"<script([^>]*)>", page) if " src=" not in " " + m]
+        inline = [m for m in re.findall(r"<script\b([^>]*)>", page) if " src=" not in " " + m]
         assert inline == [], "the POST must live in a static script, not in the template"
 
     def test_the_confirm_page_has_a_hidden_alert_slot_for_a_refusal(self, auth_client_authed):
         page = auth_client_authed.get("/logout").get_data(as_text=True)
-        slot = re.search(r'<div[^>]*data-testid="logout-message"[^>]*>', page)
+        slot = re.search(r'<div\b[^>]*data-testid="logout-message"[^>]*>', page)
         assert slot, "no data-testid=logout-message slot"
         assert "hidden" in slot.group(0) and 'role="alert"' in slot.group(0)
 

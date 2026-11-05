@@ -573,8 +573,11 @@ class TestLogoutEndsEverySessionIssuedBefore:
         assert len(responses) == 2
         for response in responses:
             _assert_logged_in_at_logout_redirect(response)
-        assert len(stamps) == 2 and database.get_session_revocation_floor_ns() == max(stamps), (
-            "the stored floor must be the later of the two logouts"
+        # The twin whose hook runs after the first logout is refused by the hook and records
+        # nothing; both record only when both hooks pass first. Either way the stored floor is
+        # the latest stamp any logout recorded.
+        assert stamps and database.get_session_revocation_floor_ns() == max(stamps), (
+            "the stored floor must be the later of the recorded logouts"
         )
         for twin in clients:
             _assert_refused(twin, "a twin of the signed-out session")
