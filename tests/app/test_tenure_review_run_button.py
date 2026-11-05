@@ -54,7 +54,7 @@ MESSAGES = {
 def _says_not_sent(message: str) -> bool:
     """A 403 is the session check refusing the click: the control says nothing was sent and which click
     sends it (the wording belongs to the shared helper, so the contract is what it must convey)."""
-    return bool(re.search(r"not sent", message, re.I) and re.search(r"click", message, re.I))
+    return bool(re.search(r"not sent", message, re.I) and re.search(r"click|choose", message, re.I))
 
 
 def _source() -> str:
