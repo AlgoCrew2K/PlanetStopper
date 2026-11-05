@@ -3364,6 +3364,7 @@ _HEADER_READ_ENTRY_POINT_FN_NAMES = [
     "header_status",
     "frontrunner_build_last_run",
     "armed_symphonies",
+    "health",
 ]
 # `_build_meta` renders the mode word from the live flag it READS; that read is a display of the
 # flag, not a write, and exists apart from these routes (the state route's walk allows the same hit).

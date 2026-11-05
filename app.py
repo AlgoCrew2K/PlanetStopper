@@ -7,6 +7,7 @@ import copy
 import functools
 import hmac
 import inspect
+import ipaddress
 import json
 import logging
 import math
@@ -487,6 +488,27 @@ def get_csrf_token():
     return jsonify({"csrf_token": _CSRF_TOKEN})
 
 
+def _peer_is_loopback(addr: str | None) -> bool:
+    """True when ``addr`` is a loopback address (IPv4-mapped IPv6 unwrapped); False on any garbage."""
+    try:
+        ip = ipaddress.ip_address(addr)
+        mapped = getattr(ip, "ipv4_mapped", None)
+        if mapped is not None:
+            ip = mapped
+        return bool(ip.is_loopback)
+    except (ValueError, TypeError):
+        return False
+
+
+def _health_caller_is_on_box() -> bool:
+    """On box = loopback peer AND no proxy header; header presence decides, never its value."""
+    return (
+        "X-Forwarded-For" not in request.headers
+        and "Forwarded" not in request.headers
+        and _peer_is_loopback(request.remote_addr)
+    )
+
+
 @app.route("/health")
 def health():
     """Minimal unauthenticated liveness probe (F-005).
@@ -501,13 +523,15 @@ def health():
         _state = database.load_state()
     except Exception:
         _state = {}
-    return jsonify(
-        {
-            **_health_view(_state, _now_et()),
-            "daemon_started_at": _DAEMON_STARTED_AT,
-            "last_successful_cycle_at": _state.get("last_successful_cycle_at"),
-        }
-    )
+    body = {
+        **_health_view(_state, _now_et()),
+        "daemon_started_at": _DAEMON_STARTED_AT,
+        "last_successful_cycle_at": _state.get("last_successful_cycle_at"),
+    }
+    if not _health_caller_is_on_box():
+        # Proxied or remote callers get liveness only; the status was computed from the full view.
+        body = {k: body[k] for k in ("status", "daemon_started_at", "last_successful_cycle_at")}
+    return jsonify(body)
 
 
 @app.route("/api/header-status")
