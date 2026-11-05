@@ -1,5 +1,8 @@
 """Produces `baseline.json` for the dashboard page from the reference commit.
 
+The reference commit is `REFERENCE_COMMIT` below, not the one `tests/app/_state_poll_worlds.py` names
+for the golden `/api/state` bodies (that file is not edited here).
+
 Not collected by default (no `test_` prefix, marker `browser`). The file sits in `tests/ui/` so the
 directory conftest applies as it does to `test_state_poll_page_unchanged_browser.py`. To
 regenerate, check the reference commit out in a throwaway worktree, copy this file, the capture
@@ -22,10 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.app._state_poll_worlds import (
-    REFERENCE_COMMIT,
-    refuse_unless_production_equals_the_reference,
-)
+from tests.app import _state_poll_worlds as worlds
 from tests.app.conftest import _reset_scheduler_run_state  # noqa: F401  (autouse, health state)
 from tests.ui._shell_support import (  # noqa: F401  (fixtures: the two overrides, empty directory)
     _empty_post_mortem_directory,
@@ -38,11 +38,15 @@ from tests.ui._state_poll_page_capture import SCENARIOS, capture_scenario
 pytestmark = pytest.mark.browser
 
 FIRST_SCENARIO = next(iter(SCENARIOS))
+# The page baseline is read at the commit that removed the per-card Cash Now control: its card text is
+# the one thing the page lost since the poll cleanup reference, which the golden producer keeps.
+REFERENCE_COMMIT = "5b0ea52ac3011fd370f3c71b2221849cec7387f8"
 
 
 @pytest.mark.parametrize("name", list(SCENARIOS))
 def test_write_scenario(firefox, monkeypatch, tmp_path, name):  # noqa: F811
-    refuse_unless_production_equals_the_reference()
+    monkeypatch.setattr(worlds, "REFERENCE_COMMIT", REFERENCE_COMMIT)
+    worlds.refuse_unless_production_equals_the_reference()
     out = Path(os.environ["BASELINE_OUT"]) / "baseline.json"
     if name == FIRST_SCENARIO or not out.exists():
         recorded = {
