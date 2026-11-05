@@ -270,3 +270,16 @@ class TestTheLiquidationRouteIsUntouchedByTheRemoval:
         assert digest == SELL_ACCOUNT_SOURCE_AT_BRANCH_BASE_SHA256, (
             "app.sell_account changed. STOP: the liquidation route is protected; ask before re-pinning."
         )
+
+
+class TestNoRecordedBaselineKeepsTheControl:
+    @pytest.mark.parametrize(
+        "baseline",
+        ["primitives_baseline", "shell_baseline", "state_poll_page_baseline"],
+    )
+    def test_the_recorded_dashboard_baseline_names_no_cash_control(self, baseline):
+        text = (REPO / "tests" / "fixtures" / "dashboard" / baseline / "baseline.json").read_text(
+            encoding="utf-8"
+        )
+        found = [token for token in REMOVED_TOKENS if token in text.lower()]
+        assert found == [], f"{baseline} still records the removed control: {found}"
