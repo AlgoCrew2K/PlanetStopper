@@ -1,6 +1,6 @@
 """Drive every operator POST control once and return the request it sends.
 
-TEST-ONLY. One driver per control in the census (the dashboard's Cash Now, fleet Dismiss and
+TEST-ONLY. One driver per control in the census (the dashboard's fleet Dismiss and
 Managed Sleeves buttons in the whole-file harness of ``tests/dashboard/_index_js_harness``; every
 other control in ``tests/ui/_page_js_harness`` over the page that carries it). Each driver clicks the
 control with fixed inputs, answers the POST with a plain success, and returns the one request the
