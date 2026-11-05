@@ -716,7 +716,9 @@ class TestTheRequestIsTheSameForEveryAnswer:
 
 # Recorded at the plan base with: python -c "import hashlib,inspect,app; ..." over
 # inspect.getsource(app.sell_account) with CRLF normalized to LF.
-SELL_ACCOUNT_SOURCE_SHA256 = "c73b05f5273dade83023ff3034de21f10d5946ff24307a1337a0a4c0195b277c"
+# Re-taken for plan hygiene-waves-3-4: its only change is the LIVE_EXECUTION parse line,
+# now env_flags.is_true(env_vars.get("LIVE_EXECUTION", "False")).
+SELL_ACCOUNT_SOURCE_SHA256 = "f4ef8466d51596213954cc9c3e197f1c231055ad6f307178b078a29071eca80c"
 MANUAL_TRIGGER_SOURCE_SHA256 = "38bf64b4e577831c1b2dfbda2bcfa3a5ee8fcbfdd9228b147e410126ed2e271c"
 # templates/_chrome.html from "<!-- Right-rail: mode pill -->" up to (not including) "</nav></div>":
 # the mode pill, Force run now and Emergency Liquidate. The panic modal's own <style> block sits

@@ -3,7 +3,7 @@
 Names with no production caller were deleted: a deleted name must not be defined, called,
 patched, imported or named in a string anywhere in the repository, because a test that patches
 a name the module no longer has fails at collection. The scan is an AST walk of every tracked
-Python file (the pattern of tests/dashboard/test_table_partial_retired.py), so a comment or a
+Python file (the pattern of the retired-template test in tests/dashboard), so a comment or a
 docstring that explains the removal is never a hit; only a Name, an Attribute, a definition, an
 import alias, or a one-token string constant (the shape of a patch target or a ``getattr`` name)
 is.
