@@ -533,12 +533,14 @@ class TestLogoutEndsEverySessionIssuedBefore:
 
     def test_a_login_in_the_same_clock_tick_as_the_logout_is_served(self, clock):
         session_a = _signed_in(clock)
+        copied = _client()
+        _copy_session(session_a, copied)
         _assert_logged_in_at_logout_redirect(_post_logout(session_a))
 
         session_c = _signed_in(clock)
 
         _assert_served(session_c, "a login in the tick of the logout")
-        _assert_refused(session_a, "the session that signed out")
+        _assert_refused(copied, "a copy of the session issued in the tick of the logout")
 
     def test_two_simultaneous_logouts_both_redirect_and_leave_the_later_login_served(self, clock):
         clock.tick = 1_000
