@@ -376,6 +376,9 @@ def _disable_auth_for_tests(monkeypatch):
     # Reset the in-memory throttle dict between tests so failed-attempt counts
     # from one test do not bleed into the next.
     _app_module._AUTH_FAILED_ATTEMPTS.clear()
+    # The process-wide session revocation instant is read from the database once and cached:
+    # forget it so no test inherits another test's logout or database.
+    monkeypatch.setattr(_app_module, "_session_revoked_before_ns", None, raising=False)
 
 
 @pytest.fixture(autouse=True)

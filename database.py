@@ -1732,6 +1732,45 @@ def set_candidate_alert_viewed_marker(observation_id: int) -> int:
     return row[0] if row else observation_id
 
 
+def get_session_revocation_floor_ns() -> int:
+    """Return the stored session revocation floor in nanoseconds, 0 when no row exists.
+
+    Raises on any other failure: the caller must tell "never revoked" from "unreadable".
+    """
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT revoked_before_ns FROM dashboard_session_revocation WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row else 0
+
+
+def record_session_revocation(floor_ns: int) -> int:
+    """Move the session revocation floor forward; returns the stored value.
+
+    Monotonic: an earlier instant never moves the floor back. Raises on failure.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO dashboard_session_revocation (id, revoked_before_ns, updated_at) "
+            "VALUES (1, ?, datetime('now')) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "revoked_before_ns = MAX(revoked_before_ns, excluded.revoked_before_ns), "
+            "updated_at = datetime('now')",
+            (floor_ns,),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT revoked_before_ns FROM dashboard_session_revocation WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0])
+
+
 def mark_candidate_alert_viewed() -> int:
     """Advance the candidate-alert viewed-marker to the current max weekly-
     suggestion observation id.
@@ -1876,6 +1915,7 @@ _MIGRATION_FILES = [
     "037_strategy_incubation.sql",
     "038_retirement_decisions.sql",
     "039_close_account_totals.sql",
+    "040_dashboard_session_revocation.sql",
 ]
 
 

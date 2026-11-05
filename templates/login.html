@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Planet Stopper — Sign In</title>
+  <title>Planet Stopper — {% if confirm_logout %}Sign Out{% else %}Sign In{% endif %}</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
   <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
@@ -112,6 +112,15 @@
       Planet Stopper
       <span>guard</span>
     </div>
+{% if confirm_logout %}
+    <div class="login-subtitle">Sign out of Planet Stopper?</div>
+
+    <div class="login-error" role="alert" data-testid="logout-message" hidden></div>
+
+    <form id="logout-form" action="/logout" method="post">
+      <button class="login-btn" type="submit" data-testid="logout-btn">Sign out</button>
+    </form>
+{% else %}
     <div class="login-subtitle">Sign in to continue</div>
 
     {% if error %}
@@ -135,6 +144,11 @@
 
       <button class="login-btn" type="submit">Sign in</button>
     </form>
+{% endif %}
   </div>
+  {% if confirm_logout %}
+  <script src="{{ url_for('static', filename='request_guard.js') }}"></script>
+  <script src="{{ url_for('static', filename='logout_confirm.js') }}"></script>
+  {% endif %}
 </body>
 </html>

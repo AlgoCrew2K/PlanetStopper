@@ -1,0 +1,924 @@
+"""A dashboard session ends 12 hours after login and a logout ends every earlier session.
+
+Contract pinned (the tests below read the daemon only through its routes and four named seams):
+
+* A session carries the instant of its login. A request whose session was issued longer ago than the
+  session lifetime (12 hours, or the whole number of hours from 1 to 720 in the optional ``.env`` key
+  ``DASHBOARD_SESSION_LIFETIME_HOURS``) gets the unauthenticated outcome: an HTML request is redirected
+  (302) to ``/login``, an ``/api/`` or XHR request gets 401 ``{"error": "unauthenticated"}``. Requests
+  made during the session never extend it.
+* ``POST /logout`` (header CSRF token only) records a revocation instant. Every session issued at or
+  before it is refused from then on, on every browser, also after a daemon restart. A session issued by
+  a later login is served. A logout without a valid session revokes nothing.
+* When the revocation cannot be written, every earlier session stays refused for the life of the
+  process, one ERROR line names the exception type only, and the login page says other sessions end
+  when the daemon restarts. When the stored revocation cannot be read at start, every session issued
+  before the start is refused.
+
+Seams: ``app._session_now_ns`` (the clock, patched through ``clock``), ``app._session_revoked_before_ns``
+and ``app._PROCESS_STARTED_NS`` (reset to simulate a restart), and ``database.record_session_revocation``
+/ ``database.get_session_revocation_floor_ns`` (the stored revocation, patched to raise). Every cookie is
+issued by the real ``POST /login``; the real ``.env`` is never read.
+"""
+
+from __future__ import annotations
+
+import ast
+import logging
+import pathlib
+import sqlite3
+import threading
+import time
+from datetime import timedelta
+
+import pytest
+
+import app as app_module
+import database
+
+_PASSWORD = "session-test-pass-4f8a1c"
+_SECRET = "session-test-secret-9b2d7e"
+_ACCOUNTS = "/api/accounts"
+_NS = 1_000_000_000
+_XHR = {"X-Requested-With": "XMLHttpRequest"}
+_UNAUTHENTICATED = {"error": "unauthenticated"}
+_LIFETIME_KEY = "DASHBOARD_SESSION_LIFETIME_HOURS"
+_NOT_DURABLE_LINE = "Signed out. Other sessions are ended until the daemon restarts."
+_RUN_URL = "/ai-advisor/retirement/run"
+_APP_PY = pathlib.Path(app_module.__file__)
+_SENTINEL_DETAIL = "sentinel-database-detail-7c1e"
+
+
+# ---------------------------------------------------------------------------
+# Fixtures and helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def gate(monkeypatch, tmp_path):
+    """The auth gate on, a known credential and secret, a 12 hour lifetime, a temporary ``.env``."""
+    monkeypatch.setenv("DASHBOARD_PASSWORD", _PASSWORD)
+    monkeypatch.setenv("SECRET_KEY", _SECRET)
+    for name in ("DASHBOARD_PASSWORD_HASH", "FLASK_SECRET_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("EXECUTION_START_TIME=09:35\n", encoding="utf-8")
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_file))
+    monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+    monkeypatch.setitem(app_module.app.config, "SESSION_COOKIE_SECURE", False)
+    monkeypatch.setattr(app_module.app, "permanent_session_lifetime", timedelta(hours=12))
+    app_module.app.config["TESTING"] = True
+    return env_file
+
+
+class _Clock:
+    """The session clock: moves only when a test says so (``tick`` moves it on every read)."""
+
+    def __init__(self) -> None:
+        self.now = time.time_ns()
+        self.tick = 0
+        self._lock = threading.Lock()
+
+    def __call__(self) -> int:
+        with self._lock:
+            value = self.now
+            self.now += self.tick
+            return value
+
+    def advance(self, **delta) -> None:
+        self.now += int(timedelta(**delta).total_seconds() * _NS)
+
+
+@pytest.fixture
+def clock(gate, monkeypatch):
+    fake = _Clock()
+    monkeypatch.setattr(app_module, "_session_now_ns", fake, raising=False)
+    return fake
+
+
+def _client():
+    return app_module.app.test_client()
+
+
+def _login(client) -> None:
+    response = client.post("/login", data={"password": _PASSWORD})
+    assert response.status_code == 302, f"login answered {response.status_code}"
+
+
+def _signed_in(clock) -> object:
+    client = _client()
+    _login(client)
+    return client
+
+
+def _copy_session(source, target) -> None:
+    name = app_module.app.config["SESSION_COOKIE_NAME"]
+    cookie = source.get_cookie(name)
+    assert cookie is not None, "the login set no session cookie"
+    target.set_cookie(name, cookie.value)
+
+
+def _csrf_headers(**extra) -> dict:
+    return {"X-CSRF-Token": app_module._CSRF_TOKEN, **extra}
+
+
+def _post_logout(client, **kwargs):
+    kwargs.setdefault("headers", _csrf_headers())
+    return client.post("/logout", **kwargs)
+
+
+def _require_post_logout() -> None:
+    methods = set()
+    for rule in app_module.app.url_map.iter_rules():
+        if rule.rule == "/logout":
+            methods |= rule.methods
+    assert "POST" in methods, "/logout must accept POST: signing out is a CSRF-checked POST"
+
+
+def _assert_refused(client, label: str) -> None:
+    response = client.get(_ACCOUNTS)
+    assert response.status_code == 401, f"{label}: answered {response.status_code}, not 401"
+    assert response.get_json() == _UNAUTHENTICATED, label
+
+
+def _assert_served(client, label: str) -> None:
+    response = client.get(_ACCOUNTS)
+    assert response.status_code == 200, f"{label}: answered {response.status_code}, not 200"
+
+
+def _assert_page_redirected(client, label: str) -> None:
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 302, f"{label}: GET / answered {response.status_code}"
+    assert "/login" in response.headers.get("Location", ""), label
+
+
+def _assert_logged_in_at_logout_redirect(response) -> None:
+    assert response.status_code in (302, 303), f"POST /logout answered {response.status_code}"
+    assert response.headers.get("Location", "").endswith("/login"), response.headers.get("Location")
+
+
+@pytest.fixture
+def run_now_spy(monkeypatch):
+    """Records what the Run-now route starts; the route never reaches the Composer producer."""
+    started: list[int] = []
+    lock = app_module._RETIREMENT_RUN_LOCK
+
+    def _body(*_a, **_k):
+        started.append(1)
+        if lock.locked():
+            lock.release()
+
+    monkeypatch.setattr(app_module, "_retirement_run_now_body", _body)
+    monkeypatch.setattr(app_module, "get_market_state", lambda *_a, **_k: "closed_frozen")
+    yield started
+    if lock.locked():
+        lock.release()
+
+
+def _nothing_started(started: list) -> None:
+    time.sleep(0.2)
+    assert started == [], "a refused request started a run"
+    assert not app_module._RETIREMENT_RUN_LOCK.locked(), "a refused request took the run lock"
+
+
+def _records_naming(caplog, level: int, needle: str):
+    return [r for r in caplog.records if r.levelno == level and needle in r.getMessage()]
+
+
+# ---------------------------------------------------------------------------
+# Lifetime configuration
+# ---------------------------------------------------------------------------
+
+
+class TestTheSessionSeamsExist:
+    @pytest.mark.parametrize("name", ["_session_now_ns", "_PROCESS_STARTED_NS"])
+    def test_the_module_exposes_the_seam(self, name):
+        assert hasattr(app_module, name), f"app.py must expose {name}"
+
+    def test_the_module_holds_the_cached_floor_as_a_module_level_name(self):
+        """Read from source: the suite fixture creates the name when it is absent."""
+        tree = ast.parse(_APP_PY.read_text(encoding="utf-8"))
+        names = set()
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+        assert "_session_revoked_before_ns" in names
+
+    def test_the_clock_seam_returns_integer_nanoseconds_near_the_wall_clock(self):
+        assert hasattr(app_module, "_session_now_ns"), "app.py must expose _session_now_ns"
+        before = time.time_ns()
+        stamp = app_module._session_now_ns()
+        assert isinstance(stamp, int) and before <= stamp <= time.time_ns()
+
+    def test_the_process_start_instant_is_an_integer_before_now(self):
+        assert hasattr(app_module, "_PROCESS_STARTED_NS"), "app.py must expose _PROCESS_STARTED_NS"
+        assert isinstance(app_module._PROCESS_STARTED_NS, int)
+        assert time.time_ns() >= app_module._PROCESS_STARTED_NS
+
+
+class TestLifetimeHours:
+    def _lifetime_fn(self):
+        assert hasattr(app_module, "_session_lifetime_hours"), (
+            "app.py must define _session_lifetime_hours(raw: str | None) -> int"
+        )
+        return app_module._session_lifetime_hours
+
+    @pytest.mark.parametrize("raw", [None, ""], ids=["absent", "empty"])
+    def test_absent_or_empty_is_twelve_hours_and_says_nothing(self, raw, caplog):
+        fn = self._lifetime_fn()
+        with caplog.at_level(logging.DEBUG, logger="alphabot"):
+            assert fn(raw) == 12
+        assert [r for r in caplog.records if r.name == "alphabot"] == []
+
+    @pytest.mark.parametrize(
+        "raw, hours",
+        [("1", 1), ("6", 6), ("05", 5), ("12", 12), ("720", 720)],
+    )
+    def test_a_whole_number_of_hours_from_one_to_720_is_used(self, raw, hours, caplog):
+        fn = self._lifetime_fn()
+        with caplog.at_level(logging.DEBUG, logger="alphabot"):
+            assert fn(raw) == hours
+        assert [r for r in caplog.records if r.name == "alphabot"] == []
+
+    @pytest.mark.parametrize(
+        "raw",
+        ["abc", "0", "00", "-3", "1.5", "721", "100000", "+5", "1e2", "٣", "5h", "twelve"],
+    )
+    def test_any_other_value_is_twelve_hours_with_one_warning(self, raw, caplog):
+        fn = self._lifetime_fn()
+        with caplog.at_level(logging.DEBUG, logger="alphabot"):
+            assert fn(raw) == 12
+        warnings = [
+            r for r in caplog.records if r.name == "alphabot" and r.levelno == logging.WARNING
+        ]
+        assert len(warnings) == 1, f"{raw!r} logged {len(warnings)} warnings"
+        text = warnings[0].getMessage()
+        assert _LIFETIME_KEY in text and "12" in text, text
+
+    def test_the_warning_never_prints_the_value_or_the_session_secret(self, caplog, monkeypatch):
+        fn = self._lifetime_fn()
+        monkeypatch.setenv("SECRET_KEY", _SECRET)
+        raw = "secret-looking-value-e41f"
+        with caplog.at_level(logging.DEBUG):
+            fn(raw)
+        assert raw not in caplog.text and _SECRET not in caplog.text
+
+    def test_the_app_lifetime_is_the_function_of_the_environment_value(self):
+        import os
+
+        fn = self._lifetime_fn()
+        expected = timedelta(hours=fn(os.environ.get(_LIFETIME_KEY)))
+        assert app_module.app.permanent_session_lifetime == expected
+
+    def test_the_module_sets_the_lifetime_from_that_key_at_import(self):
+        """A module-level assignment reads the key through the function; no other key feeds it."""
+        tree = ast.parse(_APP_PY.read_text(encoding="utf-8"))
+        found = []
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            if not any(
+                isinstance(t, ast.Attribute) and t.attr == "permanent_session_lifetime"
+                for t in node.targets
+            ):
+                continue
+            text = ast.unparse(node.value)
+            found.append(text)
+        assert found, "app.py never assigns app.permanent_session_lifetime at module level"
+        assert any("_session_lifetime_hours" in t and _LIFETIME_KEY in t for t in found), found
+
+    def test_the_key_is_not_settable_from_the_dashboard(self):
+        assert _LIFETIME_KEY not in app_module._SETTINGS_WRITE_ALLOWLIST
+
+
+# ---------------------------------------------------------------------------
+# A session ends at its lifetime (AC-2)
+# ---------------------------------------------------------------------------
+
+
+class TestASessionEndsAtItsLifetime:
+    def test_a_session_is_served_just_inside_twelve_hours(self, clock):
+        client = _signed_in(clock)
+        with client.session_transaction() as session:
+            assert isinstance(session.get("issued_at_ns"), int), "the login must stamp its instant"
+        clock.advance(hours=11, minutes=59)
+        _assert_served(client, "T + 11 h 59 min")
+
+    def test_a_session_is_served_at_exactly_the_lifetime_and_refused_one_nanosecond_later(
+        self, clock
+    ):
+        client = _signed_in(clock)
+        clock.advance(hours=12)
+        _assert_served(client, "exactly at the lifetime")
+        clock.now += 1
+        _assert_refused(client, "one nanosecond past the lifetime")
+
+    def test_every_kind_of_request_is_refused_after_twelve_hours(self, clock, run_now_spy):
+        client = _signed_in(clock)
+        clock.advance(hours=12, seconds=1)
+
+        page = client.get("/", follow_redirects=False)
+        assert page.status_code == 302 and "/login" in page.headers["Location"]
+        _assert_refused(client, "API read")
+        post = client.post(_RUN_URL, headers=_XHR)
+        assert post.status_code == 401 and post.get_json() == _UNAUTHENTICATED
+        _nothing_started(run_now_spy)
+
+    def test_requests_during_the_session_do_not_extend_it(self, clock):
+        client = _signed_in(clock)
+        for minute in range(1, 12 * 60 + 1):
+            clock.advance(minutes=1)
+            response = client.get(_ACCOUNTS)
+            assert response.status_code == 200, f"minute {minute} answered {response.status_code}"
+            assert "Set-Cookie" not in response.headers, (
+                f"minute {minute}: the response re-issued the session cookie"
+            )
+        clock.advance(minutes=1)
+        _assert_refused(client, "the first poll after 12 hours of polling")
+
+    def test_two_tabs_on_one_session_are_both_refused_and_neither_extends_it(self, clock):
+        first = _signed_in(clock)
+        second = _client()
+        _copy_session(first, second)
+        clock.advance(hours=12, seconds=1)
+        for client in (first, second):
+            response = client.get(_ACCOUNTS)
+            assert response.status_code == 401
+            assert "Set-Cookie" not in response.headers
+
+    def test_a_lifetime_of_one_hour_serves_at_59_minutes_and_refuses_after(
+        self, clock, monkeypatch
+    ):
+        monkeypatch.setattr(app_module.app, "permanent_session_lifetime", timedelta(hours=1))
+        client = _signed_in(clock)
+        clock.advance(minutes=59)
+        _assert_served(client, "59 minutes")
+        clock.advance(minutes=1, seconds=1)
+        _assert_refused(client, "1 h 0 min 1 s")
+
+    def test_a_lifetime_of_720_hours_serves_at_719_hours_and_refuses_after(
+        self, clock, monkeypatch
+    ):
+        monkeypatch.setattr(app_module.app, "permanent_session_lifetime", timedelta(hours=720))
+        client = _signed_in(clock)
+        clock.advance(hours=719)
+        _assert_served(client, "719 hours")
+        clock.advance(hours=1, seconds=1)
+        _assert_refused(client, "720 h 0 min 1 s")
+
+    def test_the_lifetime_is_read_at_request_time(self, clock, monkeypatch):
+        """Shortening the lifetime after the login ends the session at the new bound."""
+        client = _signed_in(clock)
+        clock.advance(hours=2)
+        _assert_served(client, "inside the 12 hour lifetime")
+        monkeypatch.setattr(app_module.app, "permanent_session_lifetime", timedelta(hours=1))
+        _assert_refused(client, "2 hours old under a 1 hour lifetime")
+
+    def test_the_login_page_gives_the_form_to_an_expired_session(self, clock):
+        client = _signed_in(clock)
+        assert client.get("/login", follow_redirects=False).status_code == 302
+        clock.advance(hours=12, seconds=1)
+
+        response = client.get("/login", follow_redirects=False)
+
+        assert response.status_code == 200, (
+            "an expired session must get the form, not the dashboard"
+        )
+        page = response.get_data(as_text=True)
+        assert '<form action="/login" method="post">' in page and 'id="password"' in page
+
+    def test_a_settings_save_with_an_expired_session_writes_nothing(self, clock, gate):
+        client = _signed_in(clock)
+        before = gate.read_bytes()
+        clock.advance(hours=12, seconds=1)
+
+        response = client.post(
+            "/api/settings",
+            json={"globals": {"EXECUTION_START_TIME": "09:40"}, "symphonies": {}},
+            headers=_XHR,
+        )
+
+        assert response.status_code == 401 and response.get_json() == _UNAUTHENTICATED
+        assert gate.read_bytes() == before
+
+    def test_a_restart_neither_ends_nor_extends_a_session(self, clock, monkeypatch):
+        client = _signed_in(clock)
+        clock.advance(hours=1)
+        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None, raising=False)
+        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now, raising=False)
+        clock.advance(hours=1)
+        _assert_served(client, "T + 2 h after a restart at T + 1 h")
+        clock.advance(hours=10, seconds=1)
+        _assert_refused(client, "T + 12 h 0 min 1 s: the restart did not extend it")
+
+    def test_a_valid_session_with_authentication_unconfigured_is_refused_not_served(
+        self, clock, monkeypatch
+    ):
+        client = _signed_in(clock)
+        monkeypatch.delenv("SECRET_KEY", raising=False)
+        monkeypatch.delenv("FLASK_SECRET_KEY", raising=False)
+
+        api = client.get(_ACCOUNTS, headers=_XHR)
+        page = client.get("/", follow_redirects=False)
+
+        assert api.status_code == 503 and api.get_json() == {"error": "misconfigured"}
+        assert page.status_code == 302 and "/login" in page.headers["Location"]
+
+
+class TestASessionWithoutAValidIssueTimeIsRefused:
+    @pytest.mark.parametrize(
+        "issued",
+        ["missing", None, True, False, 0, -1, "digits", "float"],
+        ids=["missing", "none", "true", "false", "zero", "negative", "string", "float"],
+    )
+    def test_a_signed_cookie_with_no_integer_issue_time_is_refused(self, clock, issued):
+        client = _client()
+        with client.session_transaction() as session:
+            session["authenticated"] = True
+            if issued == "digits":
+                session["issued_at_ns"] = str(clock.now)
+            elif issued == "float":
+                session["issued_at_ns"] = float(clock.now)
+            elif issued != "missing":
+                session["issued_at_ns"] = issued
+        _assert_refused(client, f"issue time {issued!r}")
+        _assert_page_redirected(client, f"issue time {issued!r}")
+
+    def test_a_cookie_issued_before_this_change_is_refused_and_a_new_login_is_served(self, clock):
+        client = _client()
+        with client.session_transaction() as session:
+            session["authenticated"] = True
+        _assert_refused(client, "authenticated flag without an issue time")
+
+        _login(client)
+
+        _assert_served(client, "after a new login")
+
+    def test_a_cookie_signed_with_another_key_is_refused(self, clock, monkeypatch):
+        client = _signed_in(clock)
+        monkeypatch.setattr(app_module.app, "secret_key", "another-key-than-the-one-signing")
+        _assert_refused(client, "signature does not verify")
+
+
+class TestLoginKeepsItsCookieContract:
+    def test_the_cookie_is_http_only_same_site_lax_and_secure_when_configured(
+        self, gate, monkeypatch
+    ):
+        monkeypatch.setitem(app_module.app.config, "SESSION_COOKIE_SECURE", True)
+        response = _client().post("/login", data={"password": _PASSWORD})
+        cookie = response.headers.get("Set-Cookie", "")
+        lowered = cookie.lower()
+        assert "httponly" in lowered and "samesite=lax" in lowered and "secure" in lowered, cookie
+
+    def test_login_clears_the_old_session_before_stamping_the_new_one(self, clock):
+        client = _client()
+        with client.session_transaction() as session:
+            session["planted_before_login"] = "attacker-value"
+            session["issued_at_ns"] = 1
+        _login(client)
+        with client.session_transaction() as session:
+            assert "planted_before_login" not in session
+            assert session.get("authenticated") is True
+            assert session.get("issued_at_ns") == clock.now
+        _assert_served(client, "the new session")
+
+    def test_a_failed_login_issues_no_session(self, gate):
+        client = _client()
+        response = client.post("/login", data={"password": "not-the-password"})
+        assert response.status_code != 302
+        _assert_refused(client, "after a failed login")
+
+
+# ---------------------------------------------------------------------------
+# Logout revokes (AC-3)
+# ---------------------------------------------------------------------------
+
+
+class TestLogoutEndsEverySessionIssuedBefore:
+    def test_a_copied_cookie_is_refused_after_the_logout(self, clock):
+        session_a = _signed_in(clock)
+        stolen = _client()
+        _copy_session(session_a, stolen)
+        _assert_served(stolen, "before the logout")
+        clock.advance(seconds=1)
+
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+
+        _assert_refused(stolen, "the copied cookie")
+        _assert_page_redirected(stolen, "the copied cookie")
+        _assert_refused(session_a, "the signing-out browser")
+
+    def test_a_second_browser_is_ended_too(self, clock):
+        session_a = _signed_in(clock)
+        clock.advance(seconds=1)
+        session_b = _signed_in(clock)
+        clock.advance(seconds=1)
+        _assert_served(session_b, "before the logout")
+
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+
+        _assert_refused(session_b, "the other browser")
+
+    def test_a_login_made_after_the_logout_is_served(self, clock):
+        session_a = _signed_in(clock)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+        clock.advance(seconds=1)
+
+        session_c = _signed_in(clock)
+
+        _assert_served(session_c, "the later login")
+
+    def test_a_login_in_the_same_clock_tick_as_the_logout_is_served(self, clock):
+        session_a = _signed_in(clock)
+        copied = _client()
+        _copy_session(session_a, copied)
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+
+        session_c = _signed_in(clock)
+
+        _assert_served(session_c, "a login in the tick of the logout")
+        _assert_refused(copied, "a copy of the session issued in the tick of the logout")
+
+    def test_two_simultaneous_logouts_both_redirect_and_leave_the_later_login_served(self, clock):
+        clock.tick = 1_000
+        session_a = _signed_in(clock)
+        clients = []
+        for _ in range(2):
+            twin = _client()
+            _copy_session(session_a, twin)
+            clients.append(twin)
+        stamps: list[int] = []
+        real_record = database.record_session_revocation
+
+        def _recording(floor_ns):
+            stamps.append(floor_ns)
+            return real_record(floor_ns)
+
+        responses = []
+        barrier = threading.Barrier(2)
+
+        def _logout(twin):
+            barrier.wait()
+            responses.append(_post_logout(twin))
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(database, "record_session_revocation", _recording, raising=False)
+            threads = [threading.Thread(target=_logout, args=(twin,)) for twin in clients]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=20)
+
+        assert len(responses) == 2
+        for response in responses:
+            _assert_logged_in_at_logout_redirect(response)
+        # The twin whose hook runs after the first logout is refused by the hook and records
+        # nothing; both record only when both hooks pass first. Either way the stored floor is
+        # the latest stamp any logout recorded.
+        assert stamps and database.get_session_revocation_floor_ns() == max(stamps), (
+            "the stored floor must be the later of the recorded logouts"
+        )
+        for twin in clients:
+            _assert_refused(twin, "a twin of the signed-out session")
+        clock.advance(seconds=1)
+        _assert_served(_signed_in(clock), "a login after both logouts")
+
+    def test_a_logout_with_no_valid_session_revokes_nothing(self, clock, monkeypatch):
+        _require_post_logout()
+        expiring = _signed_in(clock)
+        clock.advance(hours=6)
+        session_b = _signed_in(clock)
+        clock.advance(hours=6, seconds=1)
+        floor_before = database.get_session_revocation_floor_ns()
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+
+        anonymous = _post_logout(_client())
+        assert anonymous.status_code == 302 and "/login" in anonymous.headers["Location"]
+        lapsed = _post_logout(expiring)
+        assert lapsed.status_code == 302 and "/login" in lapsed.headers["Location"]
+
+        assert database.get_session_revocation_floor_ns() == floor_before
+        _assert_served(session_b, "the unrelated session")
+
+    def test_a_logout_with_an_already_revoked_session_revokes_nothing_more(
+        self, clock, monkeypatch
+    ):
+        _require_post_logout()
+        session_a = _signed_in(clock)
+        stale = _client()
+        _copy_session(session_a, stale)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+        clock.advance(seconds=1)
+        session_b = _signed_in(clock)
+        floor_after_first = database.get_session_revocation_floor_ns()
+        clock.advance(seconds=1)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+
+        response = _post_logout(stale)
+
+        assert response.status_code == 302 and "/login" in response.headers["Location"]
+        assert database.get_session_revocation_floor_ns() == floor_after_first
+        _assert_served(session_b, "the later login")
+
+    def test_a_revoked_session_cannot_start_a_run(self, clock, run_now_spy, monkeypatch):
+        session_a = _signed_in(clock)
+        stolen = _client()
+        _copy_session(session_a, stolen)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+
+        response = stolen.post(_RUN_URL, headers=_csrf_headers(**_XHR))
+
+        assert response.status_code == 401 and response.get_json() == _UNAUTHENTICATED
+        _nothing_started(run_now_spy)
+
+    def test_a_logout_leaves_the_failed_login_count_alone(self, clock):
+        session_a = _signed_in(clock)
+        for _ in range(3):
+            _client().post("/login", data={"password": "wrong-password-for-throttle"})
+        recorded = dict(app_module._AUTH_FAILED_ATTEMPTS)
+        assert recorded, "premise: three failed logins were recorded"
+        clock.advance(seconds=1)
+
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+
+        assert dict(app_module._AUTH_FAILED_ATTEMPTS) == recorded
+
+    def test_a_request_in_flight_when_a_logout_completes_finishes_and_the_next_is_refused(
+        self, clock, monkeypatch
+    ):
+        session_a = _signed_in(clock)
+        other_tab = _client()
+        _copy_session(session_a, other_tab)
+        clock.advance(seconds=1)
+        calls: list[int] = []
+
+        def _logout_from_the_other_tab_then_read(*_a, **_k):
+            if not calls:
+                calls.append(1)
+                _assert_logged_in_at_logout_redirect(_post_logout(other_tab))
+            return {}
+
+        monkeypatch.setattr(
+            app_module._dotenv_module, "dotenv_values", _logout_from_the_other_tab_then_read
+        )
+
+        in_flight = session_a.get(_ACCOUNTS)
+
+        assert calls, "premise: the logout ran while the request was being served"
+        assert in_flight.status_code == 200 and in_flight.get_json() == {"accounts": []}
+        _assert_refused(session_a, "the next request")
+
+
+class TestTheRevocationSurvivesARestart:
+    def _restart(self, clock, monkeypatch) -> None:
+        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None, raising=False)
+        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now, raising=False)
+
+    def test_the_logout_stores_its_own_instant(self, clock):
+        session_a = _signed_in(clock)
+        clock.advance(seconds=5)
+        stamp = clock.now
+
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+
+        assert database.get_session_revocation_floor_ns() == stamp
+
+    def test_a_revoked_cookie_stays_refused_and_a_live_one_stays_served(self, clock, monkeypatch):
+        session_a = _signed_in(clock)
+        stolen = _client()
+        _copy_session(session_a, stolen)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+        clock.advance(seconds=1)
+        session_c = _signed_in(clock)
+        clock.advance(minutes=1)
+
+        self._restart(clock, monkeypatch)
+        clock.advance(seconds=1)
+
+        _assert_refused(stolen, "the revoked cookie after the restart")
+        _assert_served(session_c, "the session issued after the logout")
+
+    def test_the_floor_is_read_from_the_database_once_per_process(self, clock, monkeypatch):
+        session_a = _signed_in(clock)
+        self._restart(clock, monkeypatch)
+        reads: list[int] = []
+        real_read = database.get_session_revocation_floor_ns
+
+        def _counting():
+            reads.append(1)
+            return real_read()
+
+        monkeypatch.setattr(database, "get_session_revocation_floor_ns", _counting, raising=False)
+
+        for _ in range(5):
+            _assert_served(session_a, "a poll")
+
+        assert len(reads) <= 1, f"{len(reads)} database reads for 5 authenticated requests"
+
+    def test_an_unreadable_record_at_start_refuses_every_earlier_session_and_serves_a_new_login(
+        self, clock, monkeypatch, caplog
+    ):
+        session_a = _signed_in(clock)
+        clock.advance(minutes=1)
+        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None, raising=False)
+        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now, raising=False)
+
+        def _unreadable():
+            raise sqlite3.OperationalError(_SENTINEL_DETAIL)
+
+        monkeypatch.setattr(database, "get_session_revocation_floor_ns", _unreadable, raising=False)
+        clock.advance(minutes=1)
+
+        with caplog.at_level(logging.DEBUG):
+            _assert_refused(session_a, "a session issued before the start")
+            new_session = _signed_in(clock)
+            _assert_served(new_session, "a login after the start")
+
+        named = _records_naming(caplog, logging.ERROR, "OperationalError")
+        assert len(named) == 1, f"{len(named)} ERROR lines name the exception type"
+        assert _SENTINEL_DETAIL not in caplog.text, "the log carried the exception's detail"
+        assert all(r.exc_info is None for r in named), "the ERROR line must not carry a traceback"
+
+
+class TestAnUnwritableRevocation:
+    @pytest.fixture
+    def failing_write(self, monkeypatch):
+        def _raise(_floor_ns):
+            raise sqlite3.OperationalError(_SENTINEL_DETAIL)
+
+        monkeypatch.setattr(database, "record_session_revocation", _raise, raising=False)
+
+    def test_every_earlier_session_stays_refused_while_the_process_runs(
+        self, clock, failing_write, caplog
+    ):
+        session_a = _signed_in(clock)
+        clock.advance(seconds=1)
+        session_b = _signed_in(clock)
+        clock.advance(seconds=1)
+
+        with caplog.at_level(logging.DEBUG):
+            response = _post_logout(session_a)
+
+        _assert_logged_in_at_logout_redirect(response)
+        _assert_refused(session_a, "the signing-out session")
+        _assert_refused(session_b, "the other earlier session")
+        named = _records_naming(caplog, logging.ERROR, "OperationalError")
+        assert len(named) == 1, f"{len(named)} ERROR lines name the exception type"
+        assert _SENTINEL_DETAIL not in caplog.text
+        assert all(r.exc_info is None for r in named)
+        clock.advance(seconds=1)
+        _assert_served(_signed_in(clock), "a login after the failed write")
+
+    def test_the_login_page_says_other_sessions_end_when_the_daemon_restarts(
+        self, clock, failing_write
+    ):
+        session_a = _signed_in(clock)
+        clock.advance(seconds=1)
+
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+
+        page = session_a.get("/login")
+        assert page.status_code == 200
+        assert _NOT_DURABLE_LINE in page.get_data(as_text=True)
+        assert _NOT_DURABLE_LINE not in _client().get("/login").get_data(as_text=True), (
+            "another browser must not be told about this logout"
+        )
+
+    def test_following_the_logout_redirect_lands_on_the_login_page_with_the_line(
+        self, clock, failing_write
+    ):
+        session_a = _signed_in(clock)
+        confirm = session_a.get("/logout")
+        assert confirm.status_code == 200, "premise: GET /logout is the confirm page"
+        clock.advance(seconds=1)
+
+        landed = _post_logout(session_a, follow_redirects=True)
+
+        assert landed.status_code == 200
+        page = landed.get_data(as_text=True)
+        assert _NOT_DURABLE_LINE in page and 'id="password"' in page
+
+    def test_the_line_goes_with_the_next_successful_login(self, clock, monkeypatch):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                database,
+                "record_session_revocation",
+                lambda _floor: (_ for _ in ()).throw(sqlite3.OperationalError("x")),
+                raising=False,
+            )
+            session_a = _signed_in(clock)
+            clock.advance(seconds=1)
+            _post_logout(session_a)
+        assert _NOT_DURABLE_LINE in session_a.get("/login").get_data(as_text=True)
+        clock.advance(seconds=1)
+        _login(session_a)
+        clock.advance(seconds=1)
+
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+
+        assert _NOT_DURABLE_LINE not in session_a.get("/login").get_data(as_text=True)
+
+    def test_a_durable_logout_shows_no_such_line(self, clock):
+        session_a = _signed_in(clock)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(session_a))
+        assert _NOT_DURABLE_LINE not in session_a.get("/login").get_data(as_text=True)
+
+
+# ---------------------------------------------------------------------------
+# The logout POST is CSRF-checked and reads nothing (AC-5)
+# ---------------------------------------------------------------------------
+
+
+class TestThePostIsRefusedUnlessItCarriesTheHeaderToken:
+    @pytest.fixture
+    def signed_in(self, clock, monkeypatch):
+        client = _signed_in(clock)
+        clock.advance(seconds=1)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        self.client = client
+        return client
+
+    def _nothing_revoked(self, client) -> None:
+        _require_post_logout()
+        assert database.get_session_revocation_floor_ns() == 0, "a refused logout revoked"
+        _assert_served(client, "after a refused logout")
+
+    def test_no_header_token_is_a_403(self, signed_in):
+        response = signed_in.post("/logout")
+        assert response.status_code == 403
+        self._nothing_revoked(signed_in)
+
+    @pytest.mark.parametrize("site", ["same-site", "cross-site"])
+    def test_a_neighbouring_or_foreign_site_is_a_403_even_with_the_token(self, signed_in, site):
+        response = _post_logout(signed_in, headers=_csrf_headers(**{"Sec-Fetch-Site": site}))
+        assert response.status_code == 403
+        self._nothing_revoked(signed_in)
+
+    @pytest.mark.parametrize("token", ["0" * 64, "tökén", "", " "])
+    def test_a_wrong_or_non_ascii_header_token_is_a_403_never_a_500(
+        self, signed_in, monkeypatch, token
+    ):
+        monkeypatch.setitem(app_module.app.config, "PROPAGATE_EXCEPTIONS", False)
+        response = signed_in.post("/logout", headers={"X-CSRF-Token": token})
+        assert response.status_code == 403
+        self._nothing_revoked(signed_in)
+
+    @pytest.mark.parametrize("encoding", ["urlencoded", "multipart"])
+    def test_the_token_in_a_form_field_is_a_403(self, signed_in, encoding):
+        kwargs = {} if encoding == "urlencoded" else {"content_type": "multipart/form-data"}
+        response = signed_in.post("/logout", data={"csrf_token": app_module._CSRF_TOKEN}, **kwargs)
+        assert response.status_code == 403
+        self._nothing_revoked(signed_in)
+
+    @pytest.mark.parametrize(
+        "headers", [{"Sec-Fetch-Site": "same-origin"}, {"Sec-Fetch-Site": "none"}, {}]
+    )
+    def test_a_same_origin_a_user_initiated_and_a_script_post_with_the_token_sign_out(
+        self, signed_in, headers
+    ):
+        response = _post_logout(signed_in, headers=_csrf_headers(**headers))
+        _assert_logged_in_at_logout_redirect(response)
+        _assert_refused(signed_in, "after the sign out")
+
+    def test_a_70_kib_form_body_is_never_read_so_it_signs_out_and_is_not_a_413(self, signed_in):
+        body = {"filler": "A" * (70 * 1024)}
+        response = signed_in.post("/logout", data=body, headers=_csrf_headers())
+        _assert_logged_in_at_logout_redirect(response)
+        _assert_refused(signed_in, "after the sign out")
+
+    def test_a_get_with_the_foreign_site_headers_signs_nobody_out(self, signed_in):
+        response = signed_in.get(
+            "/logout", headers={"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Dest": "image"}
+        )
+        assert response.status_code == 200, (
+            "a GET must answer the confirm page, not end the session"
+        )
+        self._nothing_revoked(signed_in)
+
+
+class TestAConfirmPageRequestWithoutAValidSessionIsSentToLogin:
+    def test_no_cookie_an_expired_cookie_and_a_revoked_cookie_are_redirected(self, clock):
+        anonymous = _client().get("/logout", follow_redirects=False)
+        assert anonymous.status_code == 302 and "/login" in anonymous.headers["Location"]
+
+        expired = _signed_in(clock)
+        clock.advance(hours=12, seconds=1)
+        response = expired.get("/logout", follow_redirects=False)
+        assert response.status_code == 302 and "/login" in response.headers["Location"]
+
+        clock.advance(seconds=1)
+        owner = _signed_in(clock)
+        stale = _client()
+        _copy_session(owner, stale)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(owner))
+        response = stale.get("/logout", follow_redirects=False)
+        assert response.status_code == 302 and "/login" in response.headers["Location"]

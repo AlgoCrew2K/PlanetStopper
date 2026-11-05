@@ -1631,6 +1631,63 @@ class TestGroupEScanReportsAPlantedLossyReaderOrMoneyMover:
         assert len({ast.dump(node) for node in nodes}) == len(_TENURE_RUN_PATH_FN_NAMES)
 
 
+# The dashboard session check and the logout handler end sessions and nothing else. The auth hook
+# runs before every route and the logout handler writes the revocation record, so neither may reach
+# an order, a symphony creation, the engine or a LIVE_EXECUTION read, directly or through a helper.
+_SESSION_ENTRY_POINT_FN_NAMES = ["_auth_before_request", "logout"]
+_SESSION_PLANTED_FORMS = {
+    "creation call": (_SAVE_SYMPHONY_ATTR, _PLANTED_CALLS["attribute call"]),
+    "creation call by bare name": (_SAVE_SYMPHONY_ATTR, _PLANTED_CALLS["bare call"]),
+    "panic sell": _PLANTED_ENGINE_CALLS["panic sell"],
+    "panic sell route": _PLANTED_ENGINE_CALLS["panic sell route"],
+}
+# What each entry point must visibly walk into, so a scan that finds nothing is not a scan that
+# never looked: the validity helpers behind the hook, the revocation writer behind the handler.
+_SESSION_WALK_MUST_OPEN = {
+    "_auth_before_request": [
+        "_session_is_valid",
+        "_session_issue_is_valid",
+        "_revocation_floor_ns",
+    ],
+    "logout": ["_revoke_sessions_issued_before"],
+}
+
+
+class TestSessionAuthAndLogoutNeverReachAnOrderOrACreation:
+    @pytest.mark.parametrize("fn_name", _SESSION_ENTRY_POINT_FN_NAMES)
+    def test_the_unplanted_tree_is_clean(self, fn_name):
+        assert _exec_seam_hits(_parse_app_py(), fn_name) == []
+
+    @pytest.mark.parametrize("fn_name", _SESSION_ENTRY_POINT_FN_NAMES)
+    def test_the_walk_opens_the_session_helpers_the_entry_point_depends_on(self, fn_name):
+        opened = {
+            getattr(node, "name", None)
+            for node in _collect_transitive_local_call_subtrees(_parse_app_py(), fn_name)
+        }
+        missing = [name for name in _SESSION_WALK_MUST_OPEN[fn_name] if name not in opened]
+        assert missing == [], (
+            f"the walk from {fn_name} never opened {missing}: {sorted(n for n in opened if n)}"
+        )
+
+    @pytest.mark.parametrize("form", list(_SESSION_PLANTED_FORMS))
+    @pytest.mark.parametrize("fn_name", _SESSION_ENTRY_POINT_FN_NAMES)
+    def test_a_planted_order_or_creation_is_reported(self, fn_name, form):
+        expected, statement = _SESSION_PLANTED_FORMS[form]
+        hits = _exec_seam_hits(_tree_with_planted_call(fn_name, statement), fn_name)
+        assert any(expected in hit for hit in hits), (
+            f"a {form} planted in {fn_name} was not reported; hits: {hits}"
+        )
+
+    @pytest.mark.parametrize("form", list(_SESSION_PLANTED_FORMS))
+    def test_a_planted_call_in_a_helper_the_hook_calls_is_reported_from_the_hook(self, form):
+        expected, statement = _SESSION_PLANTED_FORMS[form]
+        tree = _tree_with_planted_call("_session_is_valid", statement)
+        hits = _exec_seam_hits(tree, "_auth_before_request")
+        assert any(expected in hit for hit in hits), (
+            f"_session_is_valid is not on the call graph of the hook; hits: {hits}"
+        )
+
+
 # A function the review path hands to something else to run is as reachable as one it calls. The
 # route used to submit the job to an executor and now starts it as a thread target; the tick
 # hands its worker to a thread. Each form below puts a reference to a function into an entry
