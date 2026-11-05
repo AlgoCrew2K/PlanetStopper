@@ -290,6 +290,9 @@ def _session_issue_is_valid(issued: object, logged_in_at: object, now_ns: int) -
     for value in (issued, logged_in_at):
         if not isinstance(value, int) or isinstance(value, bool):
             return False
+    # A login stamps issued = max(login time, floor + 1), so a login time past it is forged.
+    if logged_in_at > issued:
+        return False
     floor = _revocation_floor_ns()
     if issued <= floor:
         return False
