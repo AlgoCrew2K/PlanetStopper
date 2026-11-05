@@ -24,6 +24,9 @@ import pytest
 from tests.app import test_engine_run_bound as _run_bound
 from tests.app.test_engine_run_bound import _end_every_fake_process_and_thread  # noqa: F401
 from tests.app.test_scheduler_survival import TestSlotsThatRaise as _SchedulerTests
+from tests.app.test_scheduler_survival import (
+    _no_network_and_no_leftover_threads,  # noqa: F401
+)
 
 pytestmark = pytest.mark.slow
 

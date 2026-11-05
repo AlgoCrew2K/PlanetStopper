@@ -28,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import functools
 import logging
+import os
 import sys
 import threading
 import time
@@ -35,16 +36,24 @@ from datetime import time as dtime
 from types import SimpleNamespace
 
 import pytest
+import requests
 import schedule
 
 import app as app_module
 
 # Bounds on waiting for something that must happen; none of them is a time a verdict is judged by.
-# The first is how long the stub holds Composer unless the test releases it, longer than the other
-# two together, so an early end of the hold can only be the test's own release.
-HELD_FOR_S = 120.0
-LOOP_JOIN_S = 20.0
+# SETTLE_S is how long the test's own hooks wait for an engine run or a refresh to end. The loop
+# guard is a hang guard only: the Composer-held test's hook makes three such waits inside the loop
+# (one on the first pass, two on the second), so the loop may legitimately take three SETTLE_S on a
+# starved machine; the guard allows one more, and a loop still running after it is hung, not slow.
+# HELD_FOR_S is how long the stub holds Composer unless the test releases it, longer than the guard
+# and a settle together, so an early end of the hold can only be the test's own release.
 SETTLE_S = 30.0
+LOOP_GUARD_S = 4 * SETTLE_S
+HELD_FOR_S = 2 * LOOP_GUARD_S + SETTLE_S
+# How long teardown waits for a thread an engine run or the scheduler started to end.
+LEFTOVER_THREAD_JOIN_S = 10.0
+LOOP_POLL_S = 0.2
 
 
 class _StopLoop(BaseException):
@@ -173,6 +182,67 @@ class TestRegistrations:
         assert getattr(app_module, "_scheduler_started_mono", None) == monotonic_clock.now
 
 
+# Name prefix of the thread that runs one account refresh (``_start_account_refresh``).
+_ACCOUNT_REFRESH_THREAD_PREFIX = "account-refresh-"
+# Threads a scheduler pass or an engine run starts and never joins: the refresh an engine run
+# makes when it ends, the closed-market warm-up the loop starts, and the engine run itself.
+_LEFTOVER_THREAD_NAMES = ("cycle-refresh", "closed-warmup", "engine-cycle")
+
+
+@pytest.fixture(autouse=True)
+def _no_network_and_no_leftover_threads(monkeypatch, composer_total_stats):
+    """No test of this file can reach a network, and none leaves a thread running.
+
+    A finished engine run starts a cycle refresh that calls Composer's total-stats route. The
+    conftest stub stands behind ``requests.get`` (credentials and the env file isolated), set to
+    fail like a dropped connection so nothing is cached; ``requests.post`` and every other
+    session request are replaced by a recorder that fails the test at teardown, so a call that
+    bypasses the stub cannot pass unseen. Teardown releases a held Composer call and joins the
+    refresh, warm-up and engine threads, so the next test never meets a thread of this one.
+    """
+    attempts: list[str] = []
+
+    def _no_network(label: str):
+        def _call(*_args, **_kwargs):
+            attempts.append(label)
+            raise requests.exceptions.ConnectionError(f"no network in this test: {label}")
+
+        return _call
+
+    composer_total_stats.mode = "connection_error"
+    monkeypatch.setattr(requests, "post", _no_network("requests.post"))
+    monkeypatch.setattr(
+        requests.Session,
+        "request",
+        lambda _session, *args, **kwargs: _no_network("requests.Session.request")(),
+    )
+    yield
+    composer_total_stats.release.set()
+    leftover = []
+    for thread in threading.enumerate():
+        if thread.name in _LEFTOVER_THREAD_NAMES or thread.name.startswith(
+            _ACCOUNT_REFRESH_THREAD_PREFIX
+        ):
+            thread.join(timeout=LEFTOVER_THREAD_JOIN_S)
+            if thread.is_alive():
+                leftover.append(thread.name)
+    assert not leftover, f"threads still running after the test: {leftover}"
+    assert not attempts, f"the test reached the network: {attempts}"
+
+
+def _is_engine_finish_wait(code) -> bool:
+    """True for the one wait the scheduler pass makes on an engine run's own done event.
+
+    ``_reap_exited_engine_run`` waits for a run whose process already ended to finish its
+    bookkeeping. That wait belongs to the engine run, not to the account refresh, and on a loaded
+    machine it is real, so it is exempt. The match is the function's name and the app module's
+    file, so no other caller is exempt.
+    """
+    return code.co_name == "_reap_exited_engine_run" and os.path.normcase(
+        code.co_filename
+    ) == os.path.normcase(app_module.__file__)
+
+
 class _SchedulerWaitRecorder:
     """Records every wait the scheduler loop's thread makes while jobs run, never a duration.
 
@@ -239,7 +309,7 @@ class _SchedulerWaitRecorder:
             starting_a_thread = (
                 caller.co_filename == threading.__file__ and caller.co_name == "start"
             )
-            if timeout != 0 and not starting_a_thread:
+            if timeout != 0 and not starting_a_thread and not _is_engine_finish_wait(caller):
                 recorder._record("Event.wait")
             return real_event_wait(event, timeout)
 
@@ -251,13 +321,49 @@ class _SchedulerWaitRecorder:
             return real_condition_wait(condition, timeout)
 
         def _join(thread, timeout=None):
-            if timeout != 0:
-                recorder._record("Thread.join")
+            if timeout != 0 and thread.name.startswith(_ACCOUNT_REFRESH_THREAD_PREFIX):
+                recorder._record("Thread.join on the account refresh thread")
             return real_join(thread, timeout)
 
         monkeypatch.setattr(threading.Event, "wait", _event_wait)
         monkeypatch.setattr(threading.Condition, "wait", _condition_wait)
         monkeypatch.setattr(threading.Thread, "join", _join)
+
+
+class TestEngineFinishWaitExemption:
+    def test_the_exempt_function_still_exists_in_the_app_module(self):
+        """A rename must break here, never silently count or skip a different wait."""
+        function = getattr(app_module, "_reap_exited_engine_run", None)
+
+        assert callable(function), "the engine finish wait function was renamed or removed"
+        assert _is_engine_finish_wait(function.__code__), (
+            "the exemption no longer matches the function by its name and file"
+        )
+
+    def test_the_real_engine_finish_wait_is_not_recorded_but_another_event_wait_is(
+        self, monkeypatch
+    ):
+        """The wait is made for real here, so the verdict never depends on machine load."""
+        recorder = _SchedulerWaitRecorder(threading.current_thread().name)
+        recorder.install(monkeypatch)
+        recorder.active = True
+        exited_process = SimpleNamespace(poll=lambda: 0)
+        monkeypatch.setattr(
+            app_module, "_engine_process", ("cycle", exited_process, threading.Event())
+        )
+        monkeypatch.setattr(app_module, "_ENGINE_FINISH_WAIT_S", 0.01)
+
+        app_module._reap_exited_engine_run()
+        assert recorder.waits == [], "the engine run's finish wait is not a wait on the refresh"
+
+        threading.Event().wait(0.01)
+        assert recorder.waits == ["Event.wait"], "an Event wait from any other caller is recorded"
+
+    def test_a_wait_from_any_other_function_is_not_exempt(self):
+        def _reap_exited_engine_run():  # same name, defined in this file, not in app.py
+            return sys._getframe(0).f_code
+
+        assert not _is_engine_finish_wait(_reap_exited_engine_run())
 
 
 class TestSlotsThatRaise:
@@ -319,8 +425,8 @@ class TestSlotsThatRaise:
         """Both passes finish while Composer is still held. The proof is the order of events, the
         loop thread ending before the stub's held call returns, never a count of seconds, so a
         busy machine cannot change the verdict. The scheduler thread must also make no waiting
-        call on the account refresh at all, however short: a bounded wait would still end within
-        the loop bound and pass the order check alone."""
+        call on the account refresh at all, however short: a bounded wait would still end while
+        Composer is held and pass the order check alone."""
         composer_total_stats.mode = "hold"
         loop_thread_name = "scheduler-under-test"
         waits = _SchedulerWaitRecorder(loop_thread_name)
@@ -357,11 +463,18 @@ class TestSlotsThatRaise:
         loop = threading.Thread(target=_loop_under_test, name=loop_thread_name, daemon=True)
         loop.start()
         try:
-            loop.join(timeout=LOOP_JOIN_S)
-            loop_ended_in_time = not loop.is_alive()
-            # Engine threads end their run with a refresh attempt; let them make it while the
-            # first refresh is still held, so it finds that one in flight.
-            assert join_engine_threads(SETTLE_S), "an engine run did not end"
+            # The verdict is the order of events (composer_still_held, read on the loop thread
+            # when it ended). This wait only leaves early when the scheduler thread has begun a
+            # wait, which the recorder sees before the thread blocks, so a fault does not cost the
+            # whole guard; the guard bounds a hang and is longer than every wait the hook makes.
+            guard_ends = time.monotonic() + LOOP_GUARD_S
+            while loop.is_alive() and not waits.waits and time.monotonic() < guard_ends:
+                loop.join(timeout=LOOP_POLL_S)
+            loop_hung = loop.is_alive() and not waits.waits
+            if not waits.waits:
+                # Engine threads end their run with a refresh attempt; let them make it while the
+                # first refresh is still held, so it finds that one in flight.
+                assert join_engine_threads(SETTLE_S), "an engine run did not end"
         finally:
             composer_total_stats.release.set()
             loop.join(timeout=SETTLE_S)
@@ -369,21 +482,22 @@ class TestSlotsThatRaise:
             "the scheduler loop did not end even after Composer was released"
         )
         assert "error" not in outcome, f"the scheduler loop raised {outcome.get('error')!r}"
-        assert loop_ended_in_time, (
-            "the two :00 passes had not finished while Composer was held: the refresh ran on the "
-            "scheduler thread"
+        assert waits.waits == [], (
+            "the scheduler thread waited on the account refresh while spawning the engine: "
+            f"{waits.waits}"
+        )
+        assert not loop_hung, (
+            f"the scheduler loop was still running after the {LOOP_GUARD_S:.0f} s hang guard, "
+            "with Composer held and no wait recorded"
         )
         assert outcome["composer_still_held"], (
-            "the loop ended only after the held Composer call returned"
+            "the loop ended only after the held Composer call returned: the two :00 passes had "
+            "not finished while Composer was held"
         )
 
         assert stub_engine.starts == 2
         assert composer_total_stats.call_count == 1, (
             "the second :00 must find the first refresh still in flight and start no second one"
-        )
-        assert waits.waits == [], (
-            "the scheduler thread waited on the account refresh while spawning the engine: "
-            f"{waits.waits}"
         )
 
 
