@@ -1305,6 +1305,250 @@ class TestALogoutEndsASessionStampedPastTheFloor:
 
 
 # ---------------------------------------------------------------------------
+# An issue time that is not a sane instant is refused, and a login made after a backward clock step
+# keeps its real lifetime
+# ---------------------------------------------------------------------------
+
+_HOUR_NS = 3600 * _NS
+_DAY_NS = 24 * _HOUR_NS
+
+# Each value is built from the clock's present reading at the moment the cookie is forged.
+_UNSANE_ISSUE_TIMES = [
+    pytest.param(lambda now: str(now), id="the-instant-as-a-string"),
+    pytest.param(lambda now: float(now), id="the-instant-as-a-float"),
+    pytest.param(lambda now: True, id="true"),
+    pytest.param(lambda now: -1, id="negative-one"),
+    pytest.param(lambda now: None, id="null"),
+    pytest.param(lambda now: [now], id="a-list"),
+    pytest.param(lambda now: {"issued": now}, id="an-object"),
+    pytest.param(lambda now: 10**399 + 7, id="a-400-digit-integer"),
+    pytest.param(lambda now: float("inf"), id="infinity"),
+    pytest.param(lambda now: float("nan"), id="not-a-number"),
+    pytest.param(lambda now: now + _HOUR_NS, id="an-hour-ahead-of-now"),
+    pytest.param(lambda now: now + _DAY_NS, id="a-day-ahead-of-now"),
+    pytest.param(lambda now: now + 3650 * _DAY_NS, id="ten-years-ahead-of-now"),
+]
+
+
+def _forge_issue_time(client, value) -> None:
+    """Replace only the issue field of a cookie a real login set; the app's own serializer re-signs it."""
+    with client.session_transaction() as session:
+        session["issued_at_ns"] = value
+
+
+class TestAnIssueTimeThatIsNotASaneInstantIsRefused:
+    def test_the_unforged_cookie_of_the_same_login_is_served(self, clock):
+        client = _signed_in(clock)
+        _assert_served(client, "the real login, before any change to its issue field")
+        assert client.get("/", follow_redirects=False).status_code == 200
+
+    @pytest.mark.parametrize("make_value", _UNSANE_ISSUE_TIMES)
+    def test_an_api_request_gets_401_json_never_200_or_500(self, clock, make_value):
+        client = _signed_in(clock)
+        _forge_issue_time(client, make_value(clock.now))
+
+        response = client.get(_ACCOUNTS, headers=_XHR)
+
+        assert response.status_code == 401, f"answered {response.status_code}, not 401"
+        assert response.get_json() == _UNAUTHENTICATED
+
+    @pytest.mark.parametrize("make_value", _UNSANE_ISSUE_TIMES)
+    def test_a_page_request_is_sent_to_login_never_served_or_500(self, clock, make_value):
+        client = _signed_in(clock)
+        _forge_issue_time(client, make_value(clock.now))
+
+        _assert_page_redirected(client, "the forged issue time")
+
+    @pytest.mark.parametrize("make_value", _UNSANE_ISSUE_TIMES)
+    def test_a_refused_forged_session_starts_no_run(
+        self, clock, make_value, run_now_spy, monkeypatch
+    ):
+        client = _signed_in(clock)
+        _forge_issue_time(client, make_value(clock.now))
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+
+        response = client.post(_RUN_URL, headers=_csrf_headers(**_XHR))
+
+        assert response.status_code == 401 and response.get_json() == _UNAUTHENTICATED
+        _nothing_started(run_now_spy)
+
+    @pytest.mark.parametrize("make_value", _UNSANE_ISSUE_TIMES[-3:])
+    def test_a_later_genuine_login_is_served_after_a_forged_future_session_was_refused(
+        self, clock, make_value
+    ):
+        client = _signed_in(clock)
+        _forge_issue_time(client, make_value(clock.now))
+        _assert_refused(client, "the forged session")
+
+        _assert_served(_signed_in(clock), "a genuine login after the refusal")
+
+
+_LOGIN_TIME_KEY = "logged_in_at_ns"
+
+_UNSANE_LOGIN_TIMES = [
+    pytest.param(lambda now: str(now), id="the-instant-as-a-string"),
+    pytest.param(lambda now: float(now), id="the-instant-as-a-float"),
+    pytest.param(lambda now: True, id="true"),
+    pytest.param(lambda now: [now], id="a-list"),
+    pytest.param(lambda now: 10**399 + 7, id="a-400-digit-integer"),
+    pytest.param(lambda now: -(10**399), id="a-400-digit-negative-integer"),
+    pytest.param(lambda now: float("inf"), id="infinity"),
+    pytest.param(lambda now: float("nan"), id="not-a-number"),
+    pytest.param(lambda now: now + _HOUR_NS, id="an-hour-ahead-of-now"),
+    pytest.param(lambda now: now + _DAY_NS, id="a-day-ahead-of-now"),
+    pytest.param(lambda now: now + 3650 * _DAY_NS, id="ten-years-ahead-of-now"),
+]
+
+
+class TestALoginTimeThatIsNotASaneInstantIsRefused:
+    """The wall-clock login time the lifetime counts from is bounded like the issue time: a value
+    ahead of now would otherwise keep a session alive far past 12 hours."""
+
+    def test_the_real_login_carries_a_login_time_equal_to_the_clock_reading(self, clock):
+        client = _signed_in(clock)
+        with client.session_transaction() as session:
+            assert session.get(_LOGIN_TIME_KEY) == clock.now
+
+    @pytest.mark.parametrize("make_value", _UNSANE_LOGIN_TIMES)
+    def test_an_api_request_gets_401_json_and_a_page_is_sent_to_login(self, clock, make_value):
+        client = _signed_in(clock)
+        with client.session_transaction() as session:
+            session[_LOGIN_TIME_KEY] = make_value(clock.now)
+
+        _assert_refused(client, "the forged login time")
+        _assert_page_redirected(client, "the forged login time")
+
+    @pytest.mark.parametrize("make_value", _UNSANE_LOGIN_TIMES[-3:])
+    def test_a_future_login_time_does_not_extend_a_session_past_twelve_hours(
+        self, clock, make_value
+    ):
+        client = _signed_in(clock)
+        with client.session_transaction() as session:
+            session[_LOGIN_TIME_KEY] = make_value(clock.now)
+        clock.advance(hours=12, seconds=1)
+
+        _assert_refused(client, "twelve hours and a second after the real login")
+
+
+_BACKWARD_STEPS = [
+    pytest.param({"minutes": -1}, id="one-minute-back"),
+    pytest.param({"hours": -3}, id="three-hours-back"),
+    pytest.param({"days": -2}, id="two-days-back"),
+]
+
+
+def _login_after_a_backward_step(clock, step: dict):
+    """A logout at T, the clock stepped back, then a login: returns (browser, login instant)."""
+    first = _signed_in(clock)
+    _assert_logged_in_at_logout_redirect(_post_logout(first))
+    clock.advance(**step)
+    second = _signed_in(clock)
+    return second, clock.now
+
+
+class TestALoginAfterABackwardClockStepKeepsItsRealLifetime:
+    @pytest.mark.parametrize("step", _BACKWARD_STEPS)
+    def test_the_login_is_served_at_once(self, clock, step):
+        browser, _ = _login_after_a_backward_step(clock, step)
+
+        _assert_served(browser, "the login made after the step back")
+        assert browser.get("/", follow_redirects=False).status_code == 200
+
+    @pytest.mark.parametrize("step", _BACKWARD_STEPS)
+    def test_it_is_served_one_second_inside_twelve_hours_after_the_real_login(self, clock, step):
+        browser, login_at = _login_after_a_backward_step(clock, step)
+        clock.advance(hours=12, seconds=-1)
+
+        assert clock.now - login_at == 12 * _HOUR_NS - _NS
+        _assert_served(browser, "one second inside twelve hours of the real login")
+
+    @pytest.mark.parametrize("step", _BACKWARD_STEPS)
+    def test_it_is_refused_one_second_past_twelve_hours_after_the_real_login(self, clock, step):
+        browser, login_at = _login_after_a_backward_step(clock, step)
+        clock.advance(hours=12, seconds=1)
+
+        assert clock.now - login_at == 12 * _HOUR_NS + _NS
+        _assert_refused(browser, "one second past twelve hours of the real login")
+        _assert_page_redirected(browser, "one second past twelve hours of the real login")
+
+    @pytest.mark.parametrize("step", _BACKWARD_STEPS)
+    def test_a_copied_cookie_ends_with_the_original_and_requests_never_extend_it(self, clock, step):
+        browser, login_at = _login_after_a_backward_step(clock, step)
+        twin = _client()
+        _copy_session(browser, twin)
+        for _ in range(4):
+            clock.advance(hours=3)
+            browser.get(_ACCOUNTS)
+            twin.get(_ACCOUNTS)
+        clock.advance(seconds=1)
+
+        assert clock.now - login_at == 12 * _HOUR_NS + _NS
+        _assert_refused(browser, "the original, past twelve hours")
+        _assert_refused(twin, "the copy, past twelve hours")
+
+    @pytest.mark.parametrize("step", _BACKWARD_STEPS)
+    def test_a_logout_still_ends_it_and_a_later_login_is_served(self, clock, step):
+        browser, _ = _login_after_a_backward_step(clock, step)
+        twin = _client()
+        _copy_session(browser, twin)
+        clock.advance(seconds=1)
+        floor_before = database.get_session_revocation_floor_ns()
+
+        _assert_logged_in_at_logout_redirect(_post_logout(browser))
+
+        _assert_refused(twin, "a copy of the session issued after the backward step")
+        _assert_refused(browser, "the signing-out browser")
+        assert database.get_session_revocation_floor_ns() >= floor_before + 1
+        _assert_served(_signed_in(clock), "a login after that logout")
+
+    @pytest.mark.parametrize("step", _BACKWARD_STEPS)
+    def test_the_revocation_still_holds_after_a_restart(self, clock, step, monkeypatch):
+        browser, _ = _login_after_a_backward_step(clock, step)
+        twin = _client()
+        _copy_session(browser, twin)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(browser))
+        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None, raising=False)
+        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now, raising=False)
+
+        _assert_refused(twin, "the copy, after the daemon restarted")
+
+
+class TestAStampFarBeyondTheFloorAfterABackwardStepIsRefused:
+    """The stamp a login writes after a step back (one past the floor) is served; a forged stamp
+    far beyond it is not. Together with the future-stamp rows above this fixes the rule: a stamp
+    may exceed now only up to max(now, floor + 1) plus a small tolerance."""
+
+    @pytest.mark.parametrize(
+        "extra_ns",
+        [_DAY_NS, 30 * _DAY_NS, 3650 * _DAY_NS, 10**399],
+        ids=["a-day-past", "thirty-days-past", "ten-years-past", "400-digit-past"],
+    )
+    @pytest.mark.parametrize("step", _BACKWARD_STEPS)
+    def test_a_stamp_far_beyond_the_floor_plus_one_is_refused(self, clock, step, extra_ns):
+        browser, _ = _login_after_a_backward_step(clock, step)
+        _assert_served(browser, "the genuine login, before the forgery")
+        floor = database.get_session_revocation_floor_ns()
+        assert floor > clock.now, "the step back must leave the floor ahead of the clock"
+
+        _forge_issue_time(browser, floor + 1 + extra_ns)
+
+        _assert_refused(browser, "a stamp far beyond the floor plus one")
+        _assert_page_redirected(browser, "a stamp far beyond the floor plus one")
+
+    @pytest.mark.parametrize("step", _BACKWARD_STEPS)
+    def test_the_stamp_login_wrote_is_served_and_the_floor_itself_is_not(self, clock, step):
+        browser, _ = _login_after_a_backward_step(clock, step)
+        floor = database.get_session_revocation_floor_ns()
+
+        _forge_issue_time(browser, floor + 1)
+        _assert_served(browser, "a stamp of exactly floor plus one")
+
+        _forge_issue_time(browser, floor)
+        _assert_refused(browser, "a stamp equal to the floor")
+
+
+# ---------------------------------------------------------------------------
 # An invalid lifetime key warns into the daemon log file (AC-2)
 # ---------------------------------------------------------------------------
 
