@@ -1471,10 +1471,11 @@ class TestALogoutEndsEverySessionWhateverTheClockDidBetweenItsLoginAndTheLogout:
         browser, copy = _browser_and_copy(clock)
         clock.advance(seconds=-30)
 
-        def _broken_store(*_a, **_k):
-            raise sqlite3.OperationalError(_SENTINEL_DETAIL)
-
-        monkeypatch.setattr(database, "get_connection", _broken_store)
+        monkeypatch.setattr(
+            database,
+            "get_connection",
+            lambda *_a, **_k: (_ for _ in ()).throw(sqlite3.OperationalError(_SENTINEL_DETAIL)),
+        )
         response = _post_logout(browser)
 
         _assert_logged_in_at_logout_redirect(response)
@@ -1619,7 +1620,8 @@ def _answers_of_a_fresh_process(tmp_path, now_ns: int, cookies: dict) -> dict:
     env = {k: v for k, v in os.environ.items() if k != _LIFETIME_KEY}
     env.update(
         DB_PATH=database._db_file(),
-        SECRET_KEY=_SECRET,
+        # The signing key the importing process fixed at start, so its cookies verify in the new one.
+        SECRET_KEY=str(app_module.app.secret_key),
         DASHBOARD_PASSWORD=_PASSWORD,
         PYTHONIOENCODING="utf-8",
     )
