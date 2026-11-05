@@ -411,6 +411,57 @@ def test_a_redacted_file_holds_the_placeholder(rel: str):
         )
 
 
+# A UUID-shaped value that keeps the placeholder as a prefix is a hybrid of the real id's shape and
+# the placeholder: it is neither the plain placeholder nor an invented UUID recorded as such.
+_HYBRID_RE = re.compile(PLACEHOLDER + r"-[0-9a-fA-F]")
+
+
+def _hybrid_lines(text: str) -> list[int]:
+    return [n for n, line in enumerate(text.splitlines(), 1) if _HYBRID_RE.search(line)]
+
+
+def _plain_or_decompressed(rel: str) -> str:
+    data = (REPO / rel).read_bytes()
+    if data[:2] == bytes((0x1F, 0x8B)):  # gzip by content, whatever the file is called
+        data = gzip.decompress(data)
+    return data.decode("utf-8", errors="replace")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (PLACEHOLDER + "-0000-0000-0000-000000000000", [1]),
+        ("a" + chr(10) + PLACEHOLDER + "-a1b2c3d4" + chr(10), [2]),
+        (PLACEHOLDER, []),
+        (PLACEHOLDER + "-", []),
+        (PLACEHOLDER + " " + NIL_UUID, []),
+        (PLACEHOLDER + '"', []),
+    ],
+)
+def test_the_hybrid_detector_flags_a_placeholder_followed_by_a_hyphen_and_a_hex_digit(
+    text: str, expected: list[int]
+):
+    if _hybrid_lines(text) != expected:
+        pytest.fail("the hybrid detector reads a planted sample wrongly", pytrace=False)
+
+
+def test_no_tracked_file_holds_the_placeholder_followed_by_a_hyphen_and_a_hex_digit():
+    hits = []
+    for rel in _tracked():
+        try:
+            lines = _hybrid_lines(_plain_or_decompressed(rel))
+        except (OSError, EOFError, gzip.BadGzipFile):
+            continue  # an unreadable or truncated blob holds nothing this scan can read
+        hits.extend(f"{rel}:{n}" for n in lines)
+
+    if hits:
+        _fail_with_list(
+            f"{len(hits)} line(s) hold {PLACEHOLDER} as the prefix of a UUID-shaped value; "
+            "use the plain placeholder or an invented UUID v4 recorded in a PROVENANCE.md",
+            hits,
+        )
+
+
 @pytest.mark.parametrize("rel", CONSUMER_TEST_SOURCES)
 def test_a_consumer_test_source_holds_no_unrecorded_uuid_literal(rel: str):
     stray = [token for token in _tokens(_text(rel)) if token not in _allowed()]

@@ -497,7 +497,7 @@ def test_api_state_meta_account_present(client):
     env_stub = {
         "LIVE_EXECUTION": "False",
         "EXECUTION_START_TIME": "09:30",
-        "ACCOUNT_ROTH": "ACCOUNT_ID_REDACTED-0000-0000-0000-000000000000",
+        "ACCOUNT_ROTH": "ACCOUNT_ID_REDACTED",
     }
     with (
         patch("database.load_state", return_value={}),
