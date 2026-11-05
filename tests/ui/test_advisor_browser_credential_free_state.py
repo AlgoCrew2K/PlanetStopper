@@ -109,15 +109,9 @@ def _dump(tmp_path, extra_env: dict) -> dict:
     return json.loads(done.stdout.strip().splitlines()[-1])
 
 
-@pytest.fixture(scope="module")
-def environment_set_values(tmp_path_factory):
-    """{(module, attribute): (value with no credential, value with invented ones)}, for every
-    attribute that the credential variables change and a second clean import leaves alone (a
-    token or a start stamp differs on every import and is not a credential)."""
-    scratch = tmp_path_factory.mktemp("credential_free_probe")
-    clean = _dump(scratch, {})
-    clean_again = _dump(scratch, {})
-    with_values = _dump(scratch, _INVENTED)
+def _environment_set_values(clean: dict, with_values: dict, clean_again: dict) -> dict:
+    """{(module, attribute): (clean value, value with invented ones)} for every attribute the
+    credential variables change and a second clean import leaves alone."""
     found = {}
     for module, values in clean.items():
         for attr, value in values.items():
@@ -126,6 +120,78 @@ def environment_set_values(tmp_path_factory):
             if value != with_values[module].get(attr):
                 found[(module, attr)] = (value, with_values[module].get(attr))
     return found
+
+
+@pytest.fixture(scope="module")
+def environment_set_values(tmp_path_factory):
+    """{(module, attribute): (value with no credential, value with invented ones)}, for every
+    attribute that the credential variables change and a second clean import leaves alone (a
+    token differs on every import and is not a credential).
+
+    The imports run clean, with credentials, clean again. A start stamp only moves forward, so a
+    stamp that is equal in both clean imports is equal in the one taken between them, and is never
+    read as set by the environment. With the credential import last, two clean imports in one
+    second and the credential import in the next made the stamp look environment-set."""
+    scratch = tmp_path_factory.mktemp("credential_free_probe")
+    clean = _dump(scratch, {})
+    with_values = _dump(scratch, _INVENTED)
+    clean_again = _dump(scratch, {})
+    return _environment_set_values(clean, with_values, clean_again)
+
+
+def test_a_clock_stamp_between_two_equal_clean_values_is_not_read_as_set_by_the_environment():
+    def dump(stamp):
+        return {"app": {"started_at": stamp, "token": "same"}}
+
+    # Probe order clean, with credentials, clean again: the stamp is monotonic, so equal clean
+    # stamps force the middle one equal too.
+    same_second = _environment_set_values(dump(10), dump(10), dump(10))
+    assert same_second == {}
+    clock_ticked = _environment_set_values(dump(10), dump(11), dump(11))
+    assert clock_ticked == {}, "clean imports that differ are never read as environment-set"
+
+    # The impossible-in-new-order shape the old order produced (equal clean stamps around a later
+    # credential stamp) is the only one that admits a stamp.
+    old_order_artifact = _environment_set_values(dump(10), dump(11), dump(10))
+    assert ("app", "started_at") in old_order_artifact
+
+
+def test_a_credential_value_and_a_per_import_token_are_told_apart():
+    clean = {"app": {"COMPOSER_KEY_ID": None, "token": "a"}}
+    with_values = {"app": {"COMPOSER_KEY_ID": "invented", "token": "b"}}
+    clean_again = {"app": {"COMPOSER_KEY_ID": None, "token": "c"}}
+    assert _environment_set_values(clean, with_values, clean_again) == {
+        ("app", "COMPOSER_KEY_ID"): (None, "invented")
+    }
+
+
+def test_the_fixture_takes_its_imports_clean_then_with_credentials_then_clean_again():
+    tree = ast.parse(pathlib.Path(__file__).read_text(encoding="utf-8"))
+    fixture = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "environment_set_values"
+    )
+    calls = sorted(
+        (
+            node
+            for node in ast.walk(fixture)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_dump"
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
+
+    def kind(call: ast.Call) -> str:
+        extra = call.args[1]
+        if isinstance(extra, ast.Dict) and not extra.keys:
+            return "clean"
+        if isinstance(extra, ast.Name) and extra.id == "_INVENTED":
+            return "with_credentials"
+        return "unknown"
+
+    assert [kind(call) for call in calls] == ["clean", "with_credentials", "clean"]
 
 
 def test_the_probe_finds_the_values_a_dotenv_sets_at_import(environment_set_values):
