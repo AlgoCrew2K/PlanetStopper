@@ -54,13 +54,6 @@ _SENTINEL_DETAIL = "sentinel-database-detail-7c1e"
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(autouse=True)
-def _clean_throttle():
-    app_module._AUTH_FAILED_ATTEMPTS.clear()
-    yield
-    app_module._AUTH_FAILED_ATTEMPTS.clear()
-
-
 @pytest.fixture
 def gate(monkeypatch, tmp_path):
     """The auth gate on, a known credential and secret, a 12 hour lifetime, a temporary ``.env``."""
