@@ -273,21 +273,37 @@ def _revoke_sessions_issued_before(now_ns: int) -> bool:
     return True
 
 
-def _session_issue_is_valid(issued: object, now_ns: int) -> bool:
-    """True for an integer issue time after the revocation floor and within the lifetime."""
-    if not isinstance(issued, int) or isinstance(issued, bool):
+# How far an issue time may lie beyond max(now, floor + 1) and still be served.
+_SESSION_ISSUE_FUTURE_TOLERANCE_NS: int = 60 * 1_000_000_000  # nanoseconds (60 s)
+
+
+def _session_issue_is_valid(issued: object, logged_in_at: object, now_ns: int) -> bool:
+    """True for an integer issue time after the revocation floor and not beyond the next
+    stamp a login could write, with a login time that is inside the lifetime.
+
+    The issue time orders sessions against revocation (a login after a backward clock step is
+    stamped floor + 1, ahead of the clock); the lifetime counts from the wall-clock login time.
+    """
+    if logged_in_at is None:
+        # A session written before the login time was recorded counts from its issue time.
+        logged_in_at = issued
+    for value in (issued, logged_in_at):
+        if not isinstance(value, int) or isinstance(value, bool):
+            return False
+    floor = _revocation_floor_ns()
+    if issued <= floor:
         return False
-    if issued <= _revocation_floor_ns():
+    if issued > max(now_ns, floor + 1) + _SESSION_ISSUE_FUTURE_TOLERANCE_NS:
         return False
     lifetime_ns = int(app.permanent_session_lifetime.total_seconds() * 1_000_000_000)
-    return now_ns - issued <= lifetime_ns
+    return now_ns - logged_in_at <= lifetime_ns
 
 
 def _session_is_valid() -> bool:
-    """True when the session is authenticated, carries an integer issue time after the
+    """True when the session is authenticated, carries a sane issue time after the
     revocation floor, and is inside the lifetime."""
     return session.get("authenticated") is True and _session_issue_is_valid(
-        session.get("issued_at_ns"), _session_now_ns()
+        session.get("issued_at_ns"), session.get("logged_in_at_ns"), _session_now_ns()
     )
 
 
@@ -486,7 +502,9 @@ def login():
     session.clear()
     session["authenticated"] = True
     # max(): a login in the same clock tick as a logout must still outrank the floor.
-    session["issued_at_ns"] = max(_session_now_ns(), _revocation_floor_ns() + 1)
+    login_ns = _session_now_ns()
+    session["issued_at_ns"] = max(login_ns, _revocation_floor_ns() + 1)
+    session["logged_in_at_ns"] = login_ns
     return redirect(url_for("dashboard"))
 
 
@@ -5398,9 +5416,12 @@ def sse_events():
     # The generator runs outside the request context, so read the session here.
     enforce_session = _auth_check_enabled
     issued = session.get("issued_at_ns")
+    logged_in_at = session.get("logged_in_at_ns")
 
     def session_ended() -> bool:
-        return enforce_session and not _session_issue_is_valid(issued, _session_now_ns())
+        return enforce_session and not _session_issue_is_valid(
+            issued, logged_in_at, _session_now_ns()
+        )
 
     def generate():
         with _sse_clients_lock:
