@@ -1360,13 +1360,16 @@ class TestAnIssueTimeThatIsNotASaneInstantIsRefused:
         _assert_page_redirected(client, "the forged issue time")
 
     @pytest.mark.parametrize("make_value", _UNSANE_ISSUE_TIMES)
-    def test_a_refused_forged_session_starts_no_run(self, clock, make_value, run_now_spy):
+    def test_a_refused_forged_session_starts_no_run(
+        self, clock, make_value, run_now_spy, monkeypatch
+    ):
         client = _signed_in(clock)
         _forge_issue_time(client, make_value(clock.now))
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
 
-        response = client.post(_RUN_URL, headers=_csrf_headers())
+        response = client.post(_RUN_URL, headers=_csrf_headers(**_XHR))
 
-        assert response.status_code in (401, 403), f"answered {response.status_code}"
+        assert response.status_code == 401 and response.get_json() == _UNAUTHENTICATED
         _nothing_started(run_now_spy)
 
     @pytest.mark.parametrize("make_value", _UNSANE_ISSUE_TIMES[-3:])

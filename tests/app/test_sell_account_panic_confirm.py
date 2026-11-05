@@ -539,12 +539,12 @@ def operator(monkeypatch, tmp_path):
     env_file.write_text("EXECUTION_START_TIME=09:35\n", encoding="utf-8")
     monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_file))
     monkeypatch.setattr(app_module, "_auth_check_enabled", True)
-    monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
     monkeypatch.setitem(app_module.app.config, "SESSION_COOKIE_SECURE", False)
     app_module.app.config["TESTING"] = True
     browser = app_module.app.test_client()
     login = browser.post("/login", data={"password": _OPERATOR_PASSWORD})
     assert login.status_code == 302, f"login answered {login.status_code}"
+    monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
     token = browser.get("/api/csrf-token").get_json()["csrf_token"]
     assert token, "GET /api/csrf-token returned no token"
     return browser, token
