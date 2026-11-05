@@ -441,3 +441,83 @@ class TestOneSymphonyNeverStopsTheOthers:
 
         assert [o.reason for o in run.outcomes] == ["write_failed", "write_failed"]
         assert run.session == D
+
+
+class TestUnusablePageTokenFailsOnlyItsBatch:
+    """A non-empty list as the first page's ``next_page_token`` cannot be checked or sent: that
+    batch fails, naming the exception type, and the other batch is fetched and labelled."""
+
+    BASE_TICKS = 7  # an arbitrary default count the engine passes when a label is absent
+
+    def _universe(self, job_harness):
+        """31 tickers sort into two batches: the 30 FIL tickers, then ZZLATE alone."""
+        batch = regime_label_job.SIP_BATCH_SIZE
+        fillers = [f"FIL{i:02d}" for i in range(batch)]
+        closes = {t: golden_closes("trending", base=40.0 + i) for i, t in enumerate(fillers)}
+        closes["ZZLATE"] = golden_closes("mean-reverting")
+        entries = {
+            ID_ONE: captured_entry(
+                "Early Test Symphony",
+                _sip.holdings_of(*[(t, 1.0 / len(fillers)) for t in fillers]),
+            ),
+            ID_TWO: captured_entry(
+                "Mixed Test Symphony", _sip.holdings_of((fillers[1], 0.5), ("ZZLATE", 0.5))
+            ),
+            ID_THREE: captured_entry("Late Test Symphony", _sip.holdings_of(("ZZLATE", 1.0))),
+        }
+
+        def unusable_token_on_the_first_batch(params):
+            symbols = params.get("symbols", "").split(",")
+            if fillers[0] in symbols and "page_token" not in params:
+                body = _sip.page_body({fillers[0]: closes[fillers[0]]}, ["next-page"])
+                return _sip.Resp(200, body)
+            return None
+
+        http = job_harness.serve(closes, rule=unusable_token_on_the_first_batch)
+        return http, entries
+
+    def test_the_failed_batch_names_the_exception_type_and_the_other_batch_is_labelled(
+        self, job_harness, caplog
+    ):
+        http, entries = self._universe(job_harness)
+        caplog.set_level(logging.INFO, logger="alphabot.regime_label")
+
+        run = job_harness.run(entries)
+
+        batches = [call["params"]["symbols"].split(",") for call in http.calls]
+        assert any(batch == ["ZZLATE"] for batch in batches), (
+            "the second batch must still be requested after the first one failed"
+        )
+        outcomes = _outcomes(run)
+        for sid in (ID_ONE, ID_TWO):
+            assert outcomes[sid].reason == "price_fetch_failed", sid
+            assert outcomes[sid].detail == "TypeError", sid
+        assert outcomes[ID_THREE].reason is None
+        assert outcomes[ID_THREE].label == golden_label("mean-reverting")
+        rows = job_harness.rows()
+        assert {sid: rows[sid][:2] for sid in rows} == {
+            ID_THREE: (golden_label("mean-reverting"), D_ISO)
+        }
+
+        lines = [r.getMessage() for r in caplog.records if r.name == "alphabot.regime_label"]
+        symphony_lines = [line for line in lines if " symphony=" in line]
+        summaries = [line for line in lines if line.startswith("regime_label summary")]
+        assert len(symphony_lines) == 3, lines
+        assert len(summaries) == 1, lines
+        assert "seen=3" in summaries[0] and "labelled=1" in summaries[0]
+        assert "price_fetch_failed=2" in summaries[0]
+
+    def test_the_engine_applies_the_default_count_for_a_symphony_whose_batch_failed(
+        self, job_harness
+    ):
+        import math_engine
+
+        _http, entries = self._universe(job_harness)
+
+        job_harness.run(entries)
+
+        failed = database.get_cached_regime_label(ID_ONE, session_date=D_ISO)
+        labelled = database.get_cached_regime_label(ID_THREE, session_date=D_ISO)
+        assert failed is None, "no row is dated the session for a symphony whose batch failed"
+        assert math_engine.apply_regime_exit_adjustment(failed, self.BASE_TICKS) == self.BASE_TICKS
+        assert labelled == golden_label("mean-reverting")

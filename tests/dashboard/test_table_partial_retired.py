@@ -170,3 +170,38 @@ def test_the_settings_modal_header_names_only_the_card_gear():
     assert NAME not in header
     assert "table row" not in header.lower(), "the header still names a table row as an opener"
     assert "gear" in header.lower(), "the header no longer says what opens the modal"
+
+
+def test_the_settings_modal_header_has_no_line_over_100_characters_and_no_doubled_space():
+    source = _read(REPO / "static" / "settings-modal.js")
+    header = source[: source.index("*/") + 2]
+    assert header.startswith("/**"), "fixture sanity: the file opens with its header comment"
+    too_long = [n for n, line in enumerate(header.splitlines(), 1) if len(line) > 100]
+    doubled = [
+        n
+        for n, line in enumerate(header.splitlines(), 1)
+        if "  " in re.sub(r"^\s*\*?\s*", "", line)
+    ]
+    assert too_long == [], f"header lines over 100 characters: {too_long}"
+    assert doubled == [], f"header lines with a doubled space inside the text: {doubled}"
+
+
+# ---------------------------------------------------------------------------
+# The specialist agent file
+# ---------------------------------------------------------------------------
+
+AGENT_FILE = REPO / ".claude" / "agents" / "flask-dashboard-specialist.md"
+
+
+def test_the_flask_specialist_agent_file_names_no_deleted_template():
+    text = _read(AGENT_FILE)
+    offending = [n for n, line in enumerate(text.splitlines(), 1) if NAME in line]
+    assert offending == [], f"lines naming the deleted template: {offending}"
+
+
+def test_the_flask_specialist_description_still_names_its_surfaces():
+    description = next(
+        line for line in _read(AGENT_FILE).splitlines() if line.startswith("description:")
+    )
+    for surface in ("app.py", "templates/index.html", "static/"):
+        assert surface in description, f"the description no longer names {surface}"

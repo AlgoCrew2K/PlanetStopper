@@ -84,10 +84,13 @@ class Stage:
             self.tick(moment)
             moment += timedelta(seconds=every_s)
 
-    def settle(self) -> None:
+    def settle(self, until: float | None = None) -> None:
         """Hold until the engine thread of every process still alive has looked at the clock as it
-        stands and decided what to do at it (bounded by SETTLE_REAL_S in all)."""
+        stands and decided what to do at it (bounded by SETTLE_REAL_S in all, and by the real
+        instant `until` when one is given)."""
         now, deadline = self.host.monotonic(), time.monotonic() + SETTLE_REAL_S
+        if until is not None:
+            deadline = min(deadline, until)
         for process in list(self.engines.runs):
             while not process.has_seen(now) and time.monotonic() < deadline:
                 pause(0.001)
@@ -106,6 +109,35 @@ class Stage:
             pause(0.005)
             moment += timedelta(seconds=1)
         return moment if done() else None
+
+    def settle_run_slot(self, until: float | None = None) -> None:
+        """Hold until the run slot is not held by a process that has ended (bounded by
+        SETTLE_REAL_S, and by the real instant `until` when one is given): the engine thread frees
+        it after its process exits, and a minute that ticks before it has is skipped for a reason
+        that has nothing to do with the daemon."""
+        deadline = time.monotonic() + SETTLE_REAL_S
+        if until is not None:
+            deadline = min(deadline, until)
+        while time.monotonic() < deadline:
+            held = app_module._engine_run_state() is not None
+            if not held or any(p.returncode is None for p in list(self.engines.runs)):
+                return
+            pause(0.001)
+
+    def advance_settled(self, first: datetime, last: datetime, every_s: int) -> None:
+        """Tick from `first` to `last` like `tick_range`, but after each tick wait until the
+        engine threads have decided what to do at that instant and the run slot of a process that
+        ended has been freed, so the outcome follows the daemon's logic and not the machine's
+        speed. The waiting is bounded for the whole range by REAL_WAIT_S, so a daemon that never
+        settles fails the test on its assertions within that time instead of waiting out every
+        tick."""
+        until = time.monotonic() + REAL_WAIT_S
+        moment = first
+        while moment <= last:
+            self.tick(moment)
+            self.settle(until)
+            self.settle_run_slot(until)
+            moment += timedelta(seconds=every_s)
 
     def records(self, outcome: str) -> list:
         return [r for r in self.daemon.cycles if r.outcome == outcome]
@@ -226,7 +258,7 @@ def test_a_run_hung_in_the_session_is_ended_after_600_seconds_and_the_next_minut
     assert warned, "ending a run was not logged at WARNING or above"
 
     # The slot is free and the next minute spawns; later minutes are not skipped.
-    st.tick_range(ended_at, st.at(MONDAY, "10:13:30"), 5)
+    st.advance_settled(ended_at, st.at(MONDAY, "10:13:30"), 5)
     assert len(st.engines.runs) >= 2, "no run was spawned after the hung one was ended"
     second = st.engines.runs[1]
     assert second.started_et <= datetime.fromisoformat(f"{MONDAY}T10:11:59").replace(tzinfo=ET), (

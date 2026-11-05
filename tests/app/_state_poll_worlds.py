@@ -29,6 +29,9 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NoReturn
+
+import pytest
 
 import analytics as analytics_module
 import app as app_module
@@ -111,7 +114,7 @@ class StateWorld:
     record: dict | None = None
     notes: dict = field(default_factory=dict)
 
-    def get(self, path: str = "/api/state"):
+    def get(self, path: str = "/api/state") -> object:
         return self.client.get(path)
 
     def body(self, path: str = "/api/state") -> dict:
@@ -159,7 +162,12 @@ def _seed_rows(world: World) -> None:
 
 
 def _live_world(
-    monkeypatch, tmp_path, name: str, live_record: str, *, branch: str = "open"
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    name: str,
+    live_record: str,
+    *,
+    branch: str = "open",
 ) -> StateWorld:
     """The refresh-timing world's rows, with a derived live record committed as the state."""
     world = build_world(monkeypatch, tmp_path, branch)
@@ -170,7 +178,12 @@ def _live_world(
 
 
 def _snapshot_world(
-    monkeypatch, tmp_path, name: str, snapshot_record: str, *, branch: str = "closed_frozen"
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    name: str,
+    snapshot_record: str,
+    *,
+    branch: str = "closed_frozen",
 ) -> StateWorld:
     """The refresh-timing world's rows, with a derived close snapshot stored in the state."""
     world = build_world(monkeypatch, tmp_path, branch)
@@ -194,34 +207,38 @@ def _snapshot_world(
 # ---------------------------------------------------------------------------
 
 
-def _raiser(exc_type: type[Exception]):
-    def boom(*_args, **_kwargs):
+def _raiser(exc_type: type[Exception]) -> Callable[..., NoReturn]:
+    def boom(*_args, **_kwargs) -> NoReturn:
         raise exc_type("planted fault")
 
     return boom
 
 
-def fail_triggers(monkeypatch) -> None:
+def fail_triggers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(database_module, "get_triggers", _raiser(RuntimeError))
 
 
-def fail_panels(monkeypatch) -> None:
+def fail_panels(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module, "_dashboard_panels_payload", _raiser(RuntimeError))
 
 
-def fail_guard_alpha(monkeypatch) -> None:
+def fail_guard_alpha(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(database_module, "get_guard_alpha_by_symphony", _raiser(RuntimeError))
 
 
 def fail_symphony_helpers(
-    monkeypatch, exc_type: type[Exception], *, symphony_name: str, helpers: tuple[str, ...]
+    monkeypatch: pytest.MonkeyPatch,
+    exc_type: type[Exception],
+    *,
+    symphony_name: str,
+    helpers: tuple[str, ...],
 ) -> None:
     """Make the named `analytics.get_symphony_*` helpers raise for one symphony, when `get_state`
     calls them. Every other caller and every other symphony reads the real function."""
     for helper in helpers:
         real = getattr(analytics_module, helper)
 
-        def planted(*args, _real=real, **kwargs):
+        def planted(*args, _real=real, **kwargs) -> object:
             entry = args[1] if len(args) > 1 else None
             caller = sys._getframe(1).f_code.co_name
             if (
@@ -240,19 +257,19 @@ def fail_symphony_helpers(
 # ---------------------------------------------------------------------------
 
 
-def open_two_accounts(monkeypatch, tmp_path) -> StateWorld:
+def open_two_accounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     """Market open, a cycle committed today, two accounts, three symphonies."""
     return _live_world(monkeypatch, tmp_path, "open_two_accounts", "live_state_two_accounts.json")
 
 
-def open_with_snapshot_key(monkeypatch, tmp_path) -> StateWorld:
+def open_with_snapshot_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     """Market open; the state also holds a stored close snapshot, an unnamed dict entry."""
     world = seeded_world(monkeypatch, tmp_path, "open")
     world.commit_state("m", with_snapshot=True)
     return StateWorld("open_with_snapshot_key", world.client, world)
 
 
-def open_triggers_fail(monkeypatch, tmp_path) -> StateWorld:
+def open_triggers_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     """An exit of the day is stored, and the trigger read fails."""
     built = open_two_accounts(monkeypatch, tmp_path)
     seed_captured_exit_trigger()
@@ -261,7 +278,7 @@ def open_triggers_fail(monkeypatch, tmp_path) -> StateWorld:
     return built
 
 
-def open_analytics_fail(monkeypatch, tmp_path) -> StateWorld:
+def open_analytics_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     """Every per-symphony analytics read raises KeyError for one symphony (Corporate Chaos)."""
     built = open_two_accounts(monkeypatch, tmp_path)
     fail_symphony_helpers(
@@ -275,20 +292,20 @@ def open_analytics_fail(monkeypatch, tmp_path) -> StateWorld:
     return built
 
 
-def open_prev_return_cases(monkeypatch, tmp_path) -> StateWorld:
+def open_prev_return_cases(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     return _live_world(
         monkeypatch, tmp_path, "open_prev_return_cases", "live_state_prev_return_cases.json"
     )
 
 
-def open_panels_fail(monkeypatch, tmp_path) -> StateWorld:
+def open_panels_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     built = open_two_accounts(monkeypatch, tmp_path)
     fail_panels(monkeypatch)
     built.name = "open_panels_fail"
     return built
 
 
-def closed_no_snapshot_two_accounts(monkeypatch, tmp_path) -> StateWorld:
+def closed_no_snapshot_two_accounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     """Market closed, no snapshot stored, the open world's live state: the live branch serves."""
     return _live_world(
         monkeypatch,
@@ -299,37 +316,37 @@ def closed_no_snapshot_two_accounts(monkeypatch, tmp_path) -> StateWorld:
     )
 
 
-def closed_frozen_two_accounts(monkeypatch, tmp_path) -> StateWorld:
+def closed_frozen_two_accounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     return _snapshot_world(
         monkeypatch, tmp_path, "closed_frozen_two_accounts", "snapshot_two_accounts.json"
     )
 
 
-def closed_missing_defaults(monkeypatch, tmp_path) -> StateWorld:
+def closed_missing_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     return _snapshot_world(
         monkeypatch, tmp_path, "closed_missing_defaults", "snapshot_missing_defaults.json"
     )
 
 
-def closed_null_defaults(monkeypatch, tmp_path) -> StateWorld:
+def closed_null_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     return _snapshot_world(
         monkeypatch, tmp_path, "closed_null_defaults", "snapshot_null_defaults.json"
     )
 
 
-def closed_unnamed_entry(monkeypatch, tmp_path) -> StateWorld:
+def closed_unnamed_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     return _snapshot_world(
         monkeypatch, tmp_path, "closed_unnamed_entry", "snapshot_unnamed_entry.json"
     )
 
 
-def closed_no_accounts_map(monkeypatch, tmp_path) -> StateWorld:
+def closed_no_accounts_map(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     return _snapshot_world(
         monkeypatch, tmp_path, "closed_no_accounts_map", "snapshot_no_accounts_map.json"
     )
 
 
-def closed_guard_alpha_fail(monkeypatch, tmp_path) -> StateWorld:
+def closed_guard_alpha_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     """Both captured entries of the first account are triggered and an exit row of one is stored,
     so the read would find a figure; it fails instead."""
     built = closed_frozen_two_accounts(monkeypatch, tmp_path)
@@ -339,12 +356,12 @@ def closed_guard_alpha_fail(monkeypatch, tmp_path) -> StateWorld:
     return built
 
 
-def pre_market(monkeypatch, tmp_path) -> StateWorld:
+def pre_market(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     world = seeded_world(monkeypatch, tmp_path, "pre_market")
     return StateWorld("pre_market", world.client, world)
 
 
-def closed_no_longer_held(monkeypatch, tmp_path) -> StateWorld:
+def closed_no_longer_held(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     from tests.app.test_no_longer_held_surfaces import _add_stale_entry, _seed_older_sessions
 
     world = seeded_world(monkeypatch, tmp_path, "closed_frozen")
@@ -353,7 +370,7 @@ def closed_no_longer_held(monkeypatch, tmp_path) -> StateWorld:
     return StateWorld("closed_no_longer_held", world.client, world)
 
 
-def stalled_open(monkeypatch, tmp_path) -> StateWorld:
+def stalled_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     """Market open, no cycle committed since today's open, Friday's close snapshot stored."""
     from tests.app.test_open_market_stalled_figures_are_the_last_sessions import (
         MONDAY,
@@ -365,7 +382,7 @@ def stalled_open(monkeypatch, tmp_path) -> StateWorld:
     return StateWorld("stalled_open", closed.world.client, closed)
 
 
-def held_view(monkeypatch, tmp_path) -> StateWorld:
+def held_view(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     """The market closed a minute ago and the session's snapshot is not stored yet."""
     from tests.app.test_close_gap_serves_session_that_closed import (
         MONDAY,
@@ -377,12 +394,12 @@ def held_view(monkeypatch, tmp_path) -> StateWorld:
     return StateWorld("held_view", closed.world.client, closed)
 
 
-def no_state(monkeypatch, tmp_path) -> StateWorld:
+def no_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     world = build_world(monkeypatch, tmp_path, "open")
     return StateWorld("no_state", world.client, world)
 
 
-def no_state_closed(monkeypatch, tmp_path) -> StateWorld:
+def no_state_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> StateWorld:
     world = build_world(monkeypatch, tmp_path, "closed_frozen")
     return StateWorld("no_state_closed", world.client, world)
 

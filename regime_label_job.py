@@ -10,7 +10,7 @@ import logging
 import math
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
@@ -226,9 +226,14 @@ def _fetch_batch(tickers: list, start: date, end: datetime) -> dict:
             raise _BatchFailed(type(exc).__name__) from exc
         if not token:
             return closes
-        if token in seen_tokens:
+        try:
+            repeated = token in seen_tokens
+            if not repeated:
+                seen_tokens.add(token)
+        except TypeError as exc:
+            raise _BatchFailed(type(exc).__name__) from exc
+        if repeated:
             raise _BatchFailed("RepeatedPageToken")
-        seen_tokens.add(token)
         params = {**params, "page_token": token}
     raise _BatchFailed("PageLimitExceeded")
 
@@ -338,7 +343,7 @@ def _log_symphony(session: date, o: SymphonyOutcome) -> None:
     logger.info("%s", line)
 
 
-def _log_summary(session: date, outcomes: Iterable[SymphonyOutcome], failure: str | None) -> None:
+def _log_summary(session: date, outcomes: Sequence[SymphonyOutcome], failure: str | None) -> None:
     """Log the one summary line of a run."""
     counts = Counter(o.reason for o in outcomes if o.reason)
     line = (
