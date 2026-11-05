@@ -1008,14 +1008,14 @@ class TestHeadAndOptionsOnLogoutEndNoSession:
     def test_a_head_repeated_on_a_timer_keeps_the_operator_signed_in(self, clock, monkeypatch):
         """The abuse the fix closes: a page that keeps sending HEAD must not hold the operator out."""
         operator = _signed_in(clock)
+        clock.advance(seconds=1)
+        other_browser = _signed_in(clock)
         monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
         for _ in range(5):
             clock.advance(seconds=1)
             operator.head("/logout", headers=_FOREIGN_SITE)
-        clock.advance(seconds=1)
-        later_login = _signed_in(clock)
         _assert_served(operator, "the original session after five HEADs")
-        _assert_served(later_login, "a login made between the HEADs")
+        _assert_served(other_browser, "the other browser after five HEADs")
 
 
 class TestHeadAndOptionsOnLoginCountNoAttempt:
@@ -1110,6 +1110,23 @@ def _state_database_dump() -> str:
         connection.close()
 
 
+_PROBE_HASH = "SweepProbeHash0000"
+_PROBE_NAME = "Sweep Probe Alpha"
+
+
+def _strategy_rows() -> list[str]:
+    connection = sqlite3.connect(database._db_file())
+    try:
+        return [
+            r[0]
+            for r in connection.execute(
+                "SELECT symphony_name FROM symphony_strategies ORDER BY symphony_name"
+            )
+        ]
+    finally:
+        connection.close()
+
+
 class TestNoRouteTreatsHeadOrOptionsAsAWrite:
     def test_the_sweep_finds_the_sign_in_and_sign_out_routes(self):
         """Non-vacuity: the sweep below runs over a set that contains the two known routes."""
@@ -1131,6 +1148,7 @@ class TestNoRouteTreatsHeadOrOptionsAsAWrite:
     ):
         operator = _signed_in(clock)
         clock.advance(seconds=1)
+        database.save_state({_PROBE_HASH: {"name": _PROBE_NAME, "account": "ACC-1"}})
         monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
         app_module._AUTH_FAILED_ATTEMPTS.clear()
         env_before = gate.read_bytes()
@@ -1144,6 +1162,72 @@ class TestNoRouteTreatsHeadOrOptionsAsAWrite:
         assert _revocation_state() == revocation_before, f"{method} {path} moved the floor"
         assert app_module._AUTH_FAILED_ATTEMPTS == {}, f"{method} {path} counted a failed login"
         _assert_served(operator, f"after {method} {path}")
+
+
+class TestReadingSymphonySettingsCreatesNoRow:
+    """A GET (and so a HEAD) of a settings route must not write a default strategy row.
+
+    The engine's own read creates the row on first use; a dashboard read must not, because the
+    path segment names any symphony the caller likes and each name would add a row.
+    """
+
+    @pytest.fixture
+    def operator(self, clock, monkeypatch):
+        client = _signed_in(clock)
+        clock.advance(seconds=1)
+        database.save_state({_PROBE_HASH: {"name": _PROBE_NAME, "account": "ACC-1"}})
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        return client
+
+    @pytest.mark.parametrize("method", ["GET", "HEAD"])
+    @pytest.mark.parametrize(
+        "segment", ["no-such-symphony", _PROBE_HASH.lower()], ids=["unknown name", "live symphony"]
+    )
+    def test_the_symphony_settings_read_adds_no_row(self, operator, segment, method):
+        rows_before = _strategy_rows()
+
+        response = operator.open(f"/api/symphony-settings/{segment}", method=method)
+
+        assert response.status_code == 200
+        assert _strategy_rows() == rows_before, f"{method} created a strategy row for {segment}"
+
+    def test_an_unseen_symphony_is_still_answered_with_the_defaults(self, operator):
+        body = operator.get("/api/symphony-settings/no-such-symphony").get_json()
+
+        assert body["parameters"] == database.DEFAULT_STRATEGY
+        assert body["locked_vars"] == database.DEFAULT_LOCKED_VARS
+        assert body["live_mode"] is False
+
+    def test_a_stored_strategy_is_still_answered_as_stored(self, operator):
+        stored = {**database.DEFAULT_STRATEGY, "TRIGGER_THRESHOLD_PCT": 11.0}
+        database.save_symphony_strategy(_PROBE_NAME, stored, ["VWAP_BLEED_TICKS"])
+
+        body = operator.get(
+            f"/api/symphony-settings/{database.normalize_name(_PROBE_NAME)}"
+        ).get_json()
+
+        assert body["parameters"] == stored
+        assert body["locked_vars"] == ["VWAP_BLEED_TICKS"]
+
+    @pytest.mark.parametrize("method", ["GET", "HEAD"])
+    def test_the_settings_list_read_adds_no_row_for_a_live_symphony_without_one(
+        self, operator, method
+    ):
+        rows_before = _strategy_rows()
+
+        response = operator.open("/api/settings", method=method)
+
+        assert response.status_code == 200
+        assert _strategy_rows() == rows_before, f"{method} /api/settings created a strategy row"
+
+    def test_the_settings_list_still_answers_the_defaults_for_a_live_symphony(self, operator):
+        body = operator.get("/api/settings").get_json()
+
+        entry = body["symphonies"].get(database.normalize_name(_PROBE_NAME))
+        assert entry is not None, "the live symphony must be listed"
+        assert entry["params"] == database.DEFAULT_STRATEGY
+        assert entry["locked_vars"] == database.DEFAULT_LOCKED_VARS
+        assert entry["live_mode"] is False
 
 
 # ---------------------------------------------------------------------------
