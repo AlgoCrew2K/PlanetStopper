@@ -28,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import functools
 import logging
+import sys
 import threading
 import time
 from datetime import time as dtime
@@ -172,6 +173,93 @@ class TestRegistrations:
         assert getattr(app_module, "_scheduler_started_mono", None) == monotonic_clock.now
 
 
+class _SchedulerWaitRecorder:
+    """Records every wait the scheduler loop's thread makes while jobs run, never a duration.
+
+    Active only between the end of the test's own ``before_tick`` hook and the start of the next
+    one, so the waits the test makes itself are not counted. A wait is a blocking acquire of the
+    account-refresh lock (``acquire`` with a timeout or without ``blocking=False``, or ``with``),
+    a ``Condition`` or ``Event`` wait, or a ``Thread.join``; a non-blocking acquire and a wait
+    with a zero timeout are polls and are not recorded. Starting a thread waits on that thread's
+    started event inside ``threading``, which the recorder ignores.
+    """
+
+    def __init__(self, loop_thread_name: str) -> None:
+        self._loop_thread_name = loop_thread_name
+        self.active = False
+        self.waits: list[str] = []
+
+    def _record(self, what: str) -> None:
+        if self.active and threading.current_thread().name == self._loop_thread_name:
+            self.waits.append(what)
+
+    def around_hook(self, hook):
+        """before_tick wrapper that switches recording off while the hook runs."""
+
+        def _wrapped(tick, jobs):
+            self.active = False
+            try:
+                hook(tick, jobs)
+            finally:
+                self.active = True
+
+        return _wrapped
+
+    def install(self, monkeypatch) -> None:
+        recorder = self
+        real_flight = app_module._ACCOUNT_REFRESH_FLIGHT
+
+        class _RecordingFlight:
+            def acquire(self, blocking=True, timeout=-1):
+                if blocking and timeout != 0:
+                    recorder._record("account-refresh lock acquire")
+                return real_flight.acquire(blocking, timeout)
+
+            def release(self):
+                real_flight.release()
+
+            def locked(self):
+                return real_flight.locked()
+
+            def __enter__(self):
+                recorder._record("account-refresh lock entered with a with-block")
+                return real_flight.__enter__()
+
+            def __exit__(self, *exc):
+                return real_flight.__exit__(*exc)
+
+        monkeypatch.setattr(app_module, "_ACCOUNT_REFRESH_FLIGHT", _RecordingFlight())
+
+        real_event_wait = threading.Event.wait
+        real_condition_wait = threading.Condition.wait
+        real_join = threading.Thread.join
+
+        def _event_wait(event, timeout=None):
+            caller = sys._getframe(1).f_code
+            starting_a_thread = (
+                caller.co_filename == threading.__file__ and caller.co_name == "start"
+            )
+            if timeout != 0 and not starting_a_thread:
+                recorder._record("Event.wait")
+            return real_event_wait(event, timeout)
+
+        def _condition_wait(condition, timeout=None):
+            # Event.wait and Thread.start wait on a condition inside threading itself.
+            inside_threading = sys._getframe(1).f_code.co_filename == threading.__file__
+            if timeout != 0 and not inside_threading:
+                recorder._record("Condition.wait")
+            return real_condition_wait(condition, timeout)
+
+        def _join(thread, timeout=None):
+            if timeout != 0:
+                recorder._record("Thread.join")
+            return real_join(thread, timeout)
+
+        monkeypatch.setattr(threading.Event, "wait", _event_wait)
+        monkeypatch.setattr(threading.Condition, "wait", _condition_wait)
+        monkeypatch.setattr(threading.Thread, "join", _join)
+
+
 class TestSlotsThatRaise:
     def test_a_raising_early_slot_is_logged_with_its_name_and_the_engine_still_spawns(
         self, monkeypatch, tmp_path, stub_engine, join_engine_threads, caplog
@@ -230,8 +318,13 @@ class TestSlotsThatRaise:
     ):
         """Both passes finish while Composer is still held. The proof is the order of events, the
         loop thread ending before the stub's held call returns, never a count of seconds, so a
-        busy machine cannot change the verdict."""
+        busy machine cannot change the verdict. The scheduler thread must also make no waiting
+        call on the account refresh at all, however short: a bounded wait would still end within
+        the loop bound and pass the order check alone."""
         composer_total_stats.mode = "hold"
+        loop_thread_name = "scheduler-under-test"
+        waits = _SchedulerWaitRecorder(loop_thread_name)
+        waits.install(monkeypatch)
         # Longer than any wait below, so the hold ends only when this test releases it.
         composer_total_stats.hold_timeout_s = HELD_FOR_S
 
@@ -255,13 +348,13 @@ class TestSlotsThatRaise:
 
         def _loop_under_test():
             try:
-                _run_loop(monkeypatch, ticks=2, before_tick=_before)
+                _run_loop(monkeypatch, ticks=2, before_tick=waits.around_hook(_before))
             except BaseException as exc:  # noqa: BLE001 -- handed to the test thread below
                 outcome["error"] = exc
             # Read on this thread at the instant the loop ended.
             outcome["composer_still_held"] = not composer_total_stats.returned.is_set()
 
-        loop = threading.Thread(target=_loop_under_test, name="scheduler-under-test", daemon=True)
+        loop = threading.Thread(target=_loop_under_test, name=loop_thread_name, daemon=True)
         loop.start()
         try:
             loop.join(timeout=LOOP_JOIN_S)
@@ -287,6 +380,10 @@ class TestSlotsThatRaise:
         assert stub_engine.starts == 2
         assert composer_total_stats.call_count == 1, (
             "the second :00 must find the first refresh still in flight and start no second one"
+        )
+        assert waits.waits == [], (
+            "the scheduler thread waited on the account refresh while spawning the engine: "
+            f"{waits.waits}"
         )
 
 
