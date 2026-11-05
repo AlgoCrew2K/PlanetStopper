@@ -801,9 +801,21 @@ class TestTheRouteIsRefusedWhileTheMarketIsOpen:
         self, gated, client, threads, monkeypatch, instant, state, status
     ):
         jb.freeze_app_clock(monkeypatch, instant)
+        seen: list = []
+        real = app_module.get_market_state
+
+        def recording(current_et, *args, **kwargs):
+            seen.append(current_et)
+            return real(current_et, *args, **kwargs)
+
+        monkeypatch.setattr(app_module, "get_market_state", recording)
 
         response = _post(client)
 
+        assert seen and seen[-1] == instant, (
+            "the answer comes from the calendar's state for the clock's now, in every case, "
+            "including the ones that start a review"
+        )
         assert response.status_code == status
         if status == 409:
             assert response.get_json() == MARKET_OPEN
