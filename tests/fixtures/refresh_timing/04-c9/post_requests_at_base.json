@@ -181,17 +181,6 @@
    "method": "POST",
    "url": "/ai-advisor/suggest"
   },
-  "cash_now": {
-   "body": "{\"symphony_id\":\"5XjzXjdGnjh99MIsdM97\"}",
-   "headers": {
-    "content-type": "application/json",
-    "x-csrf-token": "<token>"
-   },
-   "initKeys": null,
-   "keepalive": false,
-   "method": "POST",
-   "url": "/api/sell_account"
-  },
   "chat_send": {
    "body": "{\"artifact_id\":\"a-1\",\"artifact_type\":\"asset_swap\",\"artifact\":{},\"history\":[],\"message\":\"why was this swap rejected?\"}",
    "headers": {

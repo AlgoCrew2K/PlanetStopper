@@ -15,3 +15,7 @@ This folder holds no record files. Worlds are producer output (`default` and `mi
 | `/api/sell_account` answers | none (the route's success shape is unreachable at the base: it refuses a request without `confirm_account_id`) | status 200 with `{}` or `{"status": "success"}`; status 400; pending | harness route specs; no sell is sent by anything here | S-7.3 to S-7.6 | requested |
 
 The request equality in S-7.4 is the literal the page has always sent: URL `/api/sell_account`, method POST, headers `Content-Type` and `X-CSRF-Token`, body `{"symphony_id": <id>}` as compact JSON.
+
+## Revision: the Cash Now rows no longer have a consumer
+
+The `_triggered_body` / `_untriggered_body` builders and the `/api/sell_account` answers above were used only by `tests/dashboard/test_cash_now_state.py`, deleted with the control (security-and-controls C2, GREEN `5b0ea52ac3011fd370f3c71b2221849cec7387f8`, RED `ee38b5d6fd47b8c6324d3dcfb4dacce58ee9aca9`). The rows are kept as the record of what that suite used; no file in this folder changed. The final paragraph's request literal is now pinned by nothing: `static/index.js` sends no request to `/api/sell_account` (`tests/dashboard/test_cash_now_removed.py`).

@@ -12,3 +12,13 @@
 - PM sign-off: not needed (producer output).
 
 To regenerate: `git worktree add --detach <tmp> 758f7f9551ff3a15a292debb7bfd4f00b3ecf1e7`, copy the producer, `tests/ui/_state_poll_page_capture.py`, `tests/app/_state_poll_worlds.py` and `tests/fixtures/state_poll_no_table/` (records) into the same relative paths, and run the command above there. The producer lives in `tests/ui/` so that the directory conftest applies to it as it does to the test.
+
+## Revision: re-recorded after the per-card Cash Now control was removed (security-and-controls C2)
+
+The card text of seven of the nine scenarios held the word "Cash Now" (the button on each card), so `baseline.json` was re-recorded; the control is removed on purpose (AC-6).
+
+- Reference commit is now `5b0ea52ac3011fd370f3c71b2221849cec7387f8` (the GREEN commit that removed the control; `test(security-and-controls): page baseline reference moves to the Cash Now removal` moved it in `tests/ui/test_state_poll_page_unchanged_browser.py` and `tests/ui/produce_state_poll_page_baseline.py` only; `tests/app/_state_poll_worlds.py` and the golden `/api/state` records keep `758f7f95`). The producer refuses unless `git diff --quiet` against the new reference over `app.py templates static analytics.py database.py market_calendar.py` exits 0 and those paths are clean; it ran at head `30f592b3025f241b7381a67468bac1bf84461b7e`, whose production paths equal the reference.
+- Command: `BASELINE_OUT=<existing directory> python -m pytest -m browser -n0 tests/ui/produce_state_poll_page_baseline.py`, Firefox 148.0.2 headless, all nine scenarios in one run; the file was then copied into place.
+- What differs from the previous record, checked by comparing every scenario field with the word "Cash Now" removed and white space folded: nothing else. Seven scenarios (`closed_first_poll_narrow_dark`, `closed_first_poll_wide_light`, `open_detail_panel_poll`, `open_fallback_poll`, `open_first_poll_wide_light`, `open_poll_answered_500`, `open_sse_refresh`) differ only by that word in card text; `no_state_first_load` and `open_poll_answered_401` are identical. `reference_commit` and `captured_at_utc` changed.
+- sha256 of `baseline.json`: `0a92cc520cda67a36aea811fa6afb9d8e1a5bf404e9abfc0376ae04853a34ac5`
+- PM sign-off: not needed (producer output; the only differences are the removed control's own text).

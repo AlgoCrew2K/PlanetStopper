@@ -1091,67 +1091,6 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Cash Now
-    // ---------------------------------------------------------------------------
-
-    function cashNow(e, symId) {
-        e.stopPropagation();
-        var btn = e.currentTarget;
-        var symName = symId;
-        var card = btn.closest('[data-testid="sym-card"]');
-        if (card) {
-            var nameEl = card.querySelector('.card-name');
-            if (nameEl) symName = nameEl.textContent.trim();
-        }
-        if (!window.confirm('Sell "' + symName + '" to cash?\nThis will execute a live sell order.')) return;
-        btn.disabled = true;
-        btn.textContent = 'Selling…';
-        // The poll leaves a button in this state alone (updateCards): it is enabled again only by
-        // a refusal below, never by a card that reads as not exited.
-        btn.setAttribute('data-cash-state', 'selling');
-        // The note beside the button says why a click did not sell; the next click clears it.
-        var note = btn.parentNode ? btn.parentNode.querySelector('[data-testid="cash-now-note"]') : null;
-        if (note) note.textContent = '';
-        function refuse(text) {
-            btn.disabled = false;
-            btn.textContent = 'Cash Now';
-            btn.removeAttribute('data-cash-state');
-            if (!btn.parentNode) return;
-            if (!note) {
-                note = document.createElement('span');
-                note.setAttribute('data-testid', 'cash-now-note');
-                note.setAttribute('role', 'status');
-                btn.parentNode.appendChild(note);
-            }
-            note.textContent = text;
-        }
-        PSRequest.postAction('/api/sell_account', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
-            body: JSON.stringify({ symphony_id: symId })
-        }).then(function (res) {
-            if (res.ok) {
-                btn.textContent = 'In cash';
-                // Sold in this page load: no later poll turns the button back on.
-                btn.setAttribute('data-cash-state', 'sold');
-                return;
-            }
-            if (res.networkError) {
-                refuse('Not sold: the request failed. Check the connection, then click Cash Now again.');
-            } else if (res.refused === 'csrf') {
-                refuse(PSRequest.notSentText(res, 'Click Cash Now again.'));
-            } else if (res.body && typeof res.body.message === 'string' && res.body.message) {
-                // The route's own refusal (a 400 names the missing or mismatched confirmation).
-                refuse('Not sold: ' + res.body.message);
-            } else {
-                refuse('Not sold: the server refused the request (HTTP ' + res.status + ').');
-            }
-        });
-    }
-
-    window.cashNow = cashNow;
-
-    // ---------------------------------------------------------------------------
     // Fleet-alert dismissal. The banner hides only after the server accepts the
     // dismissal; a refusal keeps it shown and says so. The dismissed alert's
     // tripped_at_et is remembered so a stale poll cannot bring it back.
@@ -2143,19 +2082,6 @@
                             sessionWordingLabel(data.meta) !== 'today');
                     } else {
                         verdict.style.display = 'none';
-                    }
-                }
-
-                // Cash Now is for a card that has not exited: disabled while the card reads as
-                // triggered, enabled once it does not (a new session). A button whose sell is in
-                // flight or done keeps that state (data-cash-state) whatever the card reads.
-                var cashBtn = card.querySelector('[data-testid="cash-now-btn"]');
-                if (cashBtn != null) {
-                    var cashState = cashBtn.getAttribute('data-cash-state');
-                    if (cashState !== 'selling' && cashState !== 'sold') {
-                        var exited = !!sym.triggered;
-                        if (cashBtn.disabled !== exited) cashBtn.disabled = exited;
-                        if (cashBtn.textContent !== 'Cash Now') cashBtn.textContent = 'Cash Now';
                     }
                 }
 

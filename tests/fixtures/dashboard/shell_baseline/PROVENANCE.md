@@ -84,3 +84,12 @@ The unslop pass turned History's By-exit-reason cards into a table on purpose (`
 - This entry is a derived edit under the PM's ruling, not producer output: `capture_shell_baseline.py` was not re-run. Its two booleans are the ruling's condition, and the check against the live page is the test itself.
 - Every other value in the file is the shell work's base. The triggers entry keeps the `index` 0 it was recorded with at the base (it was the only table then), so two entries now carry `index` 0; the test reads `index` from the live capture only and compares the entries by position.
 - Sign-off: the PM's ruling.
+
+## Revision: the `cash-now-btn` entries removed from `dashboard.structure_outside_top_bar` (derived edit, security-and-controls C2)
+
+- Why not the producer: `capture_shell_baseline.py --structure-only` cannot re-record at this head, for a reason that predates C2: it stops with "the resolved primitive rules differ from the recorded ones", because the live render resolves dashboard rules (`.page-dashboard ...`, `.hero-section > .section-header:first-child`) that the recorded `dashboard.resolved` lacks, from earlier ux work, and `--resolved-only` would absorb those unrelated changes. `structure_revision.elements_after` therefore still reads the earlier capture's 1014.
+- Edit: the 11 `["button", ["cash-now-btn"]]` entries (the per-card Cash Now button, one per symphony card) are deleted from `dashboard.structure_outside_top_bar` by removing their lines, one entry at a time; nothing else in the file changed, and `json.loads` of the new file equals `json.loads` of the old file minus exactly those 11 entries (1014 to 1003 entries). The file carries no other mention of Cash Now. The line endings are kept.
+- Reason: the security-and-controls slice removes the control (AC-6), so a structure record that still lists its button would describe a page that no longer exists. The tests that read this list only check which primitive classes it holds and how many cards it holds, so they are unaffected.
+- Commit: the commit that carries this edit, `test(security-and-controls): remove the Cash Now button entries from the primitives and shell baselines (C2)` on `feat/security-and-controls-c2`, after the GREEN commit `5b0ea52ac3011fd370f3c71b2221849cec7387f8`.
+- Sign-off: PM approval of the derived edit, given in the C2 close review ([PM-ASSUMED]).
+

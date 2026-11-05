@@ -309,16 +309,6 @@ def test_dashboard_cards_have_dual_value_headline(dashboard_client):
     )
 
 
-def test_dashboard_active_cards_have_cash_now_button(dashboard_client):
-    """Active (armed/triggered) symphony cards must have a Cash Now button."""
-    html = dashboard_client.get("/").data.decode("utf-8")
-    assert 'data-testid="cash-now-btn"' in html, (
-        'Active symphony cards must contain data-testid="cash-now-btn". '
-        "Button is present but 0-click (no wiring in cycle 2). "
-        "Design: studio.jsx card top-right Cash Now button."
-    )
-
-
 # ---------------------------------------------------------------------------
 # AC-S.4.6 — Detail slide-over panel
 # ---------------------------------------------------------------------------

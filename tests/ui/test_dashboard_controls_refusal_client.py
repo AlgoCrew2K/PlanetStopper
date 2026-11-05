@@ -2,15 +2,11 @@
 
 ``static/index.js`` (with ``request_guard.js`` and ``chrome.js``) runs unmodified over the page the real app
 renders, in the whole-file harness of ``tests/dashboard/_index_js_harness.py``. The answers are the real
-routes': the 400 of ``POST /api/sell_account`` for Cash Now's body, the CSRF hook's 403 page, the
-rotated token, the poll's ``/api/state`` body. Controls are called as the page's own buttons call
+routes': the CSRF hook's 403 page, the rotated token, the poll's ``/api/state`` body. Controls are called as the page's own buttons call
 them; the scenarios assert on the requests the page recorded, so a POST sent twice for one click is
 visible.
 
 CONTRACT PINNED
-* Cash Now: the server's refusal message is shown (``Not sold: confirm_account_id is required`` for
-  the route's 400), the button is enabled again, exactly one POST was sent; a 403 refreshes the token
-  once and the text says the sale was not sent and needs a new click; a 200 reads ``In cash``.
 * Fleet Dismiss: a 403 keeps the banner, refreshes the token once, shows ``Not dismissed: click Dismiss
   again`` in ``#fleet-dismiss-notice`` and re-enables the button; any other failure keeps the notice's
   ``Dismissal not saved``.
@@ -22,13 +18,11 @@ CONTRACT PINNED
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
 import pytest
 
-from tests.app import _chrome_route_answers as real
 from tests.dashboard._index_js_harness import get_world, run_scenario
 from tests.ui import _refusal_answers as answers
 
@@ -67,15 +61,6 @@ def refused_spec():
     return answers.csrf_refused()
 
 
-def cash_now_400():
-    answer = real.sell_answer({"symphony_id": "abc123"})
-    assert answer["status"] == 400, (
-        f"the sell route answered {answer['status']} for Cash Now's body"
-    )
-    assert "confirm_account_id is required" in answer["body"]
-    return {"status": 400, "body": json.loads(answer["body"])}
-
-
 def spec_for_js(spec):
     """A harness-route spec in the index harness's shape (``text`` or ``body``)."""
     if "text" in spec:
@@ -88,7 +73,6 @@ def run(scenario, **extra):
     bodies = {
         "refused": spec_for_js(refused_spec()),
         "tokenB": {"body": answers.token_answer()["json"]},
-        "sell400": cash_now_400(),
         **extra,
     }
     out = run_scenario(
@@ -98,90 +82,6 @@ def run(scenario, **extra):
         scripts=SCRIPTS,
     )
     return out["result"]
-
-
-CASH = """
-  const btn = H.sandbox.document.querySelectorAll('[data-testid="cash-now-btn"]').find((b) => !b.hasAttribute('disabled'));
-  if (!btn) throw new Error('no enabled Cash Now button in the page');
-  const card = btn.closest('[data-testid="sym-card"]');
-  const symId = card.getAttribute('data-sym-id') || 'sym-from-card';
-  const click = async () => { H.sandbox.cashNow({stopPropagation() {}, currentTarget: btn}, symId); await H.settle(); };
-"""
-
-
-class TestCashNow:
-    def test_the_routes_400_is_shown_with_its_message_and_the_button_comes_back(self):
-        result = run(
-            CASH
-            + """
-            H.route('/api/sell_account', {status: H.bodies.sell400.status, body: H.bodies.sell400.body});
-            await click();
-            return {text: card.textContent, btn: btn.textContent, disabled: btn.hasAttribute('disabled'),
-                    state: btn.getAttribute('data-cash-state'), posts: post(/sell_account/).length,
-                    body: post(/sell_account/)[0].body};
-            """
-        )
-        assert "Not sold: confirm_account_id is required" in result["text"]
-        assert (
-            result["btn"] == "Cash Now" and result["disabled"] is False and result["state"] is None
-        )
-        assert result["posts"] == 1
-        assert json.loads(result["body"]) == {
-            "symphony_id": json.loads(result["body"])["symphony_id"]
-        }
-
-    def test_a_refusal_for_the_token_says_not_sent_and_refreshes_once(self):
-        result = run(
-            CASH
-            + """
-            H.route('/api/sell_account', {fn: seq([{status: 403, text: H.bodies.refused.text}])});
-            await click();
-            await H.runTimers(60000);
-            return {text: card.textContent, disabled: btn.hasAttribute('disabled'),
-                    posts: post(/sell_account/).length, gets: tokenGets()};
-            """
-        )
-        assert NOT_SENT.search(result["text"]) and "click" in result["text"].lower()
-        assert result["disabled"] is False
-        assert result["posts"] == 1, "the refused sale was sent again"
-        assert result["gets"] == 2
-
-    def test_a_network_failure_re_enables_the_button_and_says_something(self):
-        result = run(
-            CASH
-            + """
-            H.route('/api/sell_account', {reject: true});
-            await click();
-            return {disabled: btn.hasAttribute('disabled'), text: card.textContent, posts: post(/sell_account/).length};
-            """
-        )
-        assert result["disabled"] is False and result["posts"] == 1
-        assert re.search(r"not sold|not sent|failed|connection", result["text"], re.I)
-
-    def test_an_accepted_sale_reads_in_cash(self):
-        result = run(
-            CASH
-            + """
-            H.route('/api/sell_account', {status: 200, body: {status: 'success'}});
-            await click();
-            return {btn: btn.textContent, state: btn.getAttribute('data-cash-state')};
-            """
-        )
-        assert result == {"btn": "In cash", "state": "sold"}
-
-    def test_the_request_is_the_one_it_always_was(self):
-        result = run(
-            CASH
-            + """
-            H.route('/api/sell_account', {status: 200, body: {status: 'success'}});
-            await click();
-            const p = post(/sell_account/)[0];
-            return {url: p.url, headers: p.headers, body: p.body, symId};
-            """
-        )
-        assert result["url"] == "/api/sell_account"
-        assert result["headers"] == {"Content-Type": "application/json", "X-CSRF-Token": "tok"}
-        assert json.loads(result["body"]) == {"symphony_id": result["symId"]}
 
 
 class TestFleetDismiss:

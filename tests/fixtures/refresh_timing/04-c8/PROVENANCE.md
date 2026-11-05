@@ -15,3 +15,7 @@ Plan: refresh-timing 04, cycle C8 (the dashboard controls and the dismiss route)
 | Builder | Source record | Changed fields | Reason | Scenarios | PM sign-off |
 |---|---|---|---|---|---|
 | `test_a_poll_with_a_new_start_stamp_fetches_one_new_token` | the world `/api/state` body | `daemon_started_at` set to two chosen stamps | a restart seen between two polls | S-2.14 (dashboard part) | requested |
+
+## Revision: the Cash Now rows no longer have a consumer
+
+The "400 for the Cash Now body" answer was consumed only by `cash_now_400()` and `TestCashNow` in `tests/ui/test_dashboard_controls_refusal_client.py`, both deleted with the control (security-and-controls C2, GREEN `5b0ea52ac3011fd370f3c71b2221849cec7387f8`, RED `ee38b5d6fd47b8c6324d3dcfb4dacce58ee9aca9`). The same route answer for a symphony-only body is now asserted by `tests/dashboard/test_cash_now_removed.py`, taken from the real route at test time. The other rows and the `cards-open` world are unchanged and still used by the Fleet Dismiss and Managed Sleeves tests of that file.
