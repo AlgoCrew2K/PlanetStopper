@@ -1589,6 +1589,58 @@ class TestTheGenerationALoginCarriesDecidesWhetherItIsServed:
         _assert_served(_signed_in(clock), "a genuine login, after the refusal")
 
 
+class _ProcessClock:
+    """Steps the interpreter's own clock (``time.time`` and ``time.time_ns``), the one the cookie
+    signature check and the session clock both read, so no app seam is patched."""
+
+    def __init__(self, now_ns: int) -> None:
+        self.now_ns = now_ns
+
+    def time(self) -> float:
+        return self.now_ns / _NS
+
+    def time_ns(self) -> int:
+        return self.now_ns
+
+    def advance(self, seconds: int) -> None:
+        self.now_ns += seconds * _NS
+
+
+@pytest.fixture
+def process_clock(gate, monkeypatch):
+    fake = _ProcessClock(time.time_ns())
+    monkeypatch.setattr(time, "time", fake.time)
+    monkeypatch.setattr(time, "time_ns", fake.time_ns)
+    return fake
+
+
+class TestALogoutEndsEverySessionWhenTheProcessClockItselfStepsBack:
+    """Flask refuses a cookie signed ahead of the clock until the clock catches up, so the copy of
+    a session signed before a backward step is unreadable during the step and readable again at the
+    catch-up instant: the logout in between must still have ended it."""
+
+    @pytest.mark.parametrize("step_s", [30, 3600], ids=["thirty-seconds", "one-hour"])
+    def test_a_copy_signed_ahead_of_the_clock_stays_refused_once_the_clock_catches_up(
+        self, process_clock, step_s
+    ):
+        browser = _signed_in(process_clock)
+        copy = _client()
+        _copy_session(browser, copy)
+        _assert_served(copy, "the copy before the step")
+        process_clock.advance(-step_s)
+        _assert_refused(copy, "premise: the cookie is signed ahead of the clock")
+        later = _signed_in(process_clock)
+        _assert_served(later, "the login made during the step")
+
+        _assert_logged_in_at_logout_redirect(_post_logout(later))
+        process_clock.advance(step_s + 60)
+
+        _assert_refused(copy, "the copy, once the clock caught up with its signature")
+        _assert_page_redirected(copy, "the copy, once the clock caught up with its signature")
+        _assert_refused(later, "the session that signed out")
+        _assert_served(_signed_in(process_clock), "a login after the catch-up")
+
+
 _FRESH_PROCESS_DRIVER = r"""
 import json, logging, sys
 repo, log_path, now_ns, cookie_name, cookies_json = sys.argv[1:6]
