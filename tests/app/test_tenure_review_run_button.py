@@ -54,7 +54,7 @@ MESSAGES = {
 def _says_not_sent(message: str) -> bool:
     """A 403 is the session check refusing the click: the control says nothing was sent and which click
     sends it (the wording belongs to the shared helper, so the contract is what it must convey)."""
-    return bool(re.search(r"not sent", message, re.I) and re.search(r"click", message, re.I))
+    return bool(re.search(r"not sent", message, re.I) and re.search(r"click|choose", message, re.I))
 
 
 def _source() -> str:
@@ -679,6 +679,39 @@ class TestRefusalsAreStyledNegative:
 # ---------------------------------------------------------------------------
 # A request made while the market is open is refused with its own message.
 # ---------------------------------------------------------------------------
+
+_TEMPLATE_PATH = REPO_ROOT / "templates" / "ai_advisor.html"
+
+
+def _rendered_button_label() -> str:
+    found = re.search(
+        r'onclick="retRunReview\(this\)"[^>]*>\s*([^<]+?)\s*</button>',
+        _TEMPLATE_PATH.read_text(encoding="utf-8"),
+    )
+    assert found, "the tenure review button was not found in the Retirement template"
+    return found.group(1)
+
+
+class TestARefusedClickNamesTheRenderedButton:
+    def test_the_not_sent_message_ends_by_naming_the_button_the_operator_can_see(self):
+        label = _rendered_button_label()
+
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={"mode": "status", "status": 403, "kind": "html"},
+            csrf_preset="tok",
+        )
+
+        message = out["state"]["message"]
+        assert message.endswith(f"Choose {label} again."), message
+        assert "Run review now" not in message
+
+    def test_the_source_names_no_button_that_is_not_rendered(self):
+        label = _rendered_button_label()
+        source = _source()
+        assert f"Choose {label} again." in source
+        assert "Click Run review now again" not in source
+
 
 MARKET_OPEN_MESSAGE = (
     "Run tenure review is available outside market hours: "

@@ -261,3 +261,60 @@ class TestADoubleChoice:
 
         assert out.result is True, "even a second submit must not fall through to a native post"
         assert len(out.posts(LOGOUT.removesuffix("$"))) == 1
+
+
+class TestChoosingSignOutBeforeThePageHoldsAToken:
+    """The token comes from a fetch that starts at load; a click can land before it answers.
+
+    Either design passes: the page sends nothing until a token is held, or the page carries the
+    token it was rendered with. What may not happen is the restart message for a click that was
+    refused only because no token had arrived, or a POST with an empty token.
+    """
+
+    HELD = route(TOKEN_URL, {"hold": "token", "json": {"csrf_token": DEFAULT_TOKEN}}, method="GET")
+    SENT_TOKENS = (
+        "H.requests.filter(function (r) { return r.method === 'POST'; })"
+        ".map(function (r) { return r.headers['x-csrf-token']; })"
+    )
+
+    def test_a_click_before_the_token_arrives_never_says_the_page_expired(self, login_answer):
+        import app as app_module
+
+        out = on_confirm_page(
+            confirm_page(),
+            f"""
+            await H.click('{BUTTON}');
+            await H.advance(1000);
+            const during = {{ surfaced: H.surfaced(), sent: {self.SENT_TOKENS} }};
+            await H.release('token');
+            await H.advance(1000);
+            await H.click('{BUTTON}');
+            await H.advance(1000);
+            return {{ during, after: H.surfaced(), sent: {self.SENT_TOKENS} }};
+            """,
+            self.HELD,
+            route(LOGOUT, login_answer, method="POST"),
+        )
+
+        during, after = out.result["during"], out.result["after"]
+        assert "expired after a restart" not in during["surfaced"], during["surfaced"]
+        assert "expired after a restart" not in after, after
+        # Before the fetch answers only the token the page was rendered with can be sent.
+        assert all(t == app_module._CSRF_TOKEN for t in during["sent"]), during["sent"]
+        assert all(t in (app_module._CSRF_TOKEN, DEFAULT_TOKEN) for t in out.result["sent"])
+        assert out.navigations == ["assign:/login"], "the operator must end up signed out"
+
+    def test_a_click_while_the_token_fetch_fails_never_says_the_page_expired(self, login_answer):
+        out = on_confirm_page(
+            confirm_page(),
+            f"""
+            await H.click('{BUTTON}');
+            await H.advance(1000);
+            return {{ surfaced: H.surfaced(), sent: {self.SENT_TOKENS} }};
+            """,
+            route(TOKEN_URL, {"reject": True}, method="GET"),
+            route(LOGOUT, login_answer, method="POST"),
+        )
+
+        assert "expired after a restart" not in out.result["surfaced"], out.result["surfaced"]
+        assert all(out.result["sent"]), "a POST went out with an empty token"

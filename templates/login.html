@@ -117,6 +117,7 @@
 
     <div class="login-error" role="alert" data-testid="logout-message" hidden></div>
 
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <form id="logout-form" action="/logout" method="post">
       <button class="login-btn" type="submit" data-testid="logout-btn">Sign out</button>
     </form>

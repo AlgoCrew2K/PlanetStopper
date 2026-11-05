@@ -189,8 +189,8 @@ app.config["SESSION_COOKIE_SECURE"] = env_flags.is_true(os.environ.get("SESSION_
 _auth_check_enabled: bool = True
 
 # Minimal set of endpoints exempt from the auth gate.  'static' must be
-# included so the login page renders its CSS/JS; 'login' and 'logout' are the
-# auth-flow routes themselves; 'get_csrf_token' is safe (no sensitive data).
+# included so the login page renders its CSS/JS; 'login' is the sign-in route
+# itself (logout needs a session); 'get_csrf_token' is safe (no sensitive data).
 _AUTH_EXEMPT_ENDPOINTS: frozenset[str] = frozenset({"login", "static", "get_csrf_token", "health"})
 
 # Session lifetime: a session ends this many hours after its login, and requests never extend it.
@@ -215,11 +215,6 @@ def _session_lifetime_hours(raw: str | None) -> int:
         _SESSION_LIFETIME_HOURS_DEFAULT,
     )
     return _SESSION_LIFETIME_HOURS_DEFAULT
-
-
-app.permanent_session_lifetime = timedelta(
-    hours=_session_lifetime_hours(os.environ.get("DASHBOARD_SESSION_LIFETIME_HOURS"))
-)
 
 
 def _session_now_ns() -> int:
@@ -257,14 +252,17 @@ def _revocation_floor_ns() -> int:
 def _revoke_sessions_issued_before(now_ns: int) -> bool:
     """End every session issued before now_ns; False when the stored record could not be written.
 
-    The in-memory floor is raised first, so the running process refuses them either way.
+    The in-memory floor is raised first, so the running process refuses them either way. The
+    floor is at least one past the previous floor, so a session stamped at the previous floor
+    (a login in the same clock tick, or after the clock stepped back) is ended too.
     """
     global _session_revoked_before_ns
     current = _revocation_floor_ns()
     with _SESSION_REVOCATION_LOCK:
-        _session_revoked_before_ns = max(current, _session_revoked_before_ns or 0, now_ns)
+        floor = max(now_ns, max(current, _session_revoked_before_ns or 0) + 1)
+        _session_revoked_before_ns = floor
     try:
-        database.record_session_revocation(now_ns)
+        database.record_session_revocation(floor)
     except Exception as exc:
         _daemon_log.error(
             "Session revocation could not be stored (%s); earlier sessions end only until"
@@ -286,6 +284,8 @@ def _session_issue_is_valid(issued: object, now_ns: int) -> bool:
 
 
 def _session_is_valid() -> bool:
+    """True when the session is authenticated, carries an integer issue time after the
+    revocation floor, and is inside the lifetime."""
     return session.get("authenticated") is True and _session_issue_is_valid(
         session.get("issued_at_ns"), _session_now_ns()
     )
@@ -374,7 +374,7 @@ def _auth_before_request():
     if not _auth_check_enabled:
         return None
 
-    # Exempt login/logout/static so those routes remain reachable pre-auth.
+    # Exempt login/static so those routes remain reachable pre-auth.
     if request.endpoint in _AUTH_EXEMPT_ENDPOINTS:
         return None
 
@@ -413,7 +413,7 @@ def _auth_before_request():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     """Login page: GET renders the form; POST processes the credential."""
-    if request.method == "GET":
+    if request.method != "POST":
         # Already authenticated — send to dashboard (AC-13).
         if _session_is_valid():
             return redirect(url_for("dashboard"))
@@ -497,7 +497,7 @@ _LOGOUT_NOT_DURABLE_TEXT = "Signed out. Other sessions are ended until the daemo
 @app.route("/logout", methods=["GET", "POST"])
 def logout():
     """GET shows the confirm page; POST ends every session issued before now."""
-    if request.method == "GET":
+    if request.method != "POST":
         return render_template("login.html", csrf_token=_CSRF_TOKEN, confirm_logout=True)
     durable = _revoke_sessions_issued_before(_session_now_ns())
     session.clear()
@@ -624,6 +624,9 @@ def _health_caller_is_on_box() -> bool:
 @app.route("/health")
 def health():
     """Minimal unauthenticated liveness probe (F-005).
+
+    Two caller classes: an on-box caller (loopback peer, no forwarding header) gets the full
+    body; every other caller gets only status, daemon_started_at and last_successful_cycle_at.
 
     Read-only: sources last_successful_cycle_at from database.load_state()
     (the same top-level engine-written field app.py:2327 already reads) —
@@ -754,6 +757,10 @@ _daemon_log.setLevel(logging.DEBUG)
 _daemon_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
 _daemon_fh.setLevel(logging.DEBUG)
 _daemon_log.addHandler(_daemon_fh)
+# Assigned here, not beside the helper, so an invalid-value warning reaches the daemon log file.
+app.permanent_session_lifetime = timedelta(
+    hours=_session_lifetime_hours(os.environ.get("DASHBOARD_SESSION_LIFETIME_HOURS"))
+)
 # The tenure review's run path logs one INFO line per Composer request; these loggers are
 # not children of "alphabot", so the daemon's file handler is attached to each directly.
 for _run_path_logger_name in (
@@ -9588,7 +9595,7 @@ def get_settings():
 
     symphonies_data = {}
     for name in symphony_names:
-        symphonies_data[name] = database.get_symphony_strategy(name)
+        symphonies_data[name] = database.get_symphony_strategy(name, create_if_missing=False)
 
     # Build symphonies_list for the Settings UI (id + display name).
     symphonies_list = [
@@ -9757,7 +9764,7 @@ def get_symphony_settings(symphony_name: str):
     env_vars = dotenv_values(ENV_FILE_PATH)
     global_live = env_flags.is_true(env_vars.get("LIVE_EXECUTION", "False"))
 
-    strategy = database.get_symphony_strategy(symphony_name)
+    strategy = database.get_symphony_strategy(symphony_name, create_if_missing=False)
     # get_symphony_strategy defaults live_mode=False (arch rule 4: explicit, never by omission).
     live_mode = bool(strategy.get("live_mode", False))
 
@@ -12307,7 +12314,8 @@ def ai_advisor_retirement_review_run():
 
     Reads no body. Refuses with 409 market_open while the market is open (the
     Composer API is shared with the live engine), before any slot is claimed.
-    Claims the single run slot (409 when a review is running), runs the job on a daemon thread (a stop never waits on a review) and answers
+    Claims the single run slot (409 when a review is running), runs the job on a daemon
+    thread (a stop never waits on a review) and answers
     202 at once. A thread that cannot be built or started gives the slot back
     and answers 200 with the exception type name only. Advisory only: no
     Composer write, no trade primitive.

@@ -679,7 +679,7 @@ def normalize_name(name):
 
 
 # --- Symphony Strategy Management (NEW) ---
-def get_symphony_strategy(symphony_name):
+def get_symphony_strategy(symphony_name, *, create_if_missing=True):
     symphony_name = normalize_name(symphony_name)
     conn = get_connection()
     cursor = conn.cursor()
@@ -701,7 +701,9 @@ def get_symphony_strategy(symphony_name):
 
     # Initialize with defaults if not found — live_mode defaults to False (dry-run).
     # arch rule 4: is_live=True is explicit, never by omission.
-    save_symphony_strategy(symphony_name, DEFAULT_STRATEGY, DEFAULT_LOCKED_VARS)
+    # Read-only callers pass create_if_missing=False so a request naming any symphony adds no row.
+    if create_if_missing:
+        save_symphony_strategy(symphony_name, DEFAULT_STRATEGY, DEFAULT_LOCKED_VARS)
     return {
         "params": DEFAULT_STRATEGY.copy(),
         "locked_vars": DEFAULT_LOCKED_VARS.copy(),

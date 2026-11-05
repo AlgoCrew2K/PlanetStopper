@@ -24,9 +24,16 @@ issued by the real ``POST /login``; the real ``.env`` is never read.
 from __future__ import annotations
 
 import ast
+import inspect
+import json
 import logging
+import os
 import pathlib
+import re
 import sqlite3
+import subprocess
+import sys
+import textwrap
 import threading
 import time
 from datetime import timedelta
@@ -922,3 +929,458 @@ class TestAConfirmPageRequestWithoutAValidSessionIsSentToLogin:
         _assert_logged_in_at_logout_redirect(_post_logout(owner))
         response = stale.get("/logout", follow_redirects=False)
         assert response.status_code == 302 and "/login" in response.headers["Location"]
+
+
+# ---------------------------------------------------------------------------
+# HEAD and OPTIONS never act as the write method (sign-out and sign-in)
+# ---------------------------------------------------------------------------
+#
+# Werkzeug adds HEAD to every rule that has GET and routes it to the same view, while the CSRF hook
+# checks only POST. A view that branches on ``== "GET"`` therefore runs its write branch for a HEAD
+# that carries no token, which any script-sent request can make.
+
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_PEER = {"REMOTE_ADDR": "198.51.100.9"}
+_FOREIGN_SITE = {"Sec-Fetch-Site": "same-site"}
+
+
+def _session_set_cookies(response) -> list[str]:
+    name = app_module.app.config["SESSION_COOKIE_NAME"]
+    return [c for c in response.headers.getlist("Set-Cookie") if c.startswith(name + "=")]
+
+
+def _revocation_state() -> tuple[int, int]:
+    return database.get_session_revocation_floor_ns(), app_module._revocation_floor_ns()
+
+
+class TestHeadAndOptionsOnLogoutEndNoSession:
+    @pytest.mark.parametrize(
+        "with_token, headers",
+        [(False, _FOREIGN_SITE), (False, {}), (True, {})],
+        ids=["sibling-site no token", "no headers", "with the process token"],
+    )
+    def test_an_authenticated_head_revokes_clears_and_changes_nothing(
+        self, clock, monkeypatch, with_token, headers
+    ):
+        session_a = _signed_in(clock)
+        clock.advance(seconds=1)
+        session_b = _signed_in(clock)
+        clock.advance(seconds=1)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        if with_token:
+            headers = _csrf_headers()
+        state_before = _revocation_state()
+        get_status = session_a.get("/logout").status_code
+
+        response = session_a.head("/logout", headers=headers)
+
+        assert response.status_code == get_status, (
+            f"HEAD /logout answered {response.status_code}; HEAD is GET without a body ({get_status})"
+        )
+        assert _revocation_state() == state_before, "a HEAD moved the revocation floor"
+        assert _session_set_cookies(response) == [], "a HEAD changed the session cookie"
+        _assert_served(session_a, "the session that sent the HEAD")
+        _assert_served(session_b, "another browser's session")
+
+    @pytest.mark.parametrize("method", ["OPTIONS", "PUT", "PATCH", "DELETE"])
+    def test_every_other_non_post_method_revokes_nothing(self, clock, monkeypatch, method):
+        session_a = _signed_in(clock)
+        clock.advance(seconds=1)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        state_before = _revocation_state()
+
+        session_a.open("/logout", method=method, headers=_FOREIGN_SITE)
+
+        assert _revocation_state() == state_before, f"{method} moved the revocation floor"
+        _assert_served(session_a, f"after {method} /logout")
+
+    def test_a_head_with_no_valid_session_is_sent_to_login_and_revokes_nothing(self, clock):
+        owner = _signed_in(clock)
+        clock.advance(seconds=1)
+        state_before = _revocation_state()
+
+        response = _client().head("/logout")
+
+        assert response.status_code == 302 and "/login" in response.headers["Location"]
+        assert _revocation_state() == state_before
+        _assert_served(owner, "the unrelated session")
+
+    def test_a_head_repeated_on_a_timer_keeps_the_operator_signed_in(self, clock, monkeypatch):
+        """The abuse the fix closes: a page that keeps sending HEAD must not hold the operator out."""
+        operator = _signed_in(clock)
+        clock.advance(seconds=1)
+        other_browser = _signed_in(clock)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        for _ in range(5):
+            clock.advance(seconds=1)
+            operator.head("/logout", headers=_FOREIGN_SITE)
+        _assert_served(operator, "the original session after five HEADs")
+        _assert_served(other_browser, "the other browser after five HEADs")
+
+
+class TestHeadAndOptionsOnLoginCountNoAttempt:
+    @pytest.fixture
+    def peer_login(self, gate, clock):
+        app_module._AUTH_FAILED_ATTEMPTS.clear()
+        return _client()
+
+    @pytest.mark.parametrize(
+        "via_proxy", [False, True], ids=["peer address", "forwarded address (TRUST_PROXY)"]
+    )
+    def test_head_never_runs_the_password_branch_or_locks_the_peer_out(
+        self, peer_login, monkeypatch, via_proxy
+    ):
+        headers = {}
+        if via_proxy:
+            monkeypatch.setenv("TRUST_PROXY", "1")
+            headers = {"X-Forwarded-For": "203.0.113.7"}
+        else:
+            monkeypatch.delenv("TRUST_PROXY", raising=False)
+        get_status = peer_login.get("/login", environ_base=_PEER, headers=headers).status_code
+
+        for _ in range(app_module._AUTH_MAX_ATTEMPTS + 2):
+            response = peer_login.head("/login", environ_base=_PEER, headers=headers)
+            assert response.status_code == get_status, "HEAD /login must answer as GET does"
+
+        assert app_module._AUTH_FAILED_ATTEMPTS == {}, "a HEAD was counted as a failed login"
+        signed_in = peer_login.post(
+            "/login", data={"password": _PASSWORD}, environ_base=_PEER, headers=headers
+        )
+        assert signed_in.status_code == 302, (
+            f"the correct password answered {signed_in.status_code}: the peer was locked out by HEADs"
+        )
+
+    def test_head_with_a_signed_in_session_changes_nothing(self, clock):
+        app_module._AUTH_FAILED_ATTEMPTS.clear()
+        operator = _signed_in(clock)
+        clock.advance(seconds=1)
+        get_status = operator.get("/login", environ_base=_PEER).status_code
+
+        response = operator.head("/login", environ_base=_PEER)
+
+        assert response.status_code == get_status
+        assert _session_set_cookies(response) == [], "a HEAD changed the session cookie"
+        assert app_module._AUTH_FAILED_ATTEMPTS == {}
+        _assert_served(operator, "after HEAD /login")
+
+    def test_options_counts_no_attempt(self, peer_login):
+        for _ in range(app_module._AUTH_MAX_ATTEMPTS + 2):
+            peer_login.open("/login", method="OPTIONS", environ_base=_PEER)
+        assert app_module._AUTH_FAILED_ATTEMPTS == {}
+
+
+def _dual_method_paths() -> list[str]:
+    methods: dict[str, set[str]] = {}
+    for rule in app_module.app.url_map.iter_rules():
+        methods.setdefault(rule.rule, set()).update(rule.methods)
+    return sorted(p for p, m in methods.items() if "GET" in m and m & _WRITE_METHODS)
+
+
+def _dual_method_endpoints() -> list[str]:
+    methods: dict[str, set[str]] = {}
+    for rule in app_module.app.url_map.iter_rules():
+        methods.setdefault(rule.endpoint, set()).update(rule.methods)
+    return sorted(e for e, m in methods.items() if "GET" in m and m & _WRITE_METHODS)
+
+
+def _concrete(path: str) -> str:
+    return re.sub(
+        r"<(?:int:)?[^>]+>", lambda m: "1" if m.group(0).startswith("<int:") else "x", path
+    )
+
+
+def _branches_on_get(view) -> bool:
+    tree = ast.parse(textwrap.dedent(inspect.getsource(inspect.unwrap(view))))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        operands = [node.left, *node.comparators]
+        is_method = any(ast.unparse(o) == "request.method" for o in operands)
+        names_get = any(isinstance(o, ast.Constant) and o.value == "GET" for o in operands)
+        if is_method and names_get and any(isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops):
+            return True
+    return False
+
+
+def _state_database_dump() -> str:
+    connection = sqlite3.connect(database._db_file())
+    try:
+        return "\n".join(connection.iterdump())
+    finally:
+        connection.close()
+
+
+_PROBE_HASH = "SweepProbeHash0000"
+_PROBE_NAME = "Sweep Probe Alpha"
+
+
+def _strategy_rows() -> list[str]:
+    connection = sqlite3.connect(database._db_file())
+    try:
+        return [
+            r[0]
+            for r in connection.execute(
+                "SELECT symphony_name FROM symphony_strategies ORDER BY symphony_name"
+            )
+        ]
+    finally:
+        connection.close()
+
+
+class TestNoRouteTreatsHeadOrOptionsAsAWrite:
+    def test_the_sweep_finds_the_sign_in_and_sign_out_routes(self):
+        """Non-vacuity: the sweep below runs over a set that contains the two known routes."""
+        assert {"/login", "/logout"} <= set(_dual_method_paths())
+        assert {"login", "logout"} <= set(_dual_method_endpoints())
+
+    @pytest.mark.parametrize("endpoint", _dual_method_endpoints())
+    def test_a_view_that_serves_get_and_a_write_method_never_branches_on_get(self, endpoint):
+        """HEAD runs the GET rule's view, so ``== "GET"`` sends a HEAD into the write branch."""
+        view = app_module.app.view_functions[endpoint]
+        assert not _branches_on_get(view), (
+            f"{endpoint} compares request.method to 'GET': branch on the write method instead"
+        )
+
+    @pytest.mark.parametrize("method", ["HEAD", "OPTIONS"])
+    @pytest.mark.parametrize("path", _dual_method_paths())
+    def test_an_authenticated_head_or_options_mutates_nothing(
+        self, clock, gate, monkeypatch, path, method
+    ):
+        operator = _signed_in(clock)
+        clock.advance(seconds=1)
+        database.save_state({_PROBE_HASH: {"name": _PROBE_NAME, "account": "ACC-1"}})
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        app_module._AUTH_FAILED_ATTEMPTS.clear()
+        env_before = gate.read_bytes()
+        db_before = _state_database_dump()
+        revocation_before = _revocation_state()
+
+        operator.open(_concrete(path), method=method, headers=_FOREIGN_SITE, environ_base=_PEER)
+
+        assert gate.read_bytes() == env_before, f"{method} {path} wrote the .env file"
+        assert _state_database_dump() == db_before, f"{method} {path} wrote the state database"
+        assert _revocation_state() == revocation_before, f"{method} {path} moved the floor"
+        assert app_module._AUTH_FAILED_ATTEMPTS == {}, f"{method} {path} counted a failed login"
+        _assert_served(operator, f"after {method} {path}")
+
+
+class TestReadingSymphonySettingsCreatesNoRow:
+    """A GET (and so a HEAD) of a settings route must not write a default strategy row.
+
+    The engine's own read creates the row on first use; a dashboard read must not, because the
+    path segment names any symphony the caller likes and each name would add a row.
+    """
+
+    @pytest.fixture
+    def operator(self, clock, monkeypatch):
+        client = _signed_in(clock)
+        clock.advance(seconds=1)
+        database.save_state({_PROBE_HASH: {"name": _PROBE_NAME, "account": "ACC-1"}})
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        return client
+
+    @pytest.mark.parametrize("method", ["GET", "HEAD"])
+    @pytest.mark.parametrize(
+        "segment", ["no-such-symphony", _PROBE_HASH.lower()], ids=["unknown name", "live symphony"]
+    )
+    def test_the_symphony_settings_read_adds_no_row(self, operator, segment, method):
+        rows_before = _strategy_rows()
+
+        response = operator.open(f"/api/symphony-settings/{segment}", method=method)
+
+        assert response.status_code == 200
+        assert _strategy_rows() == rows_before, f"{method} created a strategy row for {segment}"
+
+    def test_an_unseen_symphony_is_still_answered_with_the_defaults(self, operator):
+        body = operator.get("/api/symphony-settings/no-such-symphony").get_json()
+
+        assert body["parameters"] == database.DEFAULT_STRATEGY
+        assert body["locked_vars"] == database.DEFAULT_LOCKED_VARS
+        assert body["live_mode"] is False
+
+    def test_a_stored_strategy_is_still_answered_as_stored(self, operator):
+        stored = {**database.DEFAULT_STRATEGY, "TRIGGER_THRESHOLD_PCT": 11.0}
+        database.save_symphony_strategy(_PROBE_NAME, stored, ["VWAP_BLEED_TICKS"])
+
+        body = operator.get(
+            f"/api/symphony-settings/{database.normalize_name(_PROBE_NAME)}"
+        ).get_json()
+
+        assert body["parameters"] == stored
+        assert body["locked_vars"] == ["VWAP_BLEED_TICKS"]
+
+    @pytest.mark.parametrize("method", ["GET", "HEAD"])
+    def test_the_settings_list_read_adds_no_row_for_a_live_symphony_without_one(
+        self, operator, method
+    ):
+        rows_before = _strategy_rows()
+
+        response = operator.open("/api/settings", method=method)
+
+        assert response.status_code == 200
+        assert _strategy_rows() == rows_before, f"{method} /api/settings created a strategy row"
+
+    def test_the_settings_list_still_answers_the_defaults_for_a_live_symphony(self, operator):
+        body = operator.get("/api/settings").get_json()
+
+        entry = body["symphonies"].get(database.normalize_name(_PROBE_NAME))
+        assert entry is not None, "the live symphony must be listed"
+        assert entry["params"] == database.DEFAULT_STRATEGY
+        assert entry["locked_vars"] == database.DEFAULT_LOCKED_VARS
+        assert entry["live_mode"] is False
+
+
+# ---------------------------------------------------------------------------
+# A logout ends every earlier session, whatever the clock did (AC-3)
+# ---------------------------------------------------------------------------
+
+
+class TestALogoutEndsASessionStampedPastTheFloor:
+    def test_a_login_in_the_same_tick_as_a_logout_is_ended_by_the_next_logout(self, clock):
+        first = _signed_in(clock)
+        _assert_logged_in_at_logout_redirect(_post_logout(first))
+        second = _signed_in(clock)
+        twin = _client()
+        _copy_session(second, twin)
+        _assert_served(twin, "the same-tick login before its logout")
+        floor_before = database.get_session_revocation_floor_ns()
+
+        _assert_logged_in_at_logout_redirect(_post_logout(second))
+
+        _assert_refused(twin, "a copy of the session stamped one past the floor")
+        assert database.get_session_revocation_floor_ns() >= max(clock.now, floor_before + 1)
+        _assert_served(_signed_in(clock), "a login after the second logout")
+
+    def test_logouts_on_a_stopped_clock_store_a_strictly_higher_floor_each_time(self, clock):
+        floors = []
+        for _ in range(3):
+            session = _signed_in(clock)
+            _assert_logged_in_at_logout_redirect(_post_logout(session))
+            floors.append(database.get_session_revocation_floor_ns())
+        assert floors[0] < floors[1] < floors[2], floors
+
+    def test_a_login_after_the_clock_stepped_back_is_ended_by_the_next_logout(self, clock):
+        first = _signed_in(clock)
+        clock.advance(hours=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(first))
+        floor_before = database.get_session_revocation_floor_ns()
+        clock.advance(hours=-1)
+        second = _signed_in(clock)
+        twin = _client()
+        _copy_session(second, twin)
+        _assert_served(twin, "the login made after the step back")
+        clock.advance(seconds=1)
+
+        _assert_logged_in_at_logout_redirect(_post_logout(second))
+
+        _assert_refused(twin, "a copy of the session issued after the backward step")
+        _assert_refused(second, "the signing-out browser")
+        assert database.get_session_revocation_floor_ns() >= floor_before + 1
+
+    def test_that_logout_still_ends_the_session_after_a_restart(self, clock, monkeypatch):
+        first = _signed_in(clock)
+        clock.advance(hours=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(first))
+        clock.advance(hours=-1)
+        second = _signed_in(clock)
+        twin = _client()
+        _copy_session(second, twin)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(second))
+        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None, raising=False)
+        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now, raising=False)
+
+        _assert_refused(twin, "the copy, after the daemon restarted")
+        clock.advance(seconds=1)
+        _assert_served(_signed_in(clock), "a login after the restart")
+
+    def test_a_login_made_after_both_logouts_is_served(self, clock):
+        first = _signed_in(clock)
+        clock.advance(hours=1)
+        _post_logout(first)
+        clock.advance(hours=-1)
+        second = _signed_in(clock)
+        _post_logout(second)
+        _assert_served(_signed_in(clock), "a login after both logouts")
+
+
+# ---------------------------------------------------------------------------
+# An invalid lifetime key warns into the daemon log file (AC-2)
+# ---------------------------------------------------------------------------
+
+_IMPORT_DRIVER = r"""
+import json, logging, os, sys
+repo, log_path = sys.argv[1], sys.argv[2]
+sys.path.insert(0, repo)
+import dotenv
+dotenv.load_dotenv = lambda *a, **k: False
+dotenv.dotenv_values = lambda *a, **k: {}
+_real_handler = logging.FileHandler
+class _TempFileHandler(_real_handler):
+    def __init__(self, filename, *a, **k):
+        super().__init__(log_path, *a, **k)
+logging.FileHandler = _TempFileHandler
+import app
+for handler in logging.getLogger("alphabot").handlers:
+    handler.flush()
+sys.stdout.write("__HOURS__" + json.dumps(app.app.permanent_session_lifetime.total_seconds() / 3600))
+"""
+
+
+def _import_app_in_a_fresh_process(tmp_path, lifetime_value: str | None):
+    """Import app in a new process with the daemon log redirected; return (hours, log text)."""
+    log_path = tmp_path / "daemon.log"
+    env = {k: v for k, v in os.environ.items() if k != _LIFETIME_KEY}
+    env.update(
+        DB_PATH=str(tmp_path / "state.db"),
+        SECRET_KEY=_SECRET,
+        DASHBOARD_PASSWORD=_PASSWORD,
+        PYTHONIOENCODING="utf-8",
+    )
+    if lifetime_value is not None:
+        env[_LIFETIME_KEY] = lifetime_value
+    repo = str(_APP_PY.parent)
+    proc = subprocess.run(
+        [sys.executable, "-I", "-c", _IMPORT_DRIVER, repo, str(log_path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=240,
+        cwd=repo,
+        env=env,
+    )
+    marker = proc.stdout.rfind("__HOURS__")
+    assert marker >= 0, f"app did not import (exit {proc.returncode}):\n{proc.stderr[-1500:]}"
+    hours = json.loads(proc.stdout[marker + len("__HOURS__") :].strip())
+    log_text = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+    return hours, log_text
+
+
+class TestTheInvalidLifetimeWarningReachesTheDaemonLogFile:
+    def test_one_line_in_the_log_file_names_the_key_and_never_the_value_or_the_secret(
+        self, tmp_path
+    ):
+        junk = "zq9-lifetime-junk"
+
+        hours, log_text = _import_app_in_a_fresh_process(tmp_path, junk)
+
+        assert hours == 12
+        lines = [line for line in log_text.splitlines() if _LIFETIME_KEY in line]
+        assert len(lines) == 1, (
+            f"the daemon log holds {len(lines)} lines naming the key: {log_text!r}"
+        )
+        assert "12" in lines[0]
+        assert junk not in log_text and _SECRET not in log_text and _PASSWORD not in log_text
+
+    def test_a_valid_value_is_used_and_logs_nothing_about_the_key(self, tmp_path):
+        hours, log_text = _import_app_in_a_fresh_process(tmp_path, "6")
+
+        assert hours == 6
+        assert _LIFETIME_KEY not in log_text
+
+    def test_an_absent_key_is_twelve_hours_and_logs_nothing_about_the_key(self, tmp_path):
+        hours, log_text = _import_app_in_a_fresh_process(tmp_path, None)
+
+        assert hours == 12
+        assert _LIFETIME_KEY not in log_text
