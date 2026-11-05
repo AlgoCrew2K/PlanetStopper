@@ -1665,7 +1665,9 @@ class TestSessionAuthAndLogoutNeverReachAnOrderOrACreation:
             for node in _collect_transitive_local_call_subtrees(_parse_app_py(), fn_name)
         }
         missing = [name for name in _SESSION_WALK_MUST_OPEN[fn_name] if name not in opened]
-        assert missing == [], f"the walk from {fn_name} never opened {missing}: {sorted(opened)}"
+        assert missing == [], (
+            f"the walk from {fn_name} never opened {missing}: {sorted(n for n in opened if n)}"
+        )
 
     @pytest.mark.parametrize("form", list(_SESSION_PLANTED_FORMS))
     @pytest.mark.parametrize("fn_name", _SESSION_ENTRY_POINT_FN_NAMES)

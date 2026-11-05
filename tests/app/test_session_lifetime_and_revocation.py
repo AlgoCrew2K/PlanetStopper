@@ -98,10 +98,8 @@ class _Clock:
 
 @pytest.fixture
 def clock(gate, monkeypatch):
-    if not hasattr(app_module, "_session_now_ns"):
-        pytest.fail("app.py must expose _session_now_ns() -> int, the clock seam of the session")
     fake = _Clock()
-    monkeypatch.setattr(app_module, "_session_now_ns", fake)
+    monkeypatch.setattr(app_module, "_session_now_ns", fake, raising=False)
     return fake
 
 
@@ -199,6 +197,34 @@ def _records_naming(caplog, level: int, needle: str):
 # ---------------------------------------------------------------------------
 
 
+class TestTheSessionSeamsExist:
+    @pytest.mark.parametrize("name", ["_session_now_ns", "_PROCESS_STARTED_NS"])
+    def test_the_module_exposes_the_seam(self, name):
+        assert hasattr(app_module, name), f"app.py must expose {name}"
+
+    def test_the_module_holds_the_cached_floor_as_a_module_level_name(self):
+        """Read from source: the suite fixture creates the name when it is absent."""
+        tree = ast.parse(_APP_PY.read_text(encoding="utf-8"))
+        names = set()
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+        assert "_session_revoked_before_ns" in names
+
+    def test_the_clock_seam_returns_integer_nanoseconds_near_the_wall_clock(self):
+        assert hasattr(app_module, "_session_now_ns"), "app.py must expose _session_now_ns"
+        before = time.time_ns()
+        stamp = app_module._session_now_ns()
+        assert isinstance(stamp, int) and before <= stamp <= time.time_ns()
+
+    def test_the_process_start_instant_is_an_integer_before_now(self):
+        assert hasattr(app_module, "_PROCESS_STARTED_NS"), "app.py must expose _PROCESS_STARTED_NS"
+        assert isinstance(app_module._PROCESS_STARTED_NS, int)
+        assert time.time_ns() >= app_module._PROCESS_STARTED_NS
+
+
 class TestLifetimeHours:
     def _lifetime_fn(self):
         assert hasattr(app_module, "_session_lifetime_hours"), (
@@ -282,6 +308,8 @@ class TestLifetimeHours:
 class TestASessionEndsAtItsLifetime:
     def test_a_session_is_served_just_inside_twelve_hours(self, clock):
         client = _signed_in(clock)
+        with client.session_transaction() as session:
+            assert isinstance(session.get("issued_at_ns"), int), "the login must stamp its instant"
         clock.advance(hours=11, minutes=59)
         _assert_served(client, "T + 11 h 59 min")
 
@@ -385,8 +413,8 @@ class TestASessionEndsAtItsLifetime:
     def test_a_restart_neither_ends_nor_extends_a_session(self, clock, monkeypatch):
         client = _signed_in(clock)
         clock.advance(hours=1)
-        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None)
-        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now)
+        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None, raising=False)
+        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now, raising=False)
         clock.advance(hours=1)
         _assert_served(client, "T + 2 h after a restart at T + 1 h")
         clock.advance(hours=10, seconds=1)
@@ -542,7 +570,7 @@ class TestLogoutEndsEverySessionIssuedBefore:
             responses.append(_post_logout(twin))
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(database, "record_session_revocation", _recording)
+            mp.setattr(database, "record_session_revocation", _recording, raising=False)
             threads = [threading.Thread(target=_logout, args=(twin,)) for twin in clients]
             for t in threads:
                 t.start()
@@ -651,8 +679,8 @@ class TestLogoutEndsEverySessionIssuedBefore:
 
 class TestTheRevocationSurvivesARestart:
     def _restart(self, clock, monkeypatch) -> None:
-        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None)
-        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now)
+        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None, raising=False)
+        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now, raising=False)
 
     def test_the_logout_stores_its_own_instant(self, clock):
         session_a = _signed_in(clock)
@@ -689,7 +717,7 @@ class TestTheRevocationSurvivesARestart:
             reads.append(1)
             return real_read()
 
-        monkeypatch.setattr(database, "get_session_revocation_floor_ns", _counting)
+        monkeypatch.setattr(database, "get_session_revocation_floor_ns", _counting, raising=False)
 
         for _ in range(5):
             _assert_served(session_a, "a poll")
@@ -701,13 +729,13 @@ class TestTheRevocationSurvivesARestart:
     ):
         session_a = _signed_in(clock)
         clock.advance(minutes=1)
-        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None)
-        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now)
+        monkeypatch.setattr(app_module, "_session_revoked_before_ns", None, raising=False)
+        monkeypatch.setattr(app_module, "_PROCESS_STARTED_NS", clock.now, raising=False)
 
         def _unreadable():
             raise sqlite3.OperationalError(_SENTINEL_DETAIL)
 
-        monkeypatch.setattr(database, "get_session_revocation_floor_ns", _unreadable)
+        monkeypatch.setattr(database, "get_session_revocation_floor_ns", _unreadable, raising=False)
         clock.advance(minutes=1)
 
         with caplog.at_level(logging.DEBUG):
@@ -727,7 +755,7 @@ class TestAnUnwritableRevocation:
         def _raise(_floor_ns):
             raise sqlite3.OperationalError(_SENTINEL_DETAIL)
 
-        monkeypatch.setattr(database, "record_session_revocation", _raise)
+        monkeypatch.setattr(database, "record_session_revocation", _raise, raising=False)
 
     def test_every_earlier_session_stays_refused_while_the_process_runs(
         self, clock, failing_write, caplog
@@ -785,6 +813,7 @@ class TestAnUnwritableRevocation:
                 database,
                 "record_session_revocation",
                 lambda _floor: (_ for _ in ()).throw(sqlite3.OperationalError("x")),
+                raising=False,
             )
             session_a = _signed_in(clock)
             clock.advance(seconds=1)
@@ -813,16 +842,15 @@ class TestAnUnwritableRevocation:
 class TestThePostIsRefusedUnlessItCarriesTheHeaderToken:
     @pytest.fixture
     def signed_in(self, clock, monkeypatch):
-        _require_post_logout()
         client = _signed_in(clock)
         clock.advance(seconds=1)
         monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
         self.client = client
-        self.floor_before = database.get_session_revocation_floor_ns()
         return client
 
     def _nothing_revoked(self, client) -> None:
-        assert database.get_session_revocation_floor_ns() == self.floor_before
+        _require_post_logout()
+        assert database.get_session_revocation_floor_ns() == 0, "a refused logout revoked"
         _assert_served(client, "after a refused logout")
 
     def test_no_header_token_is_a_403(self, signed_in):

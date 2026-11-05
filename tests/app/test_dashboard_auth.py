@@ -379,7 +379,9 @@ class TestLogout:
         assert button and button.group(1).strip() == "Sign out"
 
     def test_the_confirm_page_has_no_password_field_and_no_form_token(self, auth_client_authed):
-        page = auth_client_authed.get("/logout").get_data(as_text=True)
+        resp = auth_client_authed.get("/logout")
+        assert resp.status_code == 200, f"GET /logout answered {resp.status_code}, not the page"
+        page = resp.get_data(as_text=True)
         assert 'type="password"' not in page and 'id="password"' not in page
         assert 'name="csrf_token"' not in page, (
             "the form-field channel stays login-only: the confirm page sends its token in a header"

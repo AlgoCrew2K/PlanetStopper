@@ -308,10 +308,8 @@ def session_world(monkeypatch):
     monkeypatch.setitem(app_module.app.config, "SESSION_COOKIE_SECURE", False)
     monkeypatch.setattr(app_module.app, "permanent_session_lifetime", timedelta(hours=12))
     app_module.app.config["TESTING"] = True
-    if not hasattr(app_module, "_session_now_ns"):
-        pytest.fail("app.py must expose _session_now_ns() -> int, the clock seam of the session")
     clock = _SessionClock()
-    monkeypatch.setattr(app_module, "_session_now_ns", clock)
+    monkeypatch.setattr(app_module, "_session_now_ns", clock, raising=False)
     return clock
 
 
@@ -484,7 +482,7 @@ class TestAnOpenStreamEndsWithItsSession:
         def _raise(_floor):
             raise sqlite3.OperationalError(_SSE_DETAIL)
 
-        monkeypatch.setattr(database, "record_session_revocation", _raise)
+        monkeypatch.setattr(database, "record_session_revocation", _raise, raising=False)
         session_world.advance(1)
         _sign_out(client)
 

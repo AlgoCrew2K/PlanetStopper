@@ -36,8 +36,8 @@ RESTART = "H.setToken('" + answers.TOKEN_B + "');\n"
 CHOOSE_AGAIN = re.compile(r"Choose Sign out again\.")
 
 
-@pytest.fixture(scope="module")
-def confirm_html() -> str:
+def confirm_page() -> str:
+    """The page ``GET /logout`` renders (rendered in the test, so a missing page fails the test)."""
     return render_page("/logout")
 
 
@@ -52,11 +52,9 @@ def on_confirm_page(html, scenario, *routes_):
 
 
 class TestChoosingSignOut:
-    def test_the_click_sends_one_post_with_the_current_token_and_goes_to_login(
-        self, confirm_html, login_answer
-    ):
+    def test_the_click_sends_one_post_with_the_current_token_and_goes_to_login(self, login_answer):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             f"await H.click('{BUTTON}'); await H.advance(1000);",
             route(LOGOUT, login_answer, method="POST"),
         )
@@ -67,10 +65,10 @@ class TestChoosingSignOut:
         assert out.navigations == ["assign:/login"]
 
     def test_the_form_submit_sends_one_post_with_the_token_and_is_default_prevented(
-        self, confirm_html, login_answer
+        self, login_answer
     ):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             """
             const form = H.$('#logout-form');
             const ev = { type: 'submit', target: form, bubbles: true, defaultPrevented: false,
@@ -88,9 +86,9 @@ class TestChoosingSignOut:
         assert posts[0]["headers"].get("x-csrf-token") == DEFAULT_TOKEN
         assert out.navigations == ["assign:/login"]
 
-    def test_the_button_click_is_default_prevented(self, confirm_html, login_answer):
+    def test_the_button_click_is_default_prevented(self, login_answer):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             """
             const btn = H.$('[data-testid="logout-btn"]');
             const ev = { type: 'click', target: btn, bubbles: true, defaultPrevented: false,
@@ -105,18 +103,16 @@ class TestChoosingSignOut:
         assert out.result is True
         assert len(out.posts(LOGOUT.removesuffix("$"))) == 1
 
-    def test_nothing_is_sent_before_the_operator_chooses(self, confirm_html):
-        out = on_confirm_page(confirm_html, "await H.advance(120000);")
+    def test_nothing_is_sent_before_the_operator_chooses(self):
+        out = on_confirm_page(confirm_page(), "await H.advance(120000);")
         assert out.posts() == []
         assert out.navigations == []
 
 
 class TestARefusalAfterARestart:
-    def test_the_page_says_it_expired_fetches_one_token_and_sends_nothing_by_itself(
-        self, confirm_html
-    ):
+    def test_the_page_says_it_expired_fetches_one_token_and_sends_nothing_by_itself(self):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             RESTART
             + f"""
             await H.click('{BUTTON}');
@@ -134,11 +130,9 @@ class TestARefusalAfterARestart:
         assert len(out.to(TOKEN_URL, "GET")) == 2, "the load's read plus one new token"
         assert out.navigations == []
 
-    def test_the_next_click_sends_one_post_with_the_new_token_and_signs_out(
-        self, confirm_html, login_answer
-    ):
+    def test_the_next_click_sends_one_post_with_the_new_token_and_signs_out(self, login_answer):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             RESTART
             + f"""
             await H.click('{BUTTON}');
@@ -155,11 +149,9 @@ class TestARefusalAfterARestart:
         assert posts[1]["headers"].get("x-csrf-token") == answers.TOKEN_B
         assert out.navigations == ["assign:/login"]
 
-    def test_the_expired_message_does_not_stay_once_the_operator_chooses_again(
-        self, confirm_html, login_answer
-    ):
+    def test_the_expired_message_does_not_stay_once_the_operator_chooses_again(self, login_answer):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             RESTART
             + f"""
             await H.click('{BUTTON}');
@@ -177,9 +169,9 @@ class TestARefusalAfterARestart:
 
 
 class TestAnyOtherFailure:
-    def test_a_refusal_whose_token_could_not_be_refreshed_says_to_choose_again(self, confirm_html):
+    def test_a_refusal_whose_token_could_not_be_refreshed_says_to_choose_again(self):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             f"""
             await H.click('{BUTTON}');
             await H.advance(60000);
@@ -199,9 +191,9 @@ class TestAnyOtherFailure:
         assert len(out.posts(LOGOUT.removesuffix("$"))) == 1
         assert out.navigations == []
 
-    def test_a_network_failure_says_to_choose_again_and_enables_the_button(self, confirm_html):
+    def test_a_network_failure_says_to_choose_again_and_enables_the_button(self):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             f"""
             await H.click('{BUTTON}');
             await H.advance(60000);
@@ -216,9 +208,9 @@ class TestAnyOtherFailure:
         assert out.navigations == []
 
     @pytest.mark.parametrize("status", [400, 429, 500, 503])
-    def test_another_status_is_named_in_the_message(self, confirm_html, status):
+    def test_another_status_is_named_in_the_message(self, status):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             f"""
             await H.click('{BUTTON}');
             await H.advance(60000);
@@ -235,11 +227,9 @@ class TestAnyOtherFailure:
 
 
 class TestADoubleChoice:
-    def test_two_clicks_while_the_first_post_is_in_flight_send_one_post(
-        self, confirm_html, login_answer
-    ):
+    def test_two_clicks_while_the_first_post_is_in_flight_send_one_post(self, login_answer):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             f"""
             await H.click('{BUTTON}');
             await H.click('{BUTTON}');
@@ -253,11 +243,9 @@ class TestADoubleChoice:
         assert len(out.posts(LOGOUT.removesuffix("$"))) == 1
         assert out.navigations == ["assign:/login"]
 
-    def test_a_submit_while_the_first_post_is_in_flight_sends_nothing_more(
-        self, confirm_html, login_answer
-    ):
+    def test_a_submit_while_the_first_post_is_in_flight_sends_nothing_more(self, login_answer):
         out = on_confirm_page(
-            confirm_html,
+            confirm_page(),
             f"""
             await H.click('{BUTTON}');
             const form = H.$('#logout-form');
