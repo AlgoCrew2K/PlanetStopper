@@ -67,6 +67,12 @@ Object.defineProperty(El.prototype, 'disabled', {
   set(v) { if (v) this.setAttribute('disabled', ''); else this.removeAttribute('disabled'); },
   configurable: true,
 });
+// A <meta> element reflects its content attribute, as a browser's does.
+Object.defineProperty(El.prototype, 'content', {
+  get() { return this.getAttribute('content') || ''; },
+  set(v) { this.setAttribute('content', String(v)); },
+  configurable: true,
+});
 El.prototype.contains = function (n) { for (; n; n = n.parentNode) { if (n === this) return true; } return false; };
 Object.defineProperty(El.prototype, 'firstElementChild', { get() { return this.children[0] || null; }, configurable: true });
 El.prototype.scrollIntoView = function () {};
