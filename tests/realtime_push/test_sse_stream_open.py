@@ -493,10 +493,10 @@ class TestAnOpenStreamEndsWithItsSession:
         gen = open_session_stream(cookie)
         _next_chunk(gen)
 
-        def _raise(_floor):
+        def _raise(*_args):
             raise sqlite3.OperationalError(_SSE_DETAIL)
 
-        monkeypatch.setattr(database, "record_session_revocation", _raise, raising=False)
+        monkeypatch.setattr(database, "record_session_logout", _raise, raising=False)
         session_world.advance(1)
         _sign_out(client)
 

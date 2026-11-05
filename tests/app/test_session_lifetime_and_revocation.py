@@ -16,7 +16,7 @@ Contract pinned (the tests below read the daemon only through its routes and fou
   before the start is refused.
 
 Seams: ``app._session_now_ns`` (the clock, patched through ``clock``), ``app._session_revoked_before_ns``
-and ``app._PROCESS_STARTED_NS`` (reset to simulate a restart), and ``database.record_session_revocation``
+and ``app._PROCESS_STARTED_NS`` (reset to simulate a restart), and ``database.record_session_logout``
 / ``database.get_session_revocation_floor_ns`` (the stored revocation, patched to raise). Every cookie is
 issued by the real ``POST /login``; the real ``.env`` is never read.
 """
@@ -558,11 +558,11 @@ class TestLogoutEndsEverySessionIssuedBefore:
             _copy_session(session_a, twin)
             clients.append(twin)
         stamps: list[int] = []
-        real_record = database.record_session_revocation
+        real_record = database.record_session_logout
 
-        def _recording(floor_ns):
+        def _recording(floor_ns, generation):
             stamps.append(floor_ns)
-            return real_record(floor_ns)
+            return real_record(floor_ns, generation)
 
         responses = []
         barrier = threading.Barrier(2)
@@ -572,7 +572,7 @@ class TestLogoutEndsEverySessionIssuedBefore:
             responses.append(_post_logout(twin))
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(database, "record_session_revocation", _recording, raising=False)
+            mp.setattr(database, "record_session_logout", _recording, raising=False)
             threads = [threading.Thread(target=_logout, args=(twin,)) for twin in clients]
             for t in threads:
                 t.start()
@@ -757,10 +757,10 @@ class TestTheRevocationSurvivesARestart:
 class TestAnUnwritableRevocation:
     @pytest.fixture
     def failing_write(self, monkeypatch):
-        def _raise(_floor_ns):
+        def _raise(*_args):
             raise sqlite3.OperationalError(_SENTINEL_DETAIL)
 
-        monkeypatch.setattr(database, "record_session_revocation", _raise, raising=False)
+        monkeypatch.setattr(database, "record_session_logout", _raise, raising=False)
 
     def test_every_earlier_session_stays_refused_while_the_process_runs(
         self, clock, failing_write, caplog
@@ -816,8 +816,8 @@ class TestAnUnwritableRevocation:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(
                 database,
-                "record_session_revocation",
-                lambda _floor: (_ for _ in ()).throw(sqlite3.OperationalError("x")),
+                "record_session_logout",
+                lambda *_args: (_ for _ in ()).throw(sqlite3.OperationalError("x")),
                 raising=False,
             )
             session_a = _signed_in(clock)
