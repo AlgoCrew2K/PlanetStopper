@@ -391,6 +391,20 @@ class TestAnOpenStreamEndsWithItsSession:
 
         _assert_ends(gen)
 
+    def test_a_stream_of_a_session_issued_before_a_backward_step_closes_on_a_later_logout(
+        self, session_world, open_session_stream, monkeypatch
+    ):
+        monkeypatch.setattr(app_module, "_SSE_HEARTBEAT_S", 0.05)
+        client, cookie = _sign_in()
+        gen = open_session_stream(cookie)
+        assert _next_chunk(gen) == _RETRY_LINE.decode()
+        session_world.advance(-30)
+        assert _next_chunk(gen) == ": heartbeat\n\n", "premise: the session is still live"
+
+        _sign_out(client)
+
+        _assert_ends(gen)
+
     def test_a_closed_stream_is_deregistered(self, session_world, open_session_stream, monkeypatch):
         monkeypatch.setattr(app_module, "_SSE_HEARTBEAT_S", 0.05)
         client, cookie = _sign_in()

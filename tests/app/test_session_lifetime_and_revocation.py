@@ -1305,6 +1305,353 @@ class TestALogoutEndsASessionStampedPastTheFloor:
 
 
 # ---------------------------------------------------------------------------
+# A logout ends every session issued before it, whatever the clock did between that session's
+# login and the logout, also across a daemon restart (AC-3)
+# ---------------------------------------------------------------------------
+#
+# A logout is ordered against sessions by a count of logouts that login stamps into the session, not
+# by the wall clock: a session issued before a backward clock step carries a stamp ahead of the clock
+# at the logout, so a clock-ordered revocation does not end it. The count is one integer session entry
+# next to ``authenticated``, ``issued_at_ns`` and ``logged_in_at_ns``; the tests find it as the one
+# extra integer entry a real login adds and never read it by name.
+
+_SESSION_TIMESTAMP_KEYS = frozenset({"authenticated", "issued_at_ns", "logged_in_at_ns"})
+_STEPS_INSIDE_THE_FUTURE_TOLERANCE_S = [5, 30, 59]
+
+
+def _extra_integer_entries(client) -> dict:
+    with client.session_transaction() as session:
+        return {
+            key: value
+            for key, value in session.items()
+            if key not in _SESSION_TIMESTAMP_KEYS
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+        }
+
+
+def _browser_and_copy(clock):
+    browser = _signed_in(clock)
+    copy = _client()
+    _copy_session(browser, copy)
+    _assert_served(copy, "the copy before any logout")
+    return browser, copy
+
+
+class TestALogoutEndsEverySessionWhateverTheClockDidBetweenItsLoginAndTheLogout:
+    @pytest.mark.parametrize("step_s", _STEPS_INSIDE_THE_FUTURE_TOLERANCE_S)
+    def test_a_copy_of_a_session_issued_before_a_backward_step_is_refused_after_the_logout(
+        self, clock, step_s
+    ):
+        browser, copy = _browser_and_copy(clock)
+        clock.advance(seconds=-step_s)
+        clock.advance(seconds=1)
+
+        response = _post_logout(browser)
+
+        _assert_logged_in_at_logout_redirect(response)
+        _assert_refused(copy, "the copy, right after the logout")
+        _assert_page_redirected(copy, "the copy, right after the logout")
+        _assert_refused(browser, "the signing-out browser")
+
+    @pytest.mark.parametrize("step_s", _STEPS_INSIDE_THE_FUTURE_TOLERANCE_S)
+    def test_the_copy_stays_refused_as_the_clock_comes_back_and_runs_on(self, clock, step_s):
+        browser, copy = _browser_and_copy(clock)
+        login_instant = clock.now
+        clock.advance(seconds=-step_s)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(browser))
+
+        clock.advance(seconds=step_s - 1)
+        assert clock.now == login_instant
+        _assert_refused(copy, "the copy, with the clock back at the login instant")
+        clock.advance(seconds=30)
+        _assert_refused(copy, "the copy, 30 seconds after the login instant")
+        clock.advance(hours=1)
+        _assert_refused(copy, "the copy, an hour later")
+        _assert_page_redirected(copy, "the copy, an hour later")
+
+    def test_two_sessions_around_a_one_hour_step_back_are_both_ended_by_one_logout(self, clock):
+        session_a = _signed_in(clock)
+        copy_a = _client()
+        _copy_session(session_a, copy_a)
+        clock.advance(hours=-1)
+        _assert_refused(copy_a, "premise: a session stamped an hour ahead of the clock")
+        session_b = _signed_in(clock)
+        copy_b = _client()
+        _copy_session(session_b, copy_b)
+        _assert_served(copy_b, "the login made after the step back")
+
+        _assert_logged_in_at_logout_redirect(_post_logout(session_b))
+        clock.advance(minutes=59)
+
+        _assert_refused(copy_a, "the session issued before the step, now inside the tolerance")
+        _assert_refused(copy_b, "the session that signed out")
+        _assert_refused(session_b, "the signing-out browser")
+        clock.advance(hours=2)
+        _assert_refused(copy_a, "the session issued before the step, two hours on")
+
+    @pytest.mark.parametrize("restart_at", ["after the login", "after the logout"])
+    def test_a_restart_around_the_logout_does_not_save_the_copy(
+        self, clock, monkeypatch, restart_at
+    ):
+        browser, copy = _browser_and_copy(clock)
+        restart = TestTheRevocationSurvivesARestart()._restart
+        if restart_at == "after the login":
+            clock.advance(seconds=1)
+            restart(clock, monkeypatch)
+            _assert_served(copy, "the copy, after the restart and before any logout")
+        clock.advance(seconds=-30)
+        clock.advance(seconds=1)
+
+        _assert_logged_in_at_logout_redirect(_post_logout(browser))
+
+        if restart_at == "after the logout":
+            restart(clock, monkeypatch)
+        _assert_refused(copy, "the copy, after the logout")
+        _assert_page_redirected(copy, "the copy, after the logout")
+        clock.advance(seconds=1)
+        _assert_served(_signed_in(clock), "a login after the restart")
+
+    def test_a_true_restart_keeps_the_copy_refused_and_serves_a_later_login(self, clock, tmp_path):
+        browser, copy = _browser_and_copy(clock)
+        clock.advance(seconds=-30)
+        clock.advance(seconds=1)
+        _assert_logged_in_at_logout_redirect(_post_logout(browser))
+        clock.advance(seconds=1)
+        later = _signed_in(clock)
+        _assert_served(later, "the login made after the logout")
+        name = app_module.app.config["SESSION_COOKIE_NAME"]
+        cookies = {
+            "copy_of_the_session_issued_before_the_step": copy.get_cookie(name).value,
+            "login_made_after_the_logout": later.get_cookie(name).value,
+        }
+
+        answers = _answers_of_a_fresh_process(tmp_path, clock.now, cookies)
+
+        assert answers == {
+            "copy_of_the_session_issued_before_the_step": 401,
+            "login_made_after_the_logout": 200,
+        }
+
+    def test_a_fresh_login_after_the_logout_is_served_now_and_an_hour_later(self, clock):
+        browser, copy = _browser_and_copy(clock)
+        clock.advance(seconds=-30)
+        _assert_logged_in_at_logout_redirect(_post_logout(browser))
+        _assert_refused(copy, "the copy")
+
+        fresh = _signed_in(clock)
+
+        _assert_served(fresh, "the login made after the logout")
+        clock.advance(seconds=30)
+        _assert_served(fresh, "the fresh login, with the clock back at the old login instant")
+        clock.advance(hours=1)
+        _assert_served(fresh, "the fresh login, an hour later")
+        _assert_refused(copy, "the copy, an hour later")
+
+    def test_a_second_stepped_back_logout_ends_the_fresh_login_too(self, clock):
+        first, first_copy = _browser_and_copy(clock)
+        clock.advance(seconds=-30)
+        _assert_logged_in_at_logout_redirect(_post_logout(first))
+        second = _signed_in(clock)
+        second_copy = _client()
+        _copy_session(second, second_copy)
+        _assert_served(second_copy, "the second login before its logout")
+        clock.advance(seconds=-30)
+
+        _assert_logged_in_at_logout_redirect(_post_logout(second))
+
+        _assert_refused(second_copy, "the copy of the second login")
+        _assert_refused(first_copy, "the copy of the first login")
+        _assert_served(_signed_in(clock), "a third login")
+
+    def test_a_logout_whose_store_write_fails_still_ends_the_copy_in_this_process(
+        self, clock, monkeypatch
+    ):
+        browser, copy = _browser_and_copy(clock)
+        clock.advance(seconds=-30)
+
+        def _broken_store(*_a, **_k):
+            raise sqlite3.OperationalError(_SENTINEL_DETAIL)
+
+        monkeypatch.setattr(database, "get_connection", _broken_store)
+        response = _post_logout(browser)
+
+        _assert_logged_in_at_logout_redirect(response)
+        _assert_refused(copy, "the copy, after a logout the store did not keep")
+        _assert_refused(browser, "the signing-out browser")
+        assert _NOT_DURABLE_LINE in browser.get("/login").get_data(as_text=True)
+
+    def test_two_simultaneous_logouts_after_a_step_back_end_the_copy_and_leave_a_login_served(
+        self, clock
+    ):
+        clock.tick = 1_000
+        session_a = _signed_in(clock)
+        copy = _client()
+        _copy_session(session_a, copy)
+        twins = []
+        for _ in range(2):
+            twin = _client()
+            _copy_session(session_a, twin)
+            twins.append(twin)
+        clock.advance(seconds=-30)
+        responses = []
+        barrier = threading.Barrier(2)
+
+        def _logout(twin):
+            barrier.wait()
+            responses.append(_post_logout(twin))
+
+        threads = [threading.Thread(target=_logout, args=(twin,)) for twin in twins]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        assert len(responses) == 2
+        for response in responses:
+            _assert_logged_in_at_logout_redirect(response)
+        _assert_refused(copy, "a copy that did not log out")
+        for twin in twins:
+            _assert_refused(twin, "a twin that logged out")
+        _assert_served(_signed_in(clock), "a login after both logouts")
+
+    @pytest.mark.parametrize("method", ["get", "head", "options"])
+    def test_a_non_post_to_logout_after_a_step_back_revokes_nothing(self, clock, method):
+        browser, copy = _browser_and_copy(clock)
+        clock.advance(seconds=-30)
+
+        getattr(browser, method)("/logout")
+
+        _assert_served(copy, f"the copy, after {method.upper()} /logout")
+        _assert_served(browser, f"the browser, after {method.upper()} /logout")
+
+
+class TestTheGenerationALoginCarriesDecidesWhetherItIsServed:
+    @pytest.mark.parametrize("earlier_logouts", [0, 2])
+    def test_a_login_adds_exactly_one_integer_entry_beside_the_timestamps(
+        self, clock, earlier_logouts
+    ):
+        for _ in range(earlier_logouts):
+            _post_logout(_signed_in(clock))
+        browser = _signed_in(clock)
+
+        entries = _extra_integer_entries(browser)
+
+        assert len(entries) == 1, f"a login must stamp one integer generation, found {entries}"
+
+    @pytest.mark.parametrize("earlier_logouts", [0, 2])
+    @pytest.mark.parametrize(
+        "forge",
+        [
+            pytest.param(lambda value: value + 1, id="one-ahead"),
+            pytest.param(lambda value: value - 1, id="one-behind"),
+            pytest.param(lambda value: value + 10**6, id="far-ahead"),
+            pytest.param(lambda value: str(value), id="as-text"),
+            pytest.param(lambda value: None, id="null"),
+            pytest.param(lambda value: float(value), id="as-float"),
+        ],
+    )
+    def test_a_session_stamped_with_another_generation_is_refused(
+        self, clock, earlier_logouts, forge
+    ):
+        for _ in range(earlier_logouts):
+            _post_logout(_signed_in(clock))
+        browser = _signed_in(clock)
+        entries = _extra_integer_entries(browser)
+        assert len(entries) == 1, f"premise: one integer generation, found {entries}"
+        ((key, value),) = entries.items()
+        _assert_served(browser, "premise: the unforged login")
+
+        with browser.session_transaction() as session:
+            session[key] = forge(value)
+
+        _assert_refused(browser, "a forged generation")
+        _assert_page_redirected(browser, "a forged generation")
+
+    @pytest.mark.parametrize("earlier_logouts", [0, 2])
+    def test_a_session_with_every_timestamp_but_no_generation_is_refused(
+        self, clock, earlier_logouts
+    ):
+        for _ in range(earlier_logouts):
+            _post_logout(_signed_in(clock))
+        browser = _signed_in(clock)
+        entries = _extra_integer_entries(browser)
+        assert len(entries) == 1, f"premise: one integer generation, found {entries}"
+        ((key, _),) = entries.items()
+
+        with browser.session_transaction() as session:
+            del session[key]
+
+        _assert_refused(browser, "a session without a generation")
+        _assert_page_redirected(browser, "a session without a generation")
+        _assert_served(_signed_in(clock), "a genuine login, after the refusal")
+
+
+_FRESH_PROCESS_DRIVER = r"""
+import json, logging, sys
+repo, log_path, now_ns, cookie_name, cookies_json = sys.argv[1:6]
+sys.path.insert(0, repo)
+import dotenv
+dotenv.load_dotenv = lambda *a, **k: False
+dotenv.dotenv_values = lambda *a, **k: {}
+_real_handler = logging.FileHandler
+class _TempFileHandler(_real_handler):
+    def __init__(self, filename, *a, **k):
+        super().__init__(log_path, *a, **k)
+logging.FileHandler = _TempFileHandler
+import app
+app._session_now_ns = lambda: int(now_ns)
+app._auth_check_enabled = True
+app.app.config["SESSION_COOKIE_SECURE"] = False
+answers = {}
+for label, value in json.loads(cookies_json).items():
+    browser = app.app.test_client()
+    browser.set_cookie(cookie_name, value)
+    answers[label] = browser.get("/api/accounts").status_code
+sys.stdout.write("__ANSWERS__" + json.dumps(answers))
+"""
+
+
+def _answers_of_a_fresh_process(tmp_path, now_ns: int, cookies: dict) -> dict:
+    """Start the daemon module in a new process on the test's database and answer GET /api/accounts
+    for each cookie, with the session clock pinned to now_ns."""
+    env = {k: v for k, v in os.environ.items() if k != _LIFETIME_KEY}
+    env.update(
+        DB_PATH=database._db_file(),
+        SECRET_KEY=_SECRET,
+        DASHBOARD_PASSWORD=_PASSWORD,
+        PYTHONIOENCODING="utf-8",
+    )
+    for name in ("DASHBOARD_PASSWORD_HASH", "FLASK_SECRET_KEY"):
+        env.pop(name, None)
+    repo = str(_APP_PY.parent)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            _FRESH_PROCESS_DRIVER,
+            repo,
+            str(tmp_path / "daemon.log"),
+            str(now_ns),
+            app_module.app.config["SESSION_COOKIE_NAME"],
+            json.dumps(cookies),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=240,
+        cwd=repo,
+        env=env,
+    )
+    marker = proc.stdout.rfind("__ANSWERS__")
+    assert marker >= 0, f"app did not import (exit {proc.returncode}):\n{proc.stderr[-1500:]}"
+    return json.loads(proc.stdout[marker + len("__ANSWERS__") :].strip())
+
+
+# ---------------------------------------------------------------------------
 # An issue time that is not a sane instant is refused, and a login made after a backward clock step
 # keeps its real lifetime
 # ---------------------------------------------------------------------------
