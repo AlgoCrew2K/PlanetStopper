@@ -28,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import functools
 import logging
+import os
 import sys
 import threading
 import time
@@ -173,6 +174,23 @@ class TestRegistrations:
         assert getattr(app_module, "_scheduler_started_mono", None) == monotonic_clock.now
 
 
+# Name prefix of the thread that runs one account refresh (``_start_account_refresh``).
+_ACCOUNT_REFRESH_THREAD_PREFIX = "account-refresh-"
+
+
+def _is_engine_finish_wait(code) -> bool:
+    """True for the one wait the scheduler pass makes on an engine run's own done event.
+
+    ``_reap_exited_engine_run`` waits for a run whose process already ended to finish its
+    bookkeeping. That wait belongs to the engine run, not to the account refresh, and on a loaded
+    machine it is real, so it is exempt. The match is the function's name and the app module's
+    file, so no other caller is exempt.
+    """
+    return code.co_name == "_reap_exited_engine_run" and os.path.normcase(
+        code.co_filename
+    ) == os.path.normcase(app_module.__file__)
+
+
 class _SchedulerWaitRecorder:
     """Records every wait the scheduler loop's thread makes while jobs run, never a duration.
 
@@ -239,7 +257,7 @@ class _SchedulerWaitRecorder:
             starting_a_thread = (
                 caller.co_filename == threading.__file__ and caller.co_name == "start"
             )
-            if timeout != 0 and not starting_a_thread:
+            if timeout != 0 and not starting_a_thread and not _is_engine_finish_wait(caller):
                 recorder._record("Event.wait")
             return real_event_wait(event, timeout)
 
@@ -251,13 +269,30 @@ class _SchedulerWaitRecorder:
             return real_condition_wait(condition, timeout)
 
         def _join(thread, timeout=None):
-            if timeout != 0:
-                recorder._record("Thread.join")
+            if timeout != 0 and thread.name.startswith(_ACCOUNT_REFRESH_THREAD_PREFIX):
+                recorder._record("Thread.join on the account refresh thread")
             return real_join(thread, timeout)
 
         monkeypatch.setattr(threading.Event, "wait", _event_wait)
         monkeypatch.setattr(threading.Condition, "wait", _condition_wait)
         monkeypatch.setattr(threading.Thread, "join", _join)
+
+
+class TestEngineFinishWaitExemption:
+    def test_the_exempt_function_still_exists_in_the_app_module(self):
+        """A rename must break here, never silently count or skip a different wait."""
+        function = getattr(app_module, "_reap_exited_engine_run", None)
+
+        assert callable(function), "the engine finish wait function was renamed or removed"
+        assert _is_engine_finish_wait(function.__code__), (
+            "the exemption no longer matches the function by its name and file"
+        )
+
+    def test_a_wait_from_any_other_function_is_not_exempt(self):
+        def _reap_exited_engine_run():  # same name, defined in this file, not in app.py
+            return sys._getframe(0).f_code
+
+        assert not _is_engine_finish_wait(_reap_exited_engine_run())
 
 
 class TestSlotsThatRaise:
