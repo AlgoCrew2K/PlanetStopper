@@ -1383,6 +1383,53 @@ class TestAnIssueTimeThatIsNotASaneInstantIsRefused:
         _assert_served(_signed_in(clock), "a genuine login after the refusal")
 
 
+_LOGIN_TIME_KEY = "logged_in_at_ns"
+
+_UNSANE_LOGIN_TIMES = [
+    pytest.param(lambda now: str(now), id="the-instant-as-a-string"),
+    pytest.param(lambda now: float(now), id="the-instant-as-a-float"),
+    pytest.param(lambda now: True, id="true"),
+    pytest.param(lambda now: [now], id="a-list"),
+    pytest.param(lambda now: 10**399 + 7, id="a-400-digit-integer"),
+    pytest.param(lambda now: -(10**399), id="a-400-digit-negative-integer"),
+    pytest.param(lambda now: float("inf"), id="infinity"),
+    pytest.param(lambda now: float("nan"), id="not-a-number"),
+    pytest.param(lambda now: now + _HOUR_NS, id="an-hour-ahead-of-now"),
+    pytest.param(lambda now: now + _DAY_NS, id="a-day-ahead-of-now"),
+    pytest.param(lambda now: now + 3650 * _DAY_NS, id="ten-years-ahead-of-now"),
+]
+
+
+class TestALoginTimeThatIsNotASaneInstantIsRefused:
+    """The wall-clock login time the lifetime counts from is bounded like the issue time: a value
+    ahead of now would otherwise keep a session alive far past 12 hours."""
+
+    def test_the_real_login_carries_a_login_time_equal_to_the_clock_reading(self, clock):
+        client = _signed_in(clock)
+        with client.session_transaction() as session:
+            assert session.get(_LOGIN_TIME_KEY) == clock.now
+
+    @pytest.mark.parametrize("make_value", _UNSANE_LOGIN_TIMES)
+    def test_an_api_request_gets_401_json_and_a_page_is_sent_to_login(self, clock, make_value):
+        client = _signed_in(clock)
+        with client.session_transaction() as session:
+            session[_LOGIN_TIME_KEY] = make_value(clock.now)
+
+        _assert_refused(client, "the forged login time")
+        _assert_page_redirected(client, "the forged login time")
+
+    @pytest.mark.parametrize("make_value", _UNSANE_LOGIN_TIMES[-3:])
+    def test_a_future_login_time_does_not_extend_a_session_past_twelve_hours(
+        self, clock, make_value
+    ):
+        client = _signed_in(clock)
+        with client.session_transaction() as session:
+            session[_LOGIN_TIME_KEY] = make_value(clock.now)
+        clock.advance(hours=12, seconds=1)
+
+        _assert_refused(client, "twelve hours and a second after the real login")
+
+
 _BACKWARD_STEPS = [
     pytest.param({"minutes": -1}, id="one-minute-back"),
     pytest.param({"hours": -3}, id="three-hours-back"),
