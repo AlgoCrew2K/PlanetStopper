@@ -15,6 +15,9 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.dashboard._exit_verdict_copy import verdict_lead
+from tests.ui import _page_copy
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # ---------------------------------------------------------------------------
@@ -536,14 +539,11 @@ def test_api_state_preserves_existing_keys(dashboard_client):
 
 
 def test_triggered_verdict_shows_computed_label(dashboard_client):
-    """Triggered card verdict must show computed 'Good call' or 'Early exit', not raw reason.
+    """Triggered card verdict must show the computed sentence, not the raw reason.
 
-    ux BLOCK-1: Cards render triggered_reason string directly instead of the
-    computed good-call/early-exit verdict derived from guard_alpha.
-    Design: studio.jsx triggered card verdict row shows:
-      '✓ Good call · saved +X%α'  (guard_alpha > 0)
-      '⤓ Early exit · gave up X%α'  (guard_alpha <= 0)
-    guard_alpha must be present in the symphony context and used to compute verdict.
+    ux BLOCK-1: Cards rendered the triggered_reason string directly instead of a verdict derived
+    from guard_alpha. The sentence names the side the exit landed on (beat, trailed or matched
+    holding); its wording is the copy rows' (tests/fixtures/page_explainers/copy.json).
     """
     html = dashboard_client.get("/").data.decode("utf-8")
     verdict_elem = re.search(r'data-testid="triggered-verdict"[^>]*>(.*?)</[^>]+>', html, re.DOTALL)
@@ -551,15 +551,15 @@ def test_triggered_verdict_shows_computed_label(dashboard_client):
         'data-testid="triggered-verdict" must be present for triggered symphonies.'
     )
     verdict_text = verdict_elem.group(0)
-    assert "Good call" in verdict_text or "Early exit" in verdict_text, (
-        "triggered-verdict must contain 'Good call' or 'Early exit' computed label. "
-        "Raw triggered_reason string is not acceptable. "
-        "Derive from guard_alpha: positive = Good call, negative/zero = Early exit."
+    leads = [verdict_lead(side) for side in ("beat", "trailed", "matched")]
+    assert any(lead in verdict_text for lead in leads), (
+        "triggered-verdict must carry one of the three computed verdict sentences, not the raw "
+        "triggered_reason string: " + repr(leads)
     )
-    assert "%α" in verdict_text or "%" in verdict_text, (
-        "triggered-verdict must include a percentage alpha value (e.g. '+3.5%α'). "
-        "Design: studio.jsx triggered card verdict."
-    )
+    if verdict_lead("matched") not in verdict_text:
+        assert "%" in verdict_text, (
+            "a verdict that names a side must include the percentage gap (e.g. '3.5%')."
+        )
 
 
 def test_vs_rows_have_bar_elements(dashboard_client):
@@ -657,7 +657,7 @@ def test_hero_chart_has_legend(dashboard_client):
 
     ux BLOCK-5: Chart legend strip below the cumulative chart is absent.
     Design: studio.jsx Hero left column — legend strip with:
-      - Bot line swatch + 'Planet Stopper (dry-run)' label
+      - Bot line swatch + the Bot series label (copy row D06c)
       - Dashed held swatch + 'If held' label
       - Right-aligned 'data as of {meta.portfolio.data_as_of}' timestamp
     """
@@ -667,9 +667,12 @@ def test_hero_chart_has_legend(dashboard_client):
         "legend strip. "
         "Design: studio.jsx Legend items below CumChart."
     )
-    assert "Planet Stopper" in html, (
-        "chart-legend must contain 'Planet Stopper' label for the Bot line. "
-        "Design: studio.jsx Legend color=p.accent label='Planet Stopper (dry-run)'."
+    legend = re.search(r'data-testid="chart-legend".*?legend-basis-note', html, re.DOTALL)
+    assert legend is not None, "the chart-legend block must list its series before the basis note"
+    legend_text = re.sub(r"<[^>]+>", " ", legend.group(0))
+    bot_label = _page_copy.fill(_page_copy.text("D06c", "C"), mode="dry-run")
+    assert bot_label in " ".join(legend_text.split()), (
+        f"chart-legend must carry the Bot series label {bot_label!r} for the Bot line."
     )
     assert "If held" in html or "if held" in html.lower(), (
         "chart-legend must contain 'If held' label for the dashed baseline. "

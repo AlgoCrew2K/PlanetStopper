@@ -25,6 +25,7 @@ import re
 from datetime import date
 
 from tests.app._closed_session_world import ClosedWorld, build_history_world
+from tests.ui import _page_copy
 
 FRIDAY = "2026-10-30"
 MONDAY = "2026-11-02"
@@ -40,7 +41,7 @@ TODAYS_WORDING = {
     "if_held": {"If held", "If held · live"},
     "basis": {"vs held now"},
     "return": "Live return",
-    "legend": "Live (if held)",
+    "legend": _page_copy.text("NM6", "C"),
     "hwm": "HWM today",
     "events": "Today’s events",
     "events_empty": "No events yet today.",

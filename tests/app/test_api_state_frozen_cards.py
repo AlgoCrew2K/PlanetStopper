@@ -39,6 +39,7 @@ from tests.app._refresh_timing_state_world import (
     load_record,
     seeded_world,
 )
+from tests.dashboard._exit_verdict_copy import verdict_sentence
 from tests.dashboard._first_paint_dom import js_to_fixed
 
 CARD_LEG_KEYS = ("tc_bot", "tc_held", "cr_bot", "cr_held", "mdd_bot", "mdd_held")
@@ -266,8 +267,7 @@ class TestFrozenGuardAlpha:
 
 def _expected_verdict_text(guard_alpha: float) -> str:
     magnitude = js_to_fixed([abs(guard_alpha)], 1)[0]
-    lead = "Good call · saved +" if guard_alpha > 0 else "Early exit · gave up "
-    return f"{lead}{magnitude}%α"
+    return verdict_sentence(guard_alpha, magnitude)
 
 
 def _assert_page_cards_equal_poll(page: str, body: dict) -> None:

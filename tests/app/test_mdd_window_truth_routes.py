@@ -36,6 +36,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import app as app_module
+from tests.ui import _page_copy
 
 _SHADOW_SCHEMA = """
     CREATE TABLE shadow_history (
@@ -296,7 +297,9 @@ class TestAC2LifetimeScalarRenderedSeparately:
     AC-7's alpha_bot_execution.py freeze; see feature-plans/mdd-window-
     truth.md's amended AC-2 + Decisions table)."""
 
-    _RULED_LABEL_FRAGMENTS = ("Lifetime max drawdown", "since inception")
+    _RULED_LABEL_FRAGMENTS = tuple(
+        part.strip(" :") for part in _page_copy.text("NM1", "C").split("·")
+    )
 
     def test_page_renders_a_lifetime_figure_distinct_from_the_vs_row(
         self, client, mock_database, monkeypatch
@@ -357,7 +360,7 @@ class TestAC2LifetimeScalarRenderedSeparately:
             assert fragment in snippet, (
                 f"AC-2 FAIL: the ruled label fragment {fragment!r} was not "
                 f"found near the lifetime-scalar figure. Ruled copy: "
-                f"'Lifetime max drawdown · since inception'. Snippet: {snippet!r}"
+                f"{_page_copy.text('NM1', 'C')!r}. Snippet: {snippet!r}"
             )
         # [Corrected during review, self-caught false positive]: this
         # test's first draft checked the WHOLE rendered page for any

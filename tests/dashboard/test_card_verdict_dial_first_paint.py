@@ -28,6 +28,7 @@ import requests
 
 import app as app_module
 import database
+from tests.dashboard._exit_verdict_copy import verdict_sentence
 from tests.dashboard._first_paint_dom import js_eval, js_to_fixed, run_page
 
 _DROPLET = pathlib.Path(__file__).parent.parent / "fixtures" / "prod_droplet"
@@ -229,8 +230,7 @@ def _mags() -> dict:
 
 
 def _expected_verdict(ga: float, label: str = _LABEL_OPEN) -> str:
-    lead = "Good call · saved +" if ga > 0 else "Early exit · gave up "
-    return f"{lead}{_mags()[abs(ga)]}%α {label}"
+    return f"{verdict_sentence(ga, _mags()[abs(ga)])} {label}"
 
 
 def _snapshots(world: dict) -> dict:
@@ -540,8 +540,7 @@ def test_first_paint_reads_the_real_exit_row_without_any_state_poll(monkeypatch,
 
 def _expected_verdict_for(ga: float, label: str = _LABEL_OPEN) -> str:
     mag = js_to_fixed([abs(ga)], 1)[0]
-    lead = "Good call · saved +" if ga > 0 else "Early exit · gave up "
-    return f"{lead}{mag}%α {label}"
+    return f"{verdict_sentence(ga, mag)} {label}"
 
 
 def test_card_that_exits_after_first_paint_shows_its_verdict_and_label_on_the_next_poll(

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.ui import _page_copy as copy
 from tests.ui._header_status_answers import (
     ACCOUNT_ENV,
     chrome_text,
@@ -58,6 +59,7 @@ LABEL = "#engine-status-label"
 TITLE_HOLDER = "#engine-status"
 COUNTDOWN = "#next-run-countdown"
 PILL = '[data-testid="mode-pill"]'
+MODE_STATE_OF_PILL_TEXT = {"DRY RUN": "Dry run", "LIVE": "Live"}
 
 
 def scenario_label(js_after_boot: str) -> str:
@@ -107,18 +109,55 @@ class TestMarkup:
             assert marker in html, f"{marker} is gone from {path}"
 
 
+def _without_added_attributes(nav: str) -> str:
+    """``nav`` with the header descriptions removed, after checking each is the one the copy gives.
+
+    The header's own text, layout and every other attribute stay in the comparison; only the five
+    attributes the explainer work adds are taken out, and each is first required to hold exactly the
+    approved definition (a ``title`` on four controls, an ``aria-description`` on the engine state).
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(nav, "html.parser")
+    states = copy.row("H02", "B")["states"]
+    mode_states = copy.row("H08", "B")["states"]
+    word = " ".join(soup.select_one("#engine-status-label").get_text().split())
+    pill = " ".join(soup.select_one(PILL).get_text().split())
+    expected = [
+        ("#engine-status", "aria-description", states[word]),
+        (PILL, "title", mode_states[MODE_STATE_OF_PILL_TEXT[pill]]),
+        ('[data-testid="workspace-switcher"]', "title", copy.text("H07", "B")),
+        ('[data-testid="force-run-btn"]', "title", copy.text("H09", "B")),
+        ("#emergency-liquidate", "title", copy.text("H10", "B")),
+    ]
+    for selector, attribute, text in expected:
+        element = soup.select_one(selector)
+        assert element is not None, f"{selector} is gone from the header"
+        assert element.get(attribute) == text, (
+            f"{selector} carries {attribute}={element.get(attribute)!r}, not its definition {text!r}"
+        )
+        del element[attribute]
+    return str(soup)
+
+
 class TestHeaderMarkupIsOnlyGivenTheAttribute:
     @pytest.mark.parametrize("path", [*FOUR_PAGES, "/"])
-    def test_the_nav_is_the_one_at_the_base_except_for_the_poll_attribute(self, path):
+    def test_the_nav_is_the_one_at_the_base_except_for_the_poll_attribute_and_the_descriptions(
+        self, path
+    ):
         # The record is the header as the unslop pass left it (see 04-c1/PROVENANCE.md); it was taken
-        # with the poll attribute on four pages, so both sides are read without it.
-        base = json.loads(BASE_MARKUP.read_text(encoding="utf-8"))["navs"][path]
-        now = nav_markup(path)
+        # with the poll attribute on four pages, so both sides are read without it. The added
+        # descriptions are named and stripped from the page, nothing else.
+        from bs4 import BeautifulSoup
+
         poll = ' data-header-poll="1"'
-        assert now.replace(poll, "") == base.replace(poll, ""), (
-            f"{path}: the header markup changed beyond the one attribute"
+        base = json.loads(BASE_MARKUP.read_text(encoding="utf-8"))["navs"][path].replace(poll, "")
+        served = nav_markup(path)
+        now = _without_added_attributes(served.replace(poll, ""))
+        assert now == str(BeautifulSoup(base, "html.parser")), (
+            f"{path}: the header markup changed beyond the poll attribute and the descriptions"
         )
-        opening = now.split(">", 1)[0]
+        opening = served.split(">", 1)[0]
         assert ('data-header-poll="1"' in opening) is (path != "/"), (
             f"{path}: data-header-poll belongs on the nav of every page but the dashboard"
         )
@@ -502,3 +541,238 @@ class TestModePillAndWorkspace:
         )
         assert out.result["before"] == "Individual"
         assert out.result["after"] == "Picked account", "a poll overwrote the operator's pick"
+
+
+# ---------------------------------------------------------------------------
+# The header controls carry their definitions
+# ---------------------------------------------------------------------------
+
+ENGINE_STATE_SENTENCES = copy.row("H02", "B")["states"]
+MODE_SENTENCES = copy.row("H08", "B")["states"]
+ENGINE_DESCRIPTION = "aria-description"
+READ_ENGINE = (
+    f"({{label: H.text('{LABEL}'), description: H.attr('{TITLE_HOLDER}', '{ENGINE_DESCRIPTION}'),"
+    f" title: H.attr('{TITLE_HOLDER}', 'title')}})"
+)
+
+
+def _engine_chrome(*, system_online: bool, engine_phase: str | None) -> str:
+    """The header the template renders for one engine situation, through the real template."""
+    from flask import render_template
+
+    import app as app_module
+
+    meta = {
+        "system_online": system_online,
+        "mode": "DRY RUN",
+        "next_run": "10:44",
+        "account": {"label": "Individual", "uuid_short": "0123abcd"},
+    }
+    with app_module.app.test_request_context("/"):
+        return render_template("_chrome.html", meta=meta, engine_phase=engine_phase)
+
+
+class TestHeaderDefinitionsAreServerRendered:
+    @pytest.mark.parametrize("path", [*FOUR_PAGES, "/"])
+    def test_each_control_carries_its_definition_as_a_title(self, path):
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(render_page(path), "html.parser")
+        switcher = soup.select_one('[data-testid="workspace-switcher"]')
+        assert switcher.get("title") == copy.text("H07", "B")
+        force = soup.select_one('[data-testid="force-run-btn"]')
+        assert force.get("title") == copy.text("H09", "B")
+        assert soup.select_one("#emergency-liquidate").get("title") == copy.text("H10", "B")
+
+    @pytest.mark.parametrize("path", [*FOUR_PAGES, "/"])
+    def test_the_mode_pill_carries_the_sentence_of_the_mode_it_shows(self, path):
+        from bs4 import BeautifulSoup
+
+        pill = BeautifulSoup(render_page(path), "html.parser").select_one(PILL)
+        shown = MODE_STATE_OF_PILL_TEXT[" ".join(pill.get_text().split())]
+        assert pill.get("title") == MODE_SENTENCES[shown]
+        assert pill.get("title") not in {v for k, v in MODE_SENTENCES.items() if k != shown}
+
+    @pytest.mark.parametrize(
+        ("system_online", "engine_phase", "word"),
+        [
+            (True, None, "Live"),
+            (False, None, "Closed"),
+            (True, "blackout", "Rebalance pause"),
+            (True, "opening", "Opening"),
+        ],
+    )
+    def test_the_engine_state_it_renders_carries_only_its_own_sentence(
+        self, system_online, engine_phase, word
+    ):
+        from bs4 import BeautifulSoup
+
+        html = _engine_chrome(system_online=system_online, engine_phase=engine_phase)
+        status = BeautifulSoup(html, "html.parser").select_one("#engine-status")
+        assert " ".join(status.select_one("#engine-status-label").get_text().split()) == word
+        assert status.get(ENGINE_DESCRIPTION) == ENGINE_STATE_SENTENCES[word]
+
+    def test_a_paused_state_keeps_its_existing_title_beside_the_description(self):
+        from bs4 import BeautifulSoup
+
+        html = _engine_chrome(system_online=True, engine_phase="blackout")
+        status = BeautifulSoup(html, "html.parser").select_one("#engine-status")
+        assert status.get("title"), "the scheduled-pause title the base rendered is gone"
+        assert status.get(ENGINE_DESCRIPTION) != status.get("title")
+
+
+class TestEngineStateDescriptionFollowsTheState:
+    @staticmethod
+    def _assert_described(result, word):
+        assert result["label"] == word
+        assert result["description"] == ENGINE_STATE_SENTENCES[word]
+        others = [s for k, s in ENGINE_STATE_SENTENCES.items() if k != word]
+        assert not any(s in result["description"] for s in others), (
+            f"the {word!r} description carries another state's sentence"
+        )
+
+    @pytest.mark.parametrize("path", FOUR_PAGES)
+    def test_live(self, path):
+        at = et(10, 43, 5)
+        out = run(
+            path,
+            [header_answer(at)],
+            scenario_label(f"return {READ_ENGINE};"),
+            wall=wall_of(at),
+        )
+        self._assert_described(out.result, "Live")
+
+    def test_closed(self):
+        at = et(20, 0)
+        out = run(
+            "/history",
+            [header_answer(at)],
+            scenario_label(f"return {READ_ENGINE};"),
+            wall=wall_of(at),
+        )
+        self._assert_described(out.result, "Closed")
+
+    def test_rebalance_pause(self):
+        at = et(15, 56)
+        out = run(
+            "/settings",
+            [header_answer(at, cycle_age_s=240)],
+            scenario_label(f"return {READ_ENGINE};"),
+            wall=wall_of(at),
+        )
+        self._assert_described(out.result, "Rebalance pause")
+        assert out.result["title"] == chrome_text("BLACKOUT_TITLE")
+
+    def test_opening(self):
+        t0, t1 = et(9, 25), et(9, 30, 20)
+        out = run(
+            "/ai-advisor",
+            [
+                header_answer(t0, cycle_age_s=60 * 60 * 17),
+                header_answer(t1, cycle_age_s=60 * 60 * 17),
+            ],
+            scenario_label(f"await H.advance(30000); return {READ_ENGINE};"),
+            wall=wall_of(t0),
+        )
+        self._assert_described(out.result, "Opening")
+        assert out.result["title"] == chrome_text("OPENING_TITLE")
+
+    def test_stale(self):
+        at = et(11, 0)
+        out = run(
+            "/history",
+            [header_answer(at, cycle_age_s=180)],
+            scenario_label(f"return {READ_ENGINE};"),
+            wall=wall_of(et(10, 50)),
+        )
+        self._assert_described(out.result, "Stale")
+        assert out.result["title"] == chrome_text("STALE_TITLE")
+
+    def test_degraded_keeps_the_reason_in_the_title(self):
+        at = et(10, 43, 5)
+        out = run(
+            "/history",
+            [header_answer(at, reasons=["engine_overrun"])],
+            scenario_label(f"return {READ_ENGINE};"),
+            wall=wall_of(at),
+        )
+        self._assert_described(out.result, "Degraded")
+        assert out.result["title"] == TestDegraded.REASONS["engine_overrun"]
+        assert out.result["description"] != out.result["title"]
+
+    def test_connection_lost_then_recovery(self):
+        at = et(10, 43, 5)
+        out = run(
+            "/history",
+            [header_answer(at), {"reject": True}, header_answer(et(10, 44, 5))],
+            scenario_label(
+                f"""
+                const seen = [{READ_ENGINE}];
+                await H.advance(30000); seen.push({READ_ENGINE});
+                await H.advance(30000); seen.push({READ_ENGINE});
+                return seen;
+                """
+            ),
+            wall=wall_of(at),
+            strict=True,
+        )
+        live, lost, recovered = out.result
+        self._assert_described(live, "Live")
+        self._assert_described(lost, "Connection Lost")
+        assert lost["title"] == chrome_text("CONNECTION_LOST_TITLE")
+        self._assert_described(recovered, "Live")
+
+    def test_not_updating(self):
+        at = et(10, 43, 5)
+        out = run(
+            "/performance",
+            [header_answer(at)] + [{"hold": f"never-{i}"} for i in range(1, 5)],
+            scenario_label(f"await H.advance(100000); return {READ_ENGINE};"),
+            wall=wall_of(at),
+        )
+        self._assert_described(out.result, "Not updating")
+
+    def test_degraded_clears_to_live_without_a_leftover_sentence(self):
+        at = et(10, 43, 5)
+        out = run(
+            "/history",
+            [
+                header_answer(at, reasons=["engine_overrun"]),
+                header_answer(et(10, 43, 35), reasons=[]),
+            ],
+            scenario_label(
+                f"const a = {READ_ENGINE}; await H.advance(30000); return [a, {READ_ENGINE}];"
+            ),
+            wall=wall_of(at),
+        )
+        degraded, live = out.result
+        self._assert_described(degraded, "Degraded")
+        self._assert_described(live, "Live")
+
+
+class TestModePillTitleFollowsTheMode:
+    def test_the_title_changes_with_the_live_flag_and_back(self):
+        at = et(10, 43, 5)
+        out = run(
+            "/history",
+            [
+                header_answer(at, live=False),
+                header_answer(et(10, 43, 35), live=True),
+                header_answer(et(10, 44, 5), live=False),
+            ],
+            scenario_label(
+                f"""
+                const read = () => ({{text: H.text('{PILL}'), title: H.attr('{PILL}', 'title')}});
+                const seen = [read()];
+                await H.advance(30000); seen.push(read());
+                await H.advance(30000); seen.push(read());
+                return seen;
+                """
+            ),
+            wall=wall_of(at),
+        )
+        assert out.result == [
+            {"text": "DRY RUN", "title": MODE_SENTENCES["Dry run"]},
+            {"text": "LIVE", "title": MODE_SENTENCES["Live"]},
+            {"text": "DRY RUN", "title": MODE_SENTENCES["Dry run"]},
+        ]
