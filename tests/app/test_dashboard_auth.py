@@ -1728,3 +1728,65 @@ class TestLoginPageLoadsTheAppFontAndTheme:
         ).group(1)
         monkey_post = auth_client.post("/login", data={"password": "wrong", "csrf_token": token})
         assert b'class="login-error"' in monkey_post.data and b'role="alert"' in monkey_post.data
+
+
+# ---------------------------------------------------------------------------
+# Every host sits behind the unchanged gate (page-explainers AC-5, S-5.8)
+# ---------------------------------------------------------------------------
+
+_PAGE_HOSTS = ("/", "/history", "/performance", "/settings", "/ai-advisor")
+_DATA_ROUTES = (
+    "/api/state",
+    "/api/performance",
+    "/api/history/30",
+    "/api/retirement-recommendations",
+    "/api/guard-alpha-summary",
+    "/api/autotune-runs",
+    "/api/settings",
+)
+
+
+class TestEveryPageSitsBehindTheGate:
+    """Adding copy to a page adds no route and no exemption: each of the five pages and each data
+    route the pages read answers a request with no session exactly as before the copy."""
+
+    @pytest.mark.parametrize("path", _PAGE_HOSTS)
+    def test_an_html_request_with_no_session_redirects_to_login_and_carries_no_page(
+        self, auth_client, path
+    ):
+        resp = auth_client.get(path, follow_redirects=False)
+        assert resp.status_code == 302, f"{path}: {resp.status_code}"
+        assert "/login" in resp.headers.get("Location", "")
+        assert b"section-header" not in resp.data and b"data-explainer" not in resp.data
+
+    @pytest.mark.parametrize("path", _PAGE_HOSTS)
+    def test_an_xhr_request_for_a_page_with_no_session_gets_401_json(self, auth_client, path):
+        resp = auth_client.get(path, headers={"X-Requested-With": "XMLHttpRequest"})
+        assert resp.status_code == 401, f"{path}: {resp.status_code}"
+        assert "application/json" in (resp.content_type or "")
+        assert b"section-header" not in resp.data
+
+    @pytest.mark.parametrize("path", _DATA_ROUTES)
+    def test_a_data_route_with_no_session_gets_401_json(self, auth_client, path):
+        resp = auth_client.get(path)
+        assert resp.status_code == 401, f"{path}: {resp.status_code}"
+        assert "application/json" in (resp.content_type or "")
+
+    @pytest.mark.parametrize("path", _PAGE_HOSTS)
+    def test_a_signed_in_session_reaches_the_page_without_a_redirect(
+        self, auth_client_authed, path
+    ):
+        resp = auth_client_authed.get(path, follow_redirects=False)
+        assert resp.status_code == 200, f"{path}: {resp.status_code}"
+        assert b"section-header" in resp.data
+
+    def test_no_page_or_data_route_is_exempt_from_the_gate(self):
+        exempt = set(app_module._AUTH_EXEMPT_ENDPOINTS)
+        rules = {r.rule: r.endpoint for r in app_module.app.url_map.iter_rules()}
+        for path in (*_PAGE_HOSTS, *_DATA_ROUTES):
+            rule = path.replace("/30", "/<int:days>") if path.startswith("/api/history/") else path
+            endpoint = rules.get(rule) or next(
+                (e for r, e in rules.items() if r.startswith("/api/history/")), None
+            )
+            assert endpoint is not None, f"{path}: no route"
+            assert endpoint not in exempt, f"{path} is exempt from the auth gate"
