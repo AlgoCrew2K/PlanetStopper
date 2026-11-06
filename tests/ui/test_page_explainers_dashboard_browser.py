@@ -74,6 +74,9 @@ DISCLOSURE_SUMMARY = "What the terms mean"
 MIN_TEXT_PX = 11
 ROW_TOP_TOLERANCE_PX = 8
 POLL_MS = 31_000
+PROD_DROPLET = pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "prod_droplet"
+# Exit return minus held return, in points: beat, trailed, exactly level, and a hair above level.
+EXIT_GAPS = (1.24, -0.42, 0.0, 0.04)
 HEIGHT_SLACK_PX = 16
 CLOSED_HEIGHT_TOLERANCE_PX = 1
 
@@ -374,28 +377,58 @@ def test_an_open_disclosure_stays_open_with_its_lines_unchanged_across_polls(
 # ---------------------------------------------------------------------------
 
 
+def _seed_exit_rows() -> None:
+    """One exit row per triggered symphony, the gap to its held return one of each kind.
+
+    The gaps are above zero, below zero, exactly zero and a hair above zero, so the page must print
+    all three sentences. The rows go through the real writer, over a captured exit row's fields.
+    """
+    import database
+
+    state = database.load_state()
+    triggered = [k for k, v in state.items() if isinstance(v, dict) and v.get("triggered")]
+    assert len(triggered) >= len(EXIT_GAPS), "premise: the captured state holds enough exits"
+    captured = json.loads((PROD_DROPLET / "exit_triggers.json").read_text(encoding="utf-8"))
+    row = next(r for r in captured if r["triggered_reason"])
+    for sid, gap in zip(triggered, EXIT_GAPS, strict=False):
+        entry = state[sid]
+        written = database.record_exit_trigger(
+            symphony_id=sid,
+            account_id=entry.get("account") or "",
+            triggered_reason=entry.get("triggered_reason") or row["triggered_reason"],
+            at_return=entry["current_return"] + gap,
+            cycle_id=row["cycle_id"],
+            ts_utc=row["ts_utc"],
+            ts_et=row["ts_et"],
+        )
+        assert written is not None, "the real exit-trigger writer refused the row"
+
+
 def test_the_verdict_the_poll_writes_is_the_sentence_the_first_paint_gave(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     seeded,
 ):
     seeded("dashboard_full")
+    _seed_exit_rows()
     with _Dashboard(firefox, advisor_server, WIDE[0]) as probe:
         state = probe.page.evaluate(
             "() => fetch('/api/state').then((r) => r.json()).then((b) => b.bot_state)"
         )
         triggered = {k: v for k, v in state.items() if isinstance(v, dict) and v.get("triggered")}
         assert triggered, "premise: the captured state holds triggered symphonies"
+        kinds = set()
         for sid, entry in triggered.items():
             ga = entry.get("guard_alpha")
-            selector = f'[data-sym-id="{sid}"] [data-field="verdict-text"]'
-            facts = _see(probe, selector)
+            facts = _see(probe, f'[data-sym-id="{sid}"] [data-field="verdict-text"]')
             assert facts["found"], sid
             if not isinstance(ga, (int, float)):
                 assert facts["text"] == "—", (sid, facts["text"])
                 continue
             magnitude = probe.page.evaluate("(v) => Math.abs(v).toFixed(1)", ga)
             assert facts["text"] == verdict_sentence(ga, magnitude), (sid, ga, facts["text"])
+            kinds.add("matched" if magnitude == "0.0" else ("beat" if ga > 0 else "trailed"))
+    assert kinds == {"beat", "trailed", "matched"}, f"the seeded exits print only {kinds}"
 
 
 def test_the_pill_and_the_held_line_legend_the_script_writes_read_the_new_words(
@@ -508,6 +541,7 @@ def test_the_cvar_and_sleeves_panels_share_one_row_and_a_lone_panel_takes_the_wi
     seeded(world)
     with _Dashboard(firefox, advisor_server, width) as probe:
         geometry = probe.page.evaluate(GEOMETRY_JS)
+        _assert_visible_text(probe, "D47", '[data-explainer="D47"]', copy.text("D47", "A"))
     problems = _foot_row_problems(geometry, expect_cvar=expect_cvar)
     assert not problems, f"{world} at {width}: " + "; ".join(problems)
 
@@ -601,6 +635,11 @@ def test_every_added_line_is_at_least_eleven_pixels_and_opening_every_disclosure
     with _Dashboard(firefox, advisor_server, NARROW[0], NARROW[1]) as probe:
         height = "() => Math.max(document.documentElement.scrollHeight, document.body.scrollHeight)"
         closed = probe.page.evaluate(height)
+        added = probe.page.evaluate(
+            "() => [document.querySelectorAll('[data-explainer]').length,"
+            " document.querySelectorAll('[data-terms]').length]"
+        )
+        assert min(added) > 0, f"premise: the page carries descriptions and disclosures: {added}"
         small = probe.page.evaluate(
             "() => [...document.querySelectorAll('[data-explainer], [data-terms] > summary')]"
             ".map((e) => [e.getAttribute('data-explainer') || 'summary', parseFloat(getComputedStyle(e).fontSize)])"

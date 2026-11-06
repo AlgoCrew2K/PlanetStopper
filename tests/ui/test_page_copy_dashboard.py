@@ -550,7 +550,7 @@ class TestRelabelledRows:
     @pytest.mark.parametrize(("mode", "word"), [("LIVE_EXECUTION=True\n", "live"), ("", "dry-run")])
     def test_the_hero_legend_names_the_bot_series_with_the_mode(self, render, mode, word):
         soup = render("dashboard_full", env=mode)
-        legend = _words(_one(soup, '[data-testid="chart-legend"] .legend-item'))
+        legend = _words(soup.select_one('[data-testid="chart-legend"] .legend-item'))
         assert legend == copy.fill(copy.text("D06c", "C"), mode=word)
 
     def test_the_lifetime_drawdown_labels_read_the_new_text_on_the_hero_and_every_card(
