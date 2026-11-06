@@ -468,7 +468,8 @@
             '</div>';
 
         var body = bannerHtml +
-            _sectionHeader('Execution mode', '') +
+            _sectionHeader('Execution mode', "Whether this symphony may send real sell orders. It trades live only when this switch and the server's global live switch are both on.", '', 'M04') +
+            _termsDisclosure('M04', [['M01', "Dry-run (global off): the server's live switch is off, so nothing trades live. Live: this symphony sends real sell orders. Dry-run: this symphony is watched but sends no orders."]]) +
             '<div class="' + execClass + '">' +
             '<div class="ssm-exec-main">' +
             '<div class="ssm-exec-label">' +
@@ -479,22 +480,24 @@
             toggleHtml +
             '</div>' +
 
-            _sectionHeader('Locked tuning variables', 'Checked variables the autotuner may not change') +
+            _sectionHeader('Locked tuning variables', "Checked variables keep their value when the weekly autotune runs; the autotune may change the rest.", '', 'M05') +
             // Columns of at least 13rem: on a phone the controls stack one to a row, each with room
             // for its full name. Every block of the body keeps its own height (the body scrolls),
             // so a block with overflow hidden is never squashed to its first line.
             '<div class="ssm-locks">' +
             lockedVarsRows + '</div>' +
 
-            _sectionHeader('Autotuner parameters', 'Read-only, autotuner-owned.') +
+            _sectionHeader('Autotuner parameters', "The values the autotune set for this symphony. They are read-only here.", '', 'M06') +
             '<div class="ssm-params">' +
             paramsRows + '</div>' +
 
             _sectionHeader(
                 'AI advisor — this symphony',
-                'Display-only. Act by locking a variable and letting the optimizer converge.',
-                '<span class="ssm-note">Advisory only</span>'
+                "What the advisor said about this symphony, for reading only. To act on it, lock a variable above or accept a suggestion on the Advisor page.",
+                '<span class="ssm-note">Advisory only</span>',
+                'M07'
             ) +
+            _termsDisclosure('M07', [['M08', "Clear: the check passed. Watch: worth a look, not a failure. Breach: the check failed."]]) +
             advisorHtml;
 
         var el = _getOrCreateModalEl();
@@ -705,9 +708,12 @@
             '</div>';
     }
 
-    function _sectionHeader(title, caption, rightHtml) {
+    // `explainerKey` marks the caption as the description of that block.
+    function _sectionHeader(title, caption, rightHtml, explainerKey) {
         var captionHtml = caption
-            ? '<div class="ssm-sec-cap">' + _esc(caption) + '</div>'
+            ? '<div class="ssm-sec-cap"' +
+              (explainerKey ? ' data-explainer="' + explainerKey + '"' : '') + '>' +
+              _esc(caption) + '</div>'
             : '';
         // One balanced element: the header row. The blocks that follow are siblings in the body's
         // column, so the footer (Cancel, Save) sits below the scrolling body, never inside it.
@@ -716,6 +722,16 @@
             '<div class="ssm-sec-title">' + _esc(title) + '</div>' +
             captionHtml + '</div>' +
             (rightHtml || '') + '</div>';
+    }
+
+    // A closed "What the terms mean" disclosure: `terms` is a list of [key, text] pairs.
+    function _termsDisclosure(target, terms) {
+        return '<details class="hp-more" data-terms="' + target + '">' +
+            '<summary>What the terms mean</summary>' +
+            terms.map(function (t) {
+                return '<p data-term="' + t[0] + '">' + _esc(t[1]) + '</p>';
+            }).join('') +
+            '</details>';
     }
 
     // A status is a dot and one word. `kind` picks the dot's colour; `labelHtml` is markup the

@@ -241,7 +241,7 @@
       inp.value = '';
       inp.addEventListener('input', () => {
         if (statusEl) {
-          statusEl.textContent = inp.value ? 'Ready to save' : '';
+          statusEl.textContent = inp.value ? 'Not saved from here: set it in .env on the host' : '';
           statusEl.dataset.ready = inp.value ? '1' : '0';
         }
         if (inp.value) {
@@ -445,7 +445,32 @@
   }
 
   // ── Render symphony overrides ──────────────────────────────────────────────
+  /**
+   * One closed "What the terms mean" disclosure under the symphony overrides description. It is
+   * built once and left alone by every later render, so an operator who opened it keeps it open.
+   */
+  function ensureSymphonyTerms() {
+    const section = document.getElementById('sec-symphonies');
+    if (!section || section.querySelector('details[data-terms="S14"]')) return;
+    const split = section.querySelector('.sym-split');
+    if (!split) return;
+    const details = document.createElement('details');
+    details.className = 'hp-more';
+    details.dataset.terms = 'S14';
+    const summary = document.createElement('summary');
+    summary.textContent = 'What the terms mean';
+    details.appendChild(summary);
+    [['S15', "uses globals: no value set for this symphony. N overrides: values set for this symphony. lock: stop the autotune changing a value. override: a value that replaces the global one."], ['S16', "No longer held: Composer no longer reports this symphony and the engine writes it no rows; it returns here by itself if its rows resume."]].forEach(([key, text]) => {
+      const line = document.createElement('p');
+      line.dataset.term = key;
+      line.textContent = text;
+      details.appendChild(line);
+    });
+    section.insertBefore(details, split);
+  }
+
   function renderSymphonies(data) {
+    ensureSymphonyTerms();
     const list = document.getElementById('sym-list');
     list.innerHTML = '';
 
