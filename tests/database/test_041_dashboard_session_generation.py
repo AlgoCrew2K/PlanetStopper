@@ -196,3 +196,50 @@ class TestADatabaseThatStoppedAt040:
 
         assert _applied_count(database_stopped_at_040) == 1
         assert db_module.get_session_revocation_floor_ns() == _REAL_INSTANT_NS
+
+
+class TestTheLogoutStoreKeepsTheHigherValues:
+    """Two logouts can reach the store out of order, because the app writes outside its lock.
+
+    An overwrite by the later arrival would let a logged-out session live again after a restart, so
+    each column keeps the higher value on its own. Floors are nanosecond instants and generations are
+    small counts, so a swapped return pair can never match by coincidence.
+    """
+
+    _FLOOR_NS = _REAL_INSTANT_NS
+    _GENERATION = 7
+
+    def _stored(self) -> tuple[int, int]:
+        return db_module.get_session_revocation_floor_ns(), db_module.get_session_generation()
+
+    def test_the_first_write_returns_the_floor_then_the_generation(self, migrated_db):
+        returned = db_module.record_session_logout(self._FLOOR_NS, self._GENERATION)
+
+        assert returned == (self._FLOOR_NS, self._GENERATION)
+        assert self._stored() == (self._FLOOR_NS, self._GENERATION)
+
+    def test_a_later_write_with_a_lower_floor_and_a_lower_generation_changes_neither(
+        self, migrated_db
+    ):
+        db_module.record_session_logout(self._FLOOR_NS, self._GENERATION)
+
+        returned = db_module.record_session_logout(self._FLOOR_NS - 5_000_000, self._GENERATION - 3)
+
+        assert returned == (self._FLOOR_NS, self._GENERATION)
+        assert self._stored() == (self._FLOOR_NS, self._GENERATION)
+
+    def test_a_higher_floor_with_a_lower_generation_moves_only_the_floor(self, migrated_db):
+        db_module.record_session_logout(self._FLOOR_NS, self._GENERATION)
+
+        returned = db_module.record_session_logout(self._FLOOR_NS + 5_000_000, self._GENERATION - 3)
+
+        assert returned == (self._FLOOR_NS + 5_000_000, self._GENERATION)
+        assert self._stored() == (self._FLOOR_NS + 5_000_000, self._GENERATION)
+
+    def test_a_higher_generation_with_a_lower_floor_moves_only_the_generation(self, migrated_db):
+        db_module.record_session_logout(self._FLOOR_NS, self._GENERATION)
+
+        returned = db_module.record_session_logout(self._FLOOR_NS - 5_000_000, self._GENERATION + 4)
+
+        assert returned == (self._FLOOR_NS, self._GENERATION + 4)
+        assert self._stored() == (self._FLOOR_NS, self._GENERATION + 4)
