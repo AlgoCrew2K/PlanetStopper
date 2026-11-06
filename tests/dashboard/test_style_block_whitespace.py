@@ -28,8 +28,10 @@ TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
 _REFERENCE_DIGESTS = {
     "ai_advisor.html": "e84c5a744cdd3cd4fbca65ee7e02e03efd39d79be450b28803e332d5281be278",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
-    "history.html": "7ab5d893f9495037a3bbbd36003818f19c17c93b1bd4d386f70fdca9ac941d20",
-    "performance.html": "257b5d18c052d89e323d8d263fa8253894ac3485f2ff71c1310181bd8a2e4c94",
+    # Re-pinned after the Performance and History explainers, relabels and density layout were
+    # added (the diff from the previous pin is that change and nothing else).
+    "history.html": "209372a0869e67a5e614b7e3437c9e71e5b33d3c114ef5cde12ff28a0cb204cb",
+    "performance.html": "3c3d00a0e96a3611c3721043ed1aaa635d62ac16945a66066522a9a7d37dd282",
     "settings.html": "4a59222e9f74448c7fa4b2c57ece3efb52b16199ebcc482bf4ba6f5b929e2164",
 }
 
