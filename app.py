@@ -8754,6 +8754,7 @@ def performance_page():
     return render_template(
         "performance.html",
         min_history_days=_PERFORMANCE_MIN_HISTORY_DAYS,
+        copy_values=_page_copy_values(("friction_pct",)),
         active_route="performance",
         meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
     )

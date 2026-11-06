@@ -216,12 +216,24 @@
         'bleed cut':       'VWAP Bleed Cut',
     };
 
-    var REASON_DESCRIPTIONS = {
-        'Take-Profit':    'Monte Carlo collapse — mean reversion expected.',
-        'Trailing Stop':  'Vol-scaled trailing stop hit after peak.',
-        'VWAP Breakdown': 'Price dropped below VWAP after HWM — System A.',
-        'VWAP Bleed Cut': 'Slow bleed below vol-scaled VWAP floor — System B.',
+    // The names shown for the canonical reasons; the keys stay as the API and the stored exits spell them.
+    var REASON_DISPLAY = {
+        'Take-Profit': 'Take-profit',
+        'Trailing Stop': 'Trailing stop',
+        'VWAP Breakdown': 'VWAP breakdown',
+        'VWAP Bleed Cut': 'VWAP bleed',
     };
+
+    var REASON_DESCRIPTIONS = {
+        'Take-Profit': 'the exit fired to keep a gain the Monte Carlo check judged likely to fade.',
+        'Trailing Stop': 'the exit fired because the symphony fell further below its peak than its volatility-scaled stop allows.',
+        'VWAP Breakdown': 'the exit fired after the symphony had gained enough to arm this check, its holdings then traded below their volume-weighted average price, and its return stayed under the session high for several checks in a row.',
+        'VWAP Bleed Cut': 'the exit fired after the symphony\'s own return stayed at or below a volatility-scaled loss line for several checks in a row; despite the name, this check does not look at the volume-weighted average price.',
+    };
+
+    function reasonDisplayName(reason) {
+        return REASON_DISPLAY[reason] || reason;
+    }
 
     var REASON_STRIP_COLOR = {
         'Take-Profit':    '--studio-plum',
@@ -281,7 +293,7 @@
         reasons.forEach(function (reason) {
             var term = document.createElement('dt');
             term.insertAdjacentHTML('beforeend', reasonDotHtml(reason));
-            term.appendChild(document.createTextNode(reason));
+            term.appendChild(document.createTextNode(reasonDisplayName(reason)));
             var definition = document.createElement('dd');
             definition.textContent = REASON_DESCRIPTIONS[reason] || reason;
             list.appendChild(term);
@@ -322,11 +334,11 @@
 
             return (
                 '<tr data-testid="reason-card">' +
-                '<td>' + reasonDotHtml(reason) + escHtml(reason) + '</td>' +
+                '<td>' + reasonDotHtml(reason) + escHtml(reasonDisplayName(reason)) + '</td>' +
                 '<td class="num hp-strong" data-label="Sum of exit alpha" style="color:' + alphaColor + ';">' +
                 escHtml(alphaStr) + '</td>' +
                 '<td class="num" data-label="Dollar result">' + escHtml(dollarSavedText(s.dollars)) + '</td>' +
-                '<td class="num" data-label="Triggers">' + escHtml(String(s.count)) + '</td>' +
+                '<td class="num" data-label="Exits">' + escHtml(String(s.count)) + '</td>' +
                 '<td class="num" data-label="Wins">' + escHtml((s.wins || 0) + '/' + s.count) + '</td>' +
                 // B-13: reason-bar SVG whose rect width reflects win-rate for this reason.
                 '<td class="num" data-label="Win rate" style="color:' + rateColor + ';"><span class="hp-rate">' +
@@ -399,7 +411,7 @@
                 '<tr>' +
                 '<td class="hp-time">' + escHtml(String(rec.ts || '—')) + '</td>' +
                 '<td>' + escHtml(String(symDisplay)) + '</td>' +
-                '<td>' + reasonDotHtml(canonicalReason) + escHtml(rawReason) + '</td>' +
+                '<td>' + reasonDotHtml(canonicalReason) + escHtml(canonicalReason ? reasonDisplayName(canonicalReason) : rawReason) + '</td>' +
                 '<td class="num" style="color:' + detailColor + ';">' + escHtml((function(d) {
                     if (typeof d !== 'number') return String(d || '—');
                     return (d >= 0 ? '+' : '') + d.toFixed(2) + '%';
