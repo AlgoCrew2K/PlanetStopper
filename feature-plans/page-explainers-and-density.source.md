@@ -1,0 +1,1 @@
+Continue. I like the restyle but I feel like there's still a ton of empty space and whatnot. I also think you need more descriptions in these pages, e.g. "Symphony Tenure" - what the fuck is it and why do I care?
