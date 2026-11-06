@@ -640,13 +640,11 @@ def migration_listing_at(commit: str) -> dict[str, str]:
     return {n.split("/", 1)[1]: git_object_hash(commit, n) for n in sorted(names)}
 
 
-def url_map_facts() -> list[list]:
-    """Every route as ``[rule, sorted methods without HEAD/OPTIONS, endpoint]``, sorted."""
-    rules = []
-    for rule in app_module.app.url_map.iter_rules():
-        methods = sorted(m for m in rule.methods if m not in {"HEAD", "OPTIONS"})
-        rules.append([rule.rule, methods, rule.endpoint])
-    return sorted(rules)
+def route_table_facts() -> dict:
+    """The route table and hooks as ``tests/_hygiene_surface_facts.py`` reads them (S-5.7)."""
+    from tests._hygiene_surface_facts import url_map_facts
+
+    return url_map_facts(app_module)
 
 
 def scheduler_slot_digest() -> str:

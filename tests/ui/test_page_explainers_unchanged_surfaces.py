@@ -203,7 +203,7 @@ def test_the_migrations_equal_the_listing_at_the_build_base(ref):
 
 
 def test_every_route_keeps_its_rule_methods_and_endpoint(ref):
-    assert harness.url_map_facts() == ref["pins"]["url_map"]
+    assert harness.route_table_facts() == ref["pins"]["route_table"]
 
 
 def test_the_scheduler_keeps_every_slot_and_call(ref):

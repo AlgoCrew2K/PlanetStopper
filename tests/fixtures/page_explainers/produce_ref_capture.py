@@ -59,17 +59,28 @@ PRODUCTION_PATHS = (
 ALLOWED_TO_DIFFER = ("database.py",)
 
 
-def _git(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True)
+def _git_succeeds(*args: str) -> bool:
+    return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True).returncode == 0
+
+
+def _git_head() -> str:
+    return subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
 
 
 def refuse_unless_production_equals_the_reference() -> None:
     checked = [p for p in PRODUCTION_PATHS if p not in ALLOWED_TO_DIFFER]
-    if _git("diff", "--quiet", REFERENCE_COMMIT, "--", *checked).returncode != 0:
+    if not _git_succeeds("diff", "--quiet", REFERENCE_COMMIT, "--", *checked):
         raise SystemExit(f"refusing to write: {checked} differ from {REFERENCE_COMMIT}")
-    dirty = _git("status", "--porcelain", "--", *PRODUCTION_PATHS).stdout.strip()
+    dirty = subprocess.run(
+        ["git", "-C", str(REPO), "status", "--porcelain", "--", *PRODUCTION_PATHS],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     if dirty:
-        raise SystemExit(f"refusing to write: uncommitted change in the production paths:\n{dirty}")
+        raise SystemExit(f"refusing to write: production paths have uncommitted changes: {dirty}")
 
 
 def main() -> None:
@@ -127,7 +138,7 @@ def main() -> None:
     out = {
         "reference_commit": REFERENCE_COMMIT,
         "build_base_commit": BUILD_BASE_COMMIT,
-        "head_at_capture": _git("rev-parse", "HEAD").stdout.strip(),
+        "head_at_capture": _git_head(),
         "captured_at_utc": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "capture_instant": harness.CAPTURE_INSTANT.isoformat(),
         "firefox_version": firefox_version,
@@ -144,7 +155,7 @@ def main() -> None:
                 BUILD_BASE_COMMIT, "database.py"
             ),
             "migrations_at_build_base": harness.migration_listing_at(BUILD_BASE_COMMIT),
-            "url_map": harness.url_map_facts(),
+            "route_table": harness.route_table_facts(),
             "scheduler_digest": harness.scheduler_slot_digest(),
             "handlerless_buttons": harness.handlerless_buttons(),
         },

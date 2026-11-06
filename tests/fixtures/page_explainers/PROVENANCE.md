@@ -56,7 +56,7 @@ match a parser or a test.
   Discord payload (`reporting.send_eod_discord_post` over the captured day `2026-06-30`, with
   `requests.post` replaced at the network boundary), the engine files' hashes at `1988ce5f` and
   `database.py`'s at `8f8be28d` (SHA-256 of the bytes with CRLF normalized to LF), the migration
-  listing at `8f8be28d`, the route table, the AST digest of `run_scheduler`, the template buttons no
+  listing at `8f8be28d`, the route table and hooks (`tests/_hygiene_surface_facts.py`), the AST digest of `run_scheduler`, the template buttons no
   script handles (S-5.15) and the rendered text of the five kept rows.
 - **Not recorded:** Strategy Builder survivor and backtest-failure rows and the five-card Frontrunner
   case; the cycle that reads them writes them at test time through the real writers.
