@@ -651,6 +651,44 @@ def test_a_pending_live_toggle_keeps_the_descriptions_and_the_confirm_path_is_as
     }
 
 
+OPEN_AND_CLOSE_THE_DISCLOSURE_WITH_A_PENDING_TOGGLE = f"""
+await H.click('{TOGGLE}');
+const details = () => H.$('details[data-terms="M04"]');
+const present = !!details();
+if (present) details().setAttribute('open', '');
+const whileOpen = {{open: present && details().hasAttribute('open'), modal: {READ_MODAL}}};
+if (present) details().removeAttribute('open');
+await H.click('{SAVE}');
+const confirmEl = H.$('#sym-settings-confirm');
+const postsBeforeConfirm = H.posts('/api/symphony-settings').length;
+await H.click('#sym-confirm-go-live');
+return {{present, whileOpen, dialog: confirmEl ? confirmEl.getAttribute('aria-label') : null,
+        postsBeforeConfirm, posts: H.posts('/api/symphony-settings').map((p) => p.body)}};
+"""
+
+
+def test_opening_and_closing_a_modal_disclosure_leaves_a_pending_live_toggle_and_its_confirm_as_before(
+    symphonies,
+):
+    out = run_modal(
+        OPEN(B) + OPEN_AND_CLOSE_THE_DISCLOSURE_WITH_A_PENDING_TOGGLE,
+        route(GET_B, spec(symphonies[B]), method="GET"),
+        route(r"/api/symphony-settings/", {"json": {"status": "ok"}}, method="POST"),
+    )
+    result = out.result
+    assert result["present"] is True, "the modal has no closed-by-default disclosure to open"
+    assert result["whileOpen"]["open"] is True
+    _assert_modal_copy(_soup(result["whileOpen"]["modal"]))
+    assert result["dialog"] == "Confirm live trading"
+    assert result["postsBeforeConfirm"] == 0, "nothing may be sent before the confirmation"
+    (body,) = result["posts"]
+    assert json.loads(body) == {
+        "live_mode": True,
+        "locked_vars": symphonies[B]["locked_vars"],
+        "confirm": True,
+    }
+
+
 RE_RENDER_THE_MODAL = f"""
 await H.click('{TOGGLE}');
 await H.click('{TOGGLE}');
