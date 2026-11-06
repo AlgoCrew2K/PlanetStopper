@@ -136,9 +136,8 @@ def authed_client(monkeypatch):
     monkeypatch.setattr(app_module, "_auth_check_enabled", True)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
-        with c.session_transaction() as session:
-            session["authenticated"] = True
-            session["issued_at_ns"] = time.time_ns()
+        signed_in = c.post("/login", data={"password": "refresh-timing-password"})
+        assert signed_in.status_code == 302, "premise: the real login signs the operator in"
         yield c
 
 

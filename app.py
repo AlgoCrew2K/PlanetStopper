@@ -229,40 +229,64 @@ _session_revoked_before_ns: int | None = None
 _SESSION_REVOCATION_LOCK = threading.Lock()
 
 
-def _revocation_floor_ns() -> int:
-    """The revocation floor, read from the database once per process.
+_SESSION_GENERATION_KEY = "session_generation"
+# Logouts so far; loaded together with the floor, whenever the floor is None.
+_session_generation: int = 0
 
-    An unreadable record refuses every session issued before this process started.
+
+def _load_revocation_state_locked() -> None:
+    """Read the floor and the generation once per process; the caller holds the lock.
+
+    An unreadable record refuses every session issued before this process started: the floor
+    becomes the start instant (a new login is stamped past it) and the generation 0.
     """
-    global _session_revoked_before_ns
+    global _session_revoked_before_ns, _session_generation
+    if _session_revoked_before_ns is not None:
+        return
+    try:
+        floor = database.get_session_revocation_floor_ns()
+        generation = database.get_session_generation()
+    except Exception as exc:
+        _daemon_log.error(
+            "Session revocation record unreadable (%s); refusing sessions issued"
+            " before this process started",
+            type(exc).__name__,
+        )
+        floor, generation = _PROCESS_STARTED_NS, 0
+    _session_generation = generation
+    _session_revoked_before_ns = floor
+
+
+def _revocation_state() -> tuple[int, int]:
+    """The (floor, generation) pair, read together under the lock."""
     with _SESSION_REVOCATION_LOCK:
-        if _session_revoked_before_ns is None:
-            try:
-                _session_revoked_before_ns = database.get_session_revocation_floor_ns()
-            except Exception as exc:
-                _daemon_log.error(
-                    "Session revocation record unreadable (%s); refusing sessions issued"
-                    " before this process started",
-                    type(exc).__name__,
-                )
-                _session_revoked_before_ns = _PROCESS_STARTED_NS
-        return _session_revoked_before_ns
+        _load_revocation_state_locked()
+        return _session_revoked_before_ns, _session_generation
+
+
+def _revocation_floor_ns() -> int:
+    """The revocation floor, read from the database once per process."""
+    return _revocation_state()[0]
 
 
 def _revoke_sessions_issued_before(now_ns: int) -> bool:
     """End every session issued before now_ns; False when the stored record could not be written.
 
-    The in-memory floor is raised first, so the running process refuses them either way. The
-    floor is at least one past the previous floor, so a session stamped at the previous floor
-    (a login in the same clock tick, or after the clock stepped back) is ended too.
+    The in-memory floor and generation are raised first, so the running process refuses
+    earlier sessions either way. The floor is at least one past the previous floor, so a
+    session stamped at the previous floor is ended too; the generation ends sessions whose
+    stamp lies ahead of the clock after a backward step.
     """
-    global _session_revoked_before_ns
-    current = _revocation_floor_ns()
+    global _session_revoked_before_ns, _session_generation
     with _SESSION_REVOCATION_LOCK:
-        floor = max(now_ns, max(current, _session_revoked_before_ns or 0) + 1)
+        _load_revocation_state_locked()
+        floor = max(now_ns, _session_revoked_before_ns + 1)
         _session_revoked_before_ns = floor
+        _session_generation += 1
+        generation = _session_generation
     try:
-        database.record_session_revocation(floor)
+        # One statement stores both, so a logout is fully durable or reported not durable.
+        database.record_session_logout(floor, generation)
     except Exception as exc:
         _daemon_log.error(
             "Session revocation could not be stored (%s); earlier sessions end only until"
@@ -277,13 +301,17 @@ def _revoke_sessions_issued_before(now_ns: int) -> bool:
 _SESSION_ISSUE_FUTURE_TOLERANCE_NS: int = 60 * 1_000_000_000  # nanoseconds (60 s)
 
 
-def _session_issue_is_valid(issued: object, logged_in_at: object, now_ns: int) -> bool:
+def _session_issue_is_valid(
+    issued: object, logged_in_at: object, now_ns: int, generation: object
+) -> bool:
     """True for an integer issue time after the revocation floor and not beyond the next
     stamp a login could write, with a login time that is inside the lifetime.
 
     The issue time orders sessions against revocation (a login after a backward clock step is
     stamped floor + 1, ahead of the clock); the lifetime counts from the wall-clock login time.
     """
+    if not isinstance(generation, int) or isinstance(generation, bool):
+        return False
     if logged_in_at is None:
         # A session written before the login time was recorded counts from its issue time.
         logged_in_at = issued
@@ -293,8 +321,8 @@ def _session_issue_is_valid(issued: object, logged_in_at: object, now_ns: int) -
     # A login stamps issued = max(login time, floor + 1), so a login time past it is forged.
     if logged_in_at > issued:
         return False
-    floor = _revocation_floor_ns()
-    if issued <= floor:
+    floor, current_generation = _revocation_state()
+    if generation != current_generation or issued <= floor:
         return False
     if issued > max(now_ns, floor + 1) + _SESSION_ISSUE_FUTURE_TOLERANCE_NS:
         return False
@@ -306,7 +334,10 @@ def _session_is_valid() -> bool:
     """True when the session is authenticated, carries a sane issue time after the
     revocation floor, and is inside the lifetime."""
     return session.get("authenticated") is True and _session_issue_is_valid(
-        session.get("issued_at_ns"), session.get("logged_in_at_ns"), _session_now_ns()
+        session.get("issued_at_ns"),
+        session.get("logged_in_at_ns"),
+        _session_now_ns(),
+        session.get(_SESSION_GENERATION_KEY),
     )
 
 
@@ -506,7 +537,9 @@ def login():
     session["authenticated"] = True
     # max(): a login in the same clock tick as a logout must still outrank the floor.
     login_ns = _session_now_ns()
-    session["issued_at_ns"] = max(login_ns, _revocation_floor_ns() + 1)
+    floor, generation = _revocation_state()
+    session["issued_at_ns"] = max(login_ns, floor + 1)
+    session[_SESSION_GENERATION_KEY] = generation
     session["logged_in_at_ns"] = login_ns
     return redirect(url_for("dashboard"))
 
@@ -5420,10 +5453,11 @@ def sse_events():
     enforce_session = _auth_check_enabled
     issued = session.get("issued_at_ns")
     logged_in_at = session.get("logged_in_at_ns")
+    generation = session.get(_SESSION_GENERATION_KEY)
 
     def session_ended() -> bool:
         return enforce_session and not _session_issue_is_valid(
-            issued, logged_in_at, _session_now_ns()
+            issued, logged_in_at, _session_now_ns(), generation
         )
 
     def generate():

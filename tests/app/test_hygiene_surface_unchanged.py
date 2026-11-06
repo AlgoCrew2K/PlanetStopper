@@ -44,12 +44,14 @@ def _record(name: str) -> dict:
 _LOGOUT_RULE = "/logout"
 _LOGOUT_ENDPOINT = "logout"
 _REVOCATION_MIGRATION = "040_dashboard_session_revocation.sql"
+_GENERATION_MIGRATION = "041_dashboard_session_generation.sql"
 _PREVIOUS_MIGRATION = "039_close_account_totals.sql"
 _REVOCATION_TABLE = "dashboard_session_revocation"
 _AUTHORIZED_DELTAS = (
     "the /logout rule gains POST (a CSRF-checked sign-out from the confirm page)",
     "the logout endpoint leaves the auth-exempt set (the hook alone decides session validity)",
     f"{_REVOCATION_MIGRATION} adds the {_REVOCATION_TABLE} table (one revocation row)",
+    f"{_GENERATION_MIGRATION} adds the logout generation column to that table",
 )
 
 
@@ -121,7 +123,9 @@ class TestSchema:
     def test_the_migration_files_are_the_bases_plus_the_revocation_migration(self, now, ref):
         files = dict(now["migration_file_digests"])
         assert _REVOCATION_MIGRATION in files, f"{_REVOCATION_MIGRATION} is not on disk"
+        assert _GENERATION_MIGRATION in files, f"{_GENERATION_MIGRATION} is not on disk"
         del files[_REVOCATION_MIGRATION]
+        del files[_GENERATION_MIGRATION]
         assert files == ref["migration_file_digests"], _difference(
             "migration files",
             sorted(files.items()),
@@ -134,7 +138,9 @@ class TestSchema:
         order = list(now["migration_order"])
         assert _REVOCATION_MIGRATION in order, "040 is not registered in _MIGRATION_FILES"
         assert order.index(_REVOCATION_MIGRATION) == order.index(_PREVIOUS_MIGRATION) + 1
+        assert order.index(_GENERATION_MIGRATION) == order.index(_REVOCATION_MIGRATION) + 1
         order.remove(_REVOCATION_MIGRATION)
+        order.remove(_GENERATION_MIGRATION)
         assert order == ref["migration_order"]
 
     def test_every_table_and_index_has_the_bases_sql_plus_the_revocation_table(self, now, ref):

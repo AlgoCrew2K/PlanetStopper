@@ -1773,6 +1773,45 @@ def record_session_revocation(floor_ns: int) -> int:
     return int(row[0])
 
 
+def get_session_generation() -> int:
+    """Return the stored logout generation, 0 when no row exists. Raises on failure."""
+    conn = get_ro_connection()
+    try:
+        row = conn.execute(
+            "SELECT generation FROM dashboard_session_revocation WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row else 0
+
+
+def record_session_logout(floor_ns: int, generation: int) -> tuple[int, int]:
+    """Store the revocation floor and the logout generation in one statement.
+
+    Monotonic on both: an earlier value never moves either back. Returns the stored
+    (floor, generation). Raises on failure.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO dashboard_session_revocation "
+            "(id, revoked_before_ns, generation, updated_at) "
+            "VALUES (1, ?, ?, datetime('now')) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "revoked_before_ns = MAX(revoked_before_ns, excluded.revoked_before_ns), "
+            "generation = MAX(generation, excluded.generation), "
+            "updated_at = datetime('now')",
+            (floor_ns, generation),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT revoked_before_ns, generation FROM dashboard_session_revocation WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]), int(row[1])
+
+
 def mark_candidate_alert_viewed() -> int:
     """Advance the candidate-alert viewed-marker to the current max weekly-
     suggestion observation id.
@@ -1918,6 +1957,7 @@ _MIGRATION_FILES = [
     "038_retirement_decisions.sql",
     "039_close_account_totals.sql",
     "040_dashboard_session_revocation.sql",
+    "041_dashboard_session_generation.sql",
 ]
 
 
