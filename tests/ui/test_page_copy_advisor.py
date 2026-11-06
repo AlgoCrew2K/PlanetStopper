@@ -328,16 +328,18 @@ def test_a_model_line_reads_its_unresolved_form_when_no_model_resolves(advisor, 
     assert _attribution(shown, tab) == adv.norm(record["new_unresolved"])
 
 
-def test_the_market_prism_badge_reads_its_resolved_and_unresolved_forms(advisor):
+@pytest.mark.parametrize("resolved", [True, False])
+def test_the_market_prism_badge_reads_its_resolved_and_unresolved_forms(advisor, resolved):
     record = copy_fixture.row("MU1", "C")
-    resolved = advisor.open("full", key=True, models=True)
-    badge = resolved.page.select_one('[data-testid="prism-model-badge"]')
-    assert adv.norm(badge.get_text(" ")) == adv.norm(
+    shown = advisor.open("full", key=True, models=resolved)
+    badge = shown.page.select_one('[data-testid="prism-model-badge"]')
+    assert badge is not None, "the Market Prism block has no model badge"
+    wanted = (
         copy_fixture.fill(record["new_resolved"], model=SYNTHESIS_MODEL)
+        if resolved
+        else record["new_unresolved"]
     )
-    unresolved = advisor.open("full", key=True, models=False)
-    badge = unresolved.page.select_one('[data-testid="prism-model-badge"]')
-    assert adv.norm(badge.get_text(" ")) == adv.norm(record["new_unresolved"])
+    assert adv.norm(badge.get_text(" ")) == adv.norm(wanted)
 
 
 @pytest.mark.parametrize("resolved", [True, False])
