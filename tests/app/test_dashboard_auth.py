@@ -298,9 +298,10 @@ class TestLoginFlow:
         mock_db.load_state.return_value = {}
         mock_db.normalize_name.side_effect = lambda n: (n or "").lower()
         mock_db.get_symphony_strategy.return_value = None
-        # The session check reads the stored revocation instant; a bare MagicMock would answer
-        # a MagicMock where an integer is required.
+        # The session check reads the stored revocation instant and logout generation; a bare
+        # MagicMock would answer a MagicMock where an integer is required.
         mock_db.get_session_revocation_floor_ns.return_value = 0
+        mock_db.get_session_generation.return_value = 0
 
         with patch.object(app_module, "database", mock_db):
             auth_client.post(

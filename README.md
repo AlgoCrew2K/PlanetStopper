@@ -157,7 +157,7 @@ This is the end-to-end walkthrough of what happens each minute during market hou
 
 The dashboard is a Flask web UI on `http://localhost:5000` (overridable via the `PORT` env var). **It is an observability surface, not a live-trade-action surface.** It has no button that places, cancels, or modifies a trade, and it cannot spawn the engine — the scheduler is the only legal engine spawner.
 
-**Dashboard auth gate:** when deployed publicly, the entire Flask surface (dashboard, AI Advisor, all `/api/*` routes) is protected by a single-password Flask signed-session gate. The gate is fail-closed: if `SECRET_KEY` or `DASHBOARD_PASSWORD` / `DASHBOARD_PASSWORD_HASH` are absent, all requests are denied. A login page at `/login` is the only public surface before authentication. See `docs/DEPLOYMENT.md` for setup.
+**Dashboard auth gate:** when deployed publicly, the entire Flask surface (dashboard, AI Advisor, all `/api/*` routes) is protected by a single-password Flask signed-session gate. The gate is fail-closed: if `SECRET_KEY` or `DASHBOARD_PASSWORD` / `DASHBOARD_PASSWORD_HASH` are absent, all requests are denied. Before authentication, the only reachable pages are the login page at `/login` and a `/health` liveness check, which tells a caller from outside the host only whether the daemon is up and when it last completed a cycle. A session ends after a fixed lifetime (12 hours unless `DASHBOARD_SESSION_LIFETIME_HOURS` says otherwise), and signing out ends every session. See `docs/DEPLOYMENT.md` for setup.
 
 The dashboard has two guarded operator-config write paths:
 

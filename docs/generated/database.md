@@ -7,7 +7,7 @@
 
 ## Overview
 
-`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 39 numbered migration SQL files (001-039), and every public accessor function. `_MIGRATION_FILES` wires 36 active entries (004-039); migrations 001-003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
+`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 41 numbered migration SQL files (001-041), and every public accessor function. `_MIGRATION_FILES` wires 38 active entries (004-041); migrations 001-003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
 
 WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads while the engine holds a write lock.
 
@@ -15,7 +15,7 @@ WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads
 
 ## Schema Migrations
 
-Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **039** (`039_close_account_totals.sql`), following **038** (`038_retirement_decisions.sql`), **037** (`037_strategy_incubation.sql`) and **036** (`036_sleeve_rule_fires.sql`); see `docs/generated/sleeves.md` for the sleeves schema and the "Strategy Incubation Ledger" / "Retirement Decisions" sections below for 037/038.
+Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **041** (`041_dashboard_session_generation.sql`), following **040** (`040_dashboard_session_revocation.sql`), **039** (`039_close_account_totals.sql`), **038** (`038_retirement_decisions.sql`), **037** (`037_strategy_incubation.sql`) and **036** (`036_sleeve_rule_fires.sql`); see `docs/generated/sleeves.md` for the sleeves schema and the "Strategy Incubation Ledger" / "Retirement Decisions" sections below for 037/038.
 
 Notable ordering: 021 is listed before 020 — intentional. See `ARCH-002` inline comment; reordering would corrupt live DBs.
 
@@ -32,6 +32,8 @@ Migrations 026 to 039:
 - `035_sleeves.sql` / `036_sleeve_rule_fires.sql` — Managed Sleeves epic (PR #94); see `docs/generated/sleeves.md`.
 - `037_strategy_incubation.sql` — `strategy_incubation` (per-candidate incubation-ledger status row) + `incubation_daily` (per-candidate-per-day forward-return observations, `UNIQUE(candidate_hash, trading_day)`) tables. Additive-only, no existing table modified. See the "Strategy Incubation Ledger" section below and `docs/generated/advisors_incubation.md`.
 - `038_retirement_decisions.sql` — `retirement_decisions` table (mutable operator approve/reject status for Retirement Recommender candidates, keyed by `candidate_id` UNIQUE). Additive-only, no existing table modified. See the "Retirement Decisions" section below, `docs/generated/advisors_retirement_explainer.md`, `docs/generated/advisors_retirement_checklist.md`, and `DE-RETIRE-APPROVAL-001`.
+- `040_dashboard_session_revocation.sql`: `dashboard_session_revocation` single-row table (`id` fixed at 1 by a CHECK, `revoked_before_ns INTEGER NOT NULL DEFAULT 0`, `updated_at` TEXT): the instant before which dashboard sessions are ended, kept so a daemon restart still refuses earlier sessions. The daemon is the only writer and the value only moves forward. Additive, idempotent.
+- `041_dashboard_session_generation.sql`: adds `generation INTEGER NOT NULL DEFAULT 0` to that table, the count of logouts, so sessions are ordered against logouts without the wall clock. Additive.
 - `039_close_account_totals.sql`: `close_account_totals` table: the account totals latched for one close snapshot, primary key `(trading_day, captured_at_et)`, columns `totals_json` (the totals dict as latched), `as_of` (NULLable ET stamp of the Composer read) and `latched_at` (default insert time). Additive-only (`CREATE TABLE IF NOT EXISTS`). Written once per snapshot with `INSERT OR IGNORE` by `save_close_totals_latch`, so the first read taken at or after the capture is the one a daemon restart finds; read by `load_close_totals_latch`; rows beyond the newest `_CLOSE_TOTALS_KEEP_DAYS = 10` sessions are pruned on the next write. The daemon is the only writer. See `docs/generated/refresh_timing.md`.
 
 An earlier migration, `023_autotune_runs_s_count.sql`, added the `s_count` column to `autotune_runs` — but until the advisor-rewire cycle (2026-07-12, Workstream E) no caller ever populated it; see `save_autotune_run` below.
@@ -94,7 +96,7 @@ Returns a fresh `uuid4().hex` — opaque, collision-free epoch identifier stampe
 ### Symphony Strategy
 
 #### `get_symphony_strategy(symphony_name: str) → dict`
-Returns `{"params": {...}, "locked_vars": [...]}` for the named symphony. Auto-inserts `DEFAULT_STRATEGY` / `DEFAULT_LOCKED_VARS` if absent.
+Returns `{"params": {...}, "locked_vars": [...]}` for the named symphony. Auto-inserts `DEFAULT_STRATEGY` / `DEFAULT_LOCKED_VARS` if absent, unless the keyword-only `create_if_missing=False` is passed, which returns the defaults without inserting a row; `app.get_settings` and `app.get_symphony_settings` pass it so a read that names any symphony adds no row.
 
 #### `save_symphony_strategy(symphony_name: str, params: dict, locked_vars: list) → None`
 Upserts a symphony's strategy parameters and locked-var list.
@@ -156,8 +158,8 @@ Inserts one `autotune_runs` row and returns the new `cursor.lastrowid`. Sprint 3
 
 **Dead/unwired columns documented, BL-10 (`DE-AUDIT-BL5-12-001`, audit #118 Finding T5, 2026-08-05):** a 3-tier distinction, correcting the feature plan's own framing (which had lumped the non-`ce_metric`-tier columns together as "actively-used on the port_state table" -- verified false by grepping the whole tree):
 1. `ce_metric`/`cvar_feasible`/`lambda_budget` -- truly never wired: no writer or reader anywhere beyond the bare schema column. Schema-comment added at the `CREATE TABLE ... autotune_runs` block.
-2. `account_id`/`sortino_sentinel_pct` -- have an ORPHANED writer: `database.record_autotune_run` inserts both, but that function has ZERO callers repo-wide. The production `save_autotune_run` path (this function) never touches them.
-3. `fold_role` (migration `019_fold_role_columns.sql`) -- has a real intended semantic (`train`/`validation`/`frozen_eval`/`NULL`) and IS actively READ by `advisor_ro_query`'s defensive wall guard -- but has NO WRITER anywhere, not even the orphaned `record_autotune_run`.
+2. `account_id`/`sortino_sentinel_pct` -- never populated by the current `save_autotune_run` path (this function). The older writer `record_autotune_run`, which inserted both, no longer exists; an older row may hold a value.
+3. `fold_role` (migration `019_fold_role_columns.sql`) -- has a real intended semantic (`train`/`validation`/`frozen_eval`/`NULL`) and IS actively READ by `advisor_ro_query`'s defensive wall guard -- but has NO WRITER anywhere.
 
 Wording deliberately avoids "always NULL" anywhere near these columns -- a legacy row could theoretically be non-NULL from a historical accessor no longer in use; the guarantee is "never populated by the CURRENT `save_autotune_run` path," not a blanket claim about every row that has ever existed.
 
@@ -192,9 +194,6 @@ Inserts one `advisor_observations` row. Returns the new row id. `is_advisory_onl
 
 #### `get_advisor_observations_for_symphony(symphony_id: str) → list[dict]`
 Returns all `advisor_observations` rows whose `symphony_id` column matches, oldest-first. Uses `get_ro_connection()`. **Takes only `symphony_id`** — a caller passing `advisor_role=`/`limit=` kwargs raises `TypeError` (this was the AC-A1 dedup bug in `advisors/strategy_builder_scheduler.py` — see `docs/generated/advisors_strategy_builder_scheduler.md`).
-
-#### `get_advisor_observations_for_subject(subject_type: str, subject_id: str) → list[dict]`
-Returns all rows for a given subject, oldest-first.
 
 #### `get_advisor_observations_for_role(advisor_role: str, limit: int = 50) → list[dict]`
 Returns rows for a given advisor role, newest-first.
@@ -334,8 +333,20 @@ Returns a 16-character hex SHA-256 digest of the sorted symphony-id list. Order-
 #### `record_llm_suggestion(*, session_id, created_at, symphony_name, operator_identity, prompt_inputs, model_id, generation_settings, raw_response, validation_results, param_name, operator_decision, decision_at=None, operator_note=None, before_value=None, after_value=None, oos_revalidation=None) → int`
 Inserts one immutable `llm_suggestions` audit row. Returns the new row id.
 
-#### `get_suggestions_for_symphony(symphony_name: str) → list[dict]`
-Returns all `llm_suggestions` rows for the symphony, oldest-first.
+`llm_suggestions` has a writer only; the read accessors `get_suggestions_for_symphony` and `get_suggestions_for_session` had no caller and no longer exist.
+
+---
+
+### Dashboard Session Revocation
+
+#### `get_session_revocation_floor_ns() → int` / `get_session_generation() → int`
+Read-only (`get_ro_connection()`). Return the stored floor in nanoseconds and the stored logout generation, `0` when no row exists. They raise on any other failure so the caller can tell "never revoked" from "unreadable".
+
+#### `record_session_logout(floor_ns: int, generation: int) → tuple[int, int]`
+One upsert statement stores both values; each is monotonic (`MAX` of stored and new). Returns the stored `(floor, generation)`. Raises on failure. This is what `app._revoke_sessions_issued_before` calls.
+
+#### `record_session_revocation(floor_ns: int) → int`
+Moves only the floor forward and returns the stored value. It has no production caller (the logout path uses `record_session_logout`); it remains tested.
 
 ---
 
@@ -382,6 +393,12 @@ Pure function, no DB access. Scales the 365-day window's `exit_count` up by `365
 
 #### `record_shadow_observation(*, symphony_id, account_id, cycle_id, ts_utc, ts_et, trading_day, current_return, shadow_return, is_post_trigger, trigger_id, position_epoch=None) → None`
 Writes one `shadow_history` telemetry row. Swallows exceptions.
+
+#### `select_latest_shadow_row(conn, symphony_id: str, trading_day: str, et_cutoff: str | None = None) → sqlite3.Row | None`
+The one `shadow_history` newest-row SELECT (`ORDER BY ts_utc DESC LIMIT 1`, with the optional `substr(ts_et, 12, 8) <= et_cutoff` clause), run on a connection the caller supplies; the caller sets `row_factory` and handles failure. Shared by `load_latest_shadow_row` and `analytics._load_latest_shadow_row_for_analytics`.
+
+#### `_row_with_json_columns(row, columns, json_columns, tolerate_unreadable=False) → dict`
+Private. Pairs a row with its column names and decodes the named JSON columns; a non-JSON value raises the decoder's exception unless `tolerate_unreadable`, which returns `{}` for the column and sets `raw_response_unreadable` True on the row. Backs `_parse_advisor_observation_row` (tolerant, `raw_response`) and `_parse_frontrunner_proposal_row` (strict, `candidate_tree`, `metrics_json`).
 
 #### `load_latest_shadow_row(symphony_id: str, trading_day: str, et_cutoff: str | None = None) → dict | None`
 

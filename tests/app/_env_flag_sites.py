@@ -13,6 +13,7 @@ refuses every call that is not a recorded fake.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -48,6 +49,19 @@ _PAGE_PATHS = {
     "page_performance": "/performance",
     "page_settings": "/settings",
 }
+# The route stamps its audit post with the wall-clock second; two drives compared with each other
+# would differ whenever they straddle a second boundary, so only this stamp is masked.
+_AUDIT_STAMP = re.compile(r"at \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ET")
+_AUDIT_STAMP_MASK = "at <stamp> ET"
+
+
+def _mask_audit_stamp(body):
+    """Mask the wall-clock stamp inside a recorded post body's ``content`` string."""
+    if isinstance(body, dict) and isinstance(body.get("content"), str):
+        return {**body, "content": _AUDIT_STAMP.sub(_AUDIT_STAMP_MASK, body["content"])}
+    return body
+
+
 _WORLDS = {"api_state_open": "open_two_accounts", "api_state_frozen": "closed_frozen_two_accounts"}
 
 
@@ -104,7 +118,7 @@ def sell_account_drive(monkeypatch, client, mapping: dict) -> dict:
             pass
 
     def _fake_post(url, **kwargs):
-        posts.append({"url": url, "json": kwargs.get("json")})
+        posts.append({"url": url, "json": _mask_audit_stamp(kwargs.get("json"))})
         reply = MagicMock()
         reply.status_code = 200
         return reply

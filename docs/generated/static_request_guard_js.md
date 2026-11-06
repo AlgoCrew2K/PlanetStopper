@@ -20,7 +20,7 @@
 | `postAction(url, init)` | sends the caller's request exactly once. A 403 refreshes the token and is reported as refused; nothing in this module sends a POST a second time, so only the operator's next click can |
 | `notSentText(res, clickAgain)` | the sentence a control shows for a refused POST, telling the operator the action was not sent and needs a new click |
 
-The POST controls in the static scripts (Emergency Liquidate, Cash Now, settings saves, flush, approvals, the advisor, retirement and frontrunner actions) call `postAction`; `tests/ui/test_post_call_sites_census.py` is the census that pins this (not run for this document). This is the safety rule of the refresh-timing program: a liquidation or a settings write is never re-sent automatically after a token refresh.
+The POST controls in the static scripts (Emergency Liquidate, the sign-out confirm in `static/logout_confirm.js`, settings saves, flush, approvals, the advisor, retirement and frontrunner actions) call `postAction`; `tests/ui/test_post_call_sites_census.py` is the census that pins this (not run for this document). This is the safety rule of the refresh-timing program: a liquidation or a settings write is never re-sent automatically after a token refresh.
 
 ## Consumed By
 `postAction`: `static/chrome.js`, `static/index.js`, `static/ai_advisor*.js`, `static/settings.js`, `static/settings-modal.js`. `getJson` and the newest-wins counters: also `static/history.js` and `static/performance.js`, which have no POST control.

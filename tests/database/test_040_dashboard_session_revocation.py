@@ -105,7 +105,8 @@ class TestTheTable:
             }
         finally:
             conn.close()
-        assert set(columns) == {"id", "revoked_before_ns", "updated_at"}
+        # Migration 041 adds a column to this table, so the 040 columns are a subset.
+        assert set(columns) >= {"id", "revoked_before_ns", "updated_at"}
         assert columns["id"][2].upper() == "INTEGER" and columns["id"][5] == 1
         assert columns["revoked_before_ns"][2].upper() == "INTEGER"
         assert columns["revoked_before_ns"][3] == 1, "revoked_before_ns must be NOT NULL"

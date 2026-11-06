@@ -1647,7 +1647,7 @@ _SESSION_WALK_MUST_OPEN = {
     "_auth_before_request": [
         "_session_is_valid",
         "_session_issue_is_valid",
-        "_revocation_floor_ns",
+        "_revocation_state",
     ],
     "logout": ["_revoke_sessions_issued_before"],
 }

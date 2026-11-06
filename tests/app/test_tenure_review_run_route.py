@@ -624,9 +624,8 @@ class TestAnUnauthenticatedRequestIsRefused:
 
     def test_a_signed_in_operator_is_not_refused(self, refusal_world, threads, client, gate):
         calls, _ = refusal_world
-        with client.session_transaction() as session:
-            session["authenticated"] = True
-            session["issued_at_ns"] = time.time_ns()
+        signed_in = client.post("/login", data={"password": _PASSWORD})
+        assert signed_in.status_code == 302, "premise: the real login signs the operator in"
 
         response = _post(client, headers=XHR)
 

@@ -1,5 +1,7 @@
 # Planet Stopper — Security Review (read-only audit)
 
+> Dated snapshot (2026-05-31). `composer_backtest.py`, cited below, no longer exists; its two rows are annotated and the body is otherwise unchanged. The current dashboard auth and session behavior is in `docs/generated/app.md` (Dashboard Auth Gate).
+
 **Date:** 2026-05-31
 **Auditor:** security-auditor (read-only; no code changed, no daemon run, no trade placed)
 **Scope:** current `main` (HEAD `04db2e9`, "merge: M4 — AI Advisor logic-change proposals"). AI Advisor M1–M4 merged.
@@ -38,7 +40,7 @@ Credential source: `alpha_bot_execution.py:57-58` (`COMPOSER_KEY_ID`, `COMPOSER_
 | Advisor codepath | Composer endpoint hit | Method | Scope | Evidence |
 |---|---|---|---|---|
 | M2 backtest client | `{COMPOSER_BASE_URL}/backtest` | POST | **READ-ONLY** (stateless simulation) | `advisors/composer_backtest_client.py:271,281,298` |
-| M2 backtest (alt module) | `{COMPOSER_BASE_URL}/backtest` | POST | **READ-ONLY** | `composer_backtest.py:298,310,324` |
+| M2 backtest (alt module) | `{COMPOSER_BASE_URL}/backtest` | POST | **READ-ONLY** | `composer_backtest.py` (since deleted; `advisors/composer_backtest_client.py` is the only backtest client) |
 | M3 asset-swap engine | via `run_backtest` only | POST | **READ-ONLY** | `advisors/asset_swap_engine.py:50,551,556,727` |
 | M4 logic-change engine | via `run_backtest` only | POST | **READ-ONLY** | `advisors/logic_change_engine.py:66,894,898,1095` |
 | `ai_advisor.py` (config advisor) | **none** — never calls Composer | — | n/a | reads only state DB + symphony_logic |
@@ -48,7 +50,7 @@ Credential source: `alpha_bot_execution.py:57-58` (`COMPOSER_KEY_ID`, `COMPOSER_
 
 - **Data through the Composer key:** the full symphony decision-tree (`raw_value`), capital (default $10k), fee/slippage/broker flags, `symphony_id`. No account credentials are in the request body; auth is header-only.
 - **Rate-limit + timeout:** bounded exponential backoff `1→2→4→8s` clamped to `max_retries` (default 4), 429 honors `Retry-After`, per-request `timeout=_BACKTEST_REQUEST_TIMEOUT` (`composer_backtest_client.py:23-26,293,299,315-318`). No unbounded loops.
-- **Exfiltration/logging:** `get_composer_headers()` return value (carrying the Bearer token) is NEVER logged — grep for header/authorization logging in production source returned empty. Debug logs emit URL + `symphony_id` + capital only (`composer_backtest_client.py:283-290`, `composer_backtest.py:312-319`). **No leak.**
+- **Exfiltration/logging:** `get_composer_headers()` return value (carrying the Bearer token) is NEVER logged — grep for header/authorization logging in production source returned empty. Debug logs emit URL + `symphony_id` + capital only (`composer_backtest_client.py`; the second client module this review also read, `composer_backtest.py`, has since been deleted). **No leak.**
 
 ### ANTHROPIC key — `ai_advisor.py` (config-knob advisor on main)
 
