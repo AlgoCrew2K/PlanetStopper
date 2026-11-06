@@ -296,6 +296,17 @@ var DEGRADED_REASON_TEXT = {
 var DEGRADED_REASON_TEXT_CLOSED = {
   engine_terminated: 'The last engine run did not finish and was ended.'
 };
+// What each engine state means, for assistive technology (the title keeps the state's detail).
+var ENGINE_STATE_DESCRIPTION = {
+  Live: 'Live: the market is open and the engine is checking stops every minute.',
+  Closed: 'Closed: the market is closed.',
+  'Rebalance pause': 'Rebalance pause: the scheduled pause before the close; stops resume at the close.',
+  Opening: "Opening: the session's first cycle is running.",
+  Stale: 'Stale: no recent engine cycle, so positions may not be guarded.',
+  'Not updating': 'Not updating: the page has not received data for a while.',
+  Degraded: 'Degraded: the server reports a problem, named in the tooltip.',
+  'Connection Lost': 'Connection Lost: the last refresh failed, and the values shown are from the last data received.'
+};
 var DEGRADED_UNKNOWN_TEXT = 'The daemon reports a degraded state.';
 var CONNECTION_LOST_TITLE = 'The last refresh failed. The values shown are from the last data received.';
 var BLACKOUT_TITLE = 'Scheduled pause before the close; stops resume at the close.';
@@ -390,7 +401,10 @@ function renderEngineLabel() {
   label.style.color = colour;
   label.textContent = state.text;
   document.documentElement.classList.toggle('engine-label-long', state.text === 'Rebalance pause');
-  if (wrap) wrap.title = state.title;
+  if (wrap) {
+    wrap.title = state.title;
+    wrap.setAttribute('aria-description', ENGINE_STATE_DESCRIPTION[state.text]);
+  }
   if (countdown) countdown.style.display = state.countdown ? '' : 'none';
 }
 window.renderEngineLabel = renderEngineLabel;
@@ -445,8 +459,8 @@ window.updateEngineStatus = updateEngineStatus;
 // server rendered. The colours are the token references the server render uses. The legend word is
 // written only on a page that has one.
 var MODE_INDICATORS = {
-  'LIVE': { live: 'true', background: 'var(--studio-neg)', color: 'var(--studio-white)', legend: 'live' },
-  'DRY RUN': { live: 'false', background: 'var(--studio-chip-bg)', color: 'var(--studio-ink-dim)', legend: 'dry-run' }
+  'LIVE': { live: 'true', background: 'var(--studio-neg)', color: 'var(--studio-white)', legend: 'live', title: 'Live: global live execution is on; a symphony trades live only when its own live switch is on too.' },
+  'DRY RUN': { live: 'false', background: 'var(--studio-chip-bg)', color: 'var(--studio-ink-dim)', legend: 'dry-run', title: 'Dry run: global live execution is off, so the bot sends no real orders.' }
 };
 
 function updateModeIndicators(meta) {
@@ -457,6 +471,7 @@ function updateModeIndicators(meta) {
   if (pill) {
     pill.textContent = mode;
     pill.setAttribute('data-live', look.live);
+    pill.title = look.title;
     pill.style.background = look.background;
     pill.style.color = look.color;
   }

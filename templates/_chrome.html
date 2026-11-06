@@ -20,7 +20,7 @@
   <div class="shell-nav-status">
     <!-- Single engine-state indicator — written only by chrome.js renderEngineLabel() -->
     {% set _paused = meta is defined and meta.system_online and engine_phase is defined and engine_phase in ('blackout', 'opening') %}
-    <span id="engine-status" data-testid="engine-status" class="shell-status"{% if _paused %} title="{% if engine_phase == 'blackout' %}Scheduled pause before the close; stops resume at the close.{% else %}Scheduled session start; the first cycle is running.{% endif %}"{% endif %}>
+    <span id="engine-status" data-testid="engine-status" class="shell-status" aria-description="{% if _paused %}{% if engine_phase == 'blackout' %}Rebalance pause: the scheduled pause before the close; stops resume at the close.{% else %}Opening: the session&#x27;s first cycle is running.{% endif %}{% elif meta is defined and meta.system_online %}Live: the market is open and the engine is checking stops every minute.{% else %}Closed: the market is closed.{% endif %}"{% if _paused %} title="{% if engine_phase == 'blackout' %}Scheduled pause before the close; stops resume at the close.{% else %}Scheduled session start; the first cycle is running.{% endif %}"{% endif %}>
       <span id="engine-status-dot" class="shell-status-dot" style="background:{% if meta is defined and meta.system_online and not _paused %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};"></span>
       <span id="engine-status-label" style="color:{% if meta is defined and meta.system_online and not _paused %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};">{% if _paused %}{% if engine_phase == 'blackout' %}Rebalance pause{% else %}Opening{% endif %}{% elif meta is defined and meta.system_online %}Live{% else %}Closed{% endif %}</span>
     </span>
@@ -44,6 +44,7 @@
   <!-- Right-rail: workspace switcher chip (B-08: real dropdown on click) -->
   <div id="ws-wrap" class="studio-nav-wide">
     <button data-testid="workspace-switcher" type="button" class="shell-account"
+            title="Account: the Composer account the dashboard shows figures for; choosing another reloads the dashboard for it. The short code is the start of the account&#x27;s id."
             onclick="toggleAccountDropdown(event)">
       <span id="ws-label">{% if meta is defined %}{{ meta.account.label }}{% else %}Account{% endif %}</span>
       <span id="ws-uuid" class="shell-account-id">{% if meta is defined %}{{ meta.account.uuid_short }}{% else %}--------{% endif %}</span>
@@ -54,17 +55,18 @@
   </div>
 
   <!-- Right-rail: mode pill -->
-  <div data-testid="mode-pill" data-live="{{ 'true' if meta is defined and meta.mode == 'LIVE' else 'false' }}" style="padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:0.06em;white-space:nowrap;flex-shrink:0;background:{% if meta is defined and meta.mode == 'LIVE' %}var(--studio-neg){% else %}var(--studio-chip-bg){% endif %};color:{% if meta is defined and meta.mode == 'LIVE' %}var(--studio-white){% else %}var(--studio-ink-dim){% endif %};">
+  <div data-testid="mode-pill" title="{% if meta is defined and meta.mode == 'LIVE' %}Live: global live execution is on; a symphony trades live only when its own live switch is on too.{% else %}Dry run: global live execution is off, so the bot sends no real orders.{% endif %}" data-live="{{ 'true' if meta is defined and meta.mode == 'LIVE' else 'false' }}" style="padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:0.06em;white-space:nowrap;flex-shrink:0;background:{% if meta is defined and meta.mode == 'LIVE' %}var(--studio-neg){% else %}var(--studio-chip-bg){% endif %};color:{% if meta is defined and meta.mode == 'LIVE' %}var(--studio-white){% else %}var(--studio-ink-dim){% endif %};">
     {% if meta is defined %}{{ meta.mode }}{% else %}DRY RUN{% endif %}
   </div>
 
   <!-- Right-rail: force run now button (FP-T3-02, FP-T5-07) -->
-  <button data-testid="force-run-btn" type="button" style="padding:5px 14px;border-radius:6px;background:var(--studio-accent);color: var(--studio-paper);font-size:12px;font-weight:600;cursor:pointer;border:none;white-space:nowrap;flex-shrink:0;">
+  <button data-testid="force-run-btn" type="button" title="Force run now: asks the server for an engine run; the server declines and answers that runs come only from the scheduler, so pressing it starts nothing." style="padding:5px 14px;border-radius:6px;background:var(--studio-accent);color: var(--studio-paper);font-size:12px;font-weight:600;cursor:pointer;border:none;white-space:nowrap;flex-shrink:0;">
     Force run now
   </button>
 
   <!-- Right-rail: emergency liquidate (always one click away on every page) -->
   <button id="emergency-liquidate" type="button" onclick="openPanicModal()"
+          title="Emergency Liquidate: after you choose an account and type LIQUIDATE, asks Composer to sell every symphony in that whole account to cash. While global live execution is off it only logs and sends the alert, and sells nothing."
           style="padding:5px 14px;border-radius:6px;border:1px solid var(--studio-neg-border);background:transparent;color:var(--studio-neg);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0;letter-spacing:0.03em;">
     Emergency Liquidate
   </button>

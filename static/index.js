@@ -1035,9 +1035,11 @@
     // Verdict wording. The server renders the same text at first paint
     // (analytics.js_to_fixed mirrors toFixed), so a poll never changes it.
     function verdictText(ga) {
+        var magnitude = Math.abs(ga).toFixed(1);
+        if (magnitude === '0.0') return 'Exit matched holding';
         return ga > 0
-            ? 'Good call · saved +' + ga.toFixed(1) + '%α'
-            : 'Early exit · gave up ' + Math.abs(ga).toFixed(1) + '%α';
+            ? 'Exit beat holding by ' + magnitude + '%'
+            : 'Exit trailed holding by ' + magnitude + '%';
     }
 
     // The figure is the exit return minus the card's current return: it moves with the card
@@ -2009,7 +2011,7 @@
                 return { text: 'VWAP bleed', cls: 'bleed' };
             }
             if (tr.indexOf('VWAP') !== -1 || tr.indexOf('vwap') !== -1) {
-                return { text: 'VWAP', cls: 'vwap' };
+                return { text: 'VWAP breakdown', cls: 'vwap' };
             }
             return { text: 'Trailing stop', cls: 'stop' };
         }
@@ -2375,7 +2377,7 @@
             _sessionDay ? 'Return' : 'Live return');
         // the legend's text follows its swatch, so it is the span's last child node
         var legend = document.querySelector('[data-field="if-held-legend"]');
-        var legendText = _sessionDay ? 'If held' : 'Live (if held)';
+        var legendText = _sessionDay ? 'If held' : 'If held · live';
         var legendNode = legend && legend.childNodes[legend.childNodes.length - 1];
         if (legendNode && legendNode.data !== legendText) legendNode.data = legendText;
         setTextIfChanged(document.querySelector('[data-field="hwm-label"]'),
