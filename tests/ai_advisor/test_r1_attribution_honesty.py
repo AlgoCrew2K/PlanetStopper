@@ -403,13 +403,34 @@ def _assert_family_badges(badges, keys, expected_text, other_text, family):
         )
 
 
+# The unresolved wording of each badge is a Copy table C row (MU1 to MU5), read from the committed
+# fixture; the page-wide rule is that the placeholder words never print.
+_UNRESOLVED_ROW = {
+    "asset_swaps": "MU2",
+    "logic_changes": "MU2",
+    "chat": "MU3",
+    "strategy_builder": "MU4",
+    "run_note": "MU5",
+    "prism": "MU1",
+}
+
+
 def _assert_family_unavailable(badges, keys, family):
+    from tests.ui import _page_copy as copy_fixture
+
+    names = _expected_names(_CAPTURED_PAGE).values()
     for key in keys:
-        text = badges[key]
-        assert _UNAVAILABLE in text, f"{key} badge of the unresolved {family} family reads {text!r}"
-        assert "Claude" not in text, (
-            f"{key} badge shows a model name for an unresolved family: {text!r}"
+        text = " ".join(html_lib.unescape(badges[key]).split())
+        assert _UNAVAILABLE not in text, f"{key} badge still prints the placeholder: {text!r}"
+        unresolved = copy_fixture.row(_UNRESOLVED_ROW[key], "C")["new_unresolved"]
+        unresolved = unresolved.split(" (the rest")[0]
+        assert " ".join(unresolved.split()) in text, (
+            f"{key} badge of the unresolved {family} family reads {text!r}, not {unresolved!r}"
         )
+        for name in names:
+            assert not _names(text, name), (
+                f"{key} badge shows a model name for an unresolved family: {text!r}"
+            )
 
 
 def _assert_both_families(badges, names):
@@ -508,10 +529,40 @@ def test_the_app_holds_no_model_id_to_display_name_map():
         assert name not in source, f"app.py still mentions {name}"
 
 
-def test_badges_of_both_families_read_model_unavailable_when_nothing_is_resolved(
+def test_badges_of_both_families_read_their_unresolved_wording_when_nothing_is_resolved(
     client, monkeypatch, unresolved_models
 ):
     _assert_both_unavailable(_get_badges(client, monkeypatch))
+
+
+def test_the_unresolved_page_never_prints_the_words_model_unavailable_anywhere(
+    client, monkeypatch, unresolved_models
+):
+    html = _get_html(client, monkeypatch)
+    assert _UNAVAILABLE not in html.lower(), "the placeholder words reach the page"
+
+
+@pytest.mark.parametrize(
+    ("row", "keys"),
+    [
+        ("MU1", ("prism",)),
+        ("MU2", ("asset_swaps", "logic_changes")),
+        ("MU3", ("chat",)),
+        ("MU4", ("strategy_builder",)),
+    ],
+)
+def test_resolved_badges_read_their_resolved_wording_with_the_name(client, monkeypatch, row, keys):
+    from tests.ui import _page_copy as copy_fixture
+
+    names = _expected_names(_CAPTURED_PAGE)
+    _seed_registry_from(AnthropicHttpFake.with_captured_page())
+    badges = _get_badges(client, monkeypatch)
+    family = "synthesis" if row in ("MU1", "MU3") else "suggestion"
+    wanted = " ".join(
+        copy_fixture.fill(copy_fixture.row(row, "C")["new_resolved"], model=names[family]).split()
+    )
+    for key in keys:
+        assert wanted in " ".join(html_lib.unescape(badges[key]).split()), (key, badges[key])
 
 
 @pytest.mark.parametrize(
@@ -521,7 +572,7 @@ def test_badges_of_both_families_read_model_unavailable_when_nothing_is_resolved
         ("synthesis", _SYNTHESIS_BADGES, _SUGGESTION_BADGES),
     ],
 )
-def test_only_the_unresolved_familys_badges_read_model_unavailable(
+def test_only_the_unresolved_familys_badges_read_their_unresolved_wording(
     client, monkeypatch, missing_family, unavailable_keys, resolved_keys
 ):
     resolved_family = "synthesis" if missing_family == "suggestion" else "suggestion"

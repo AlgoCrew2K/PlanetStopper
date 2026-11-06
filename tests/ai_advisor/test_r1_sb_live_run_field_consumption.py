@@ -282,7 +282,7 @@ def _route_body(client, monkeypatch, fake, *, atlas=None) -> dict:
     return resp.get_json()
 
 
-def test_unresolved_model_run_renders_model_unavailable_not_a_blank_model(
+def test_unresolved_model_run_says_the_model_is_not_known_and_never_renders_a_blank_model(
     client, monkeypatch, tmp_path, unresolved_models
 ):
     body = _route_body(client, monkeypatch, fake_with_failing_listing(), atlas=[atlas_candidate()])
@@ -290,11 +290,17 @@ def test_unresolved_model_run_renders_model_unavailable_not_a_blank_model(
     html = _render_run_results(tmp_path, body)
 
     provenance = _block(html, "sb-live-generation-provenance")
-    assert "model unavailable" in provenance
+    assert "model unavailable" not in provenance.lower(), "the placeholder words print"
+    assert "not known" in provenance.lower(), "the line must say the model is not known"
     assert not re.search(r"Model:\s*(?:·|<|$)", provenance), (
         f"the model line must not render an empty model: {provenance!r}"
     )
-    assert "model_unavailable" in _block(html, "sb-live-mode-notice")
+    notice = _block(html, "sb-live-mode-notice")
+    assert "model_unavailable" in notice, "the reason code stays"
+    assert "model unavailable" not in notice.lower(), (
+        f"the degraded notice prints the words: {notice!r}"
+    )
+    assert "model unavailable" not in html.lower(), "the placeholder words reach the run results"
 
 
 def test_degraded_fable_run_notice_is_rendered_without_the_word_opus(client, monkeypatch, tmp_path):

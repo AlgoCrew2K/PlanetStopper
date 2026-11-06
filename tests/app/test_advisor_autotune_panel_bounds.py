@@ -288,13 +288,20 @@ class TestCardContent:
         ]
         older_rows = _cards(loaded["older"]["html"])
         assert len(older_rows) == 1, "the streak symphony's older run is not listed"
+        # The Outcome cells (pill and frozen-eval text) are the same in every card of the list, so
+        # the list states them once in the shared line; an older row keeps every cell of its own.
+        shared = pb.parse_html(f"<div>{loaded['list']}</div>").find_all("autotune-shared-line")
+        assert len(shared) == 1, "premise: every card has the same Outcome, so one line states it"
+        line = " ".join(shared[0].text().split())
+        assert "Fallback" in line and "Frozen-eval" in line
+        older_classes = {c for n in older_rows[0].walk() for c in n.classes()}
+        assert "decision-pill" in older_classes
+        assert "Fallback" in older_rows[0].text() and "Frozen-eval" in older_rows[0].text()
         for card in (newest_card, older_rows[0]):
-            classes = {c for n in card.walk() for c in n.classes()}
-            assert "decision-pill" in classes
-            assert "Fallback" in card.text()
             assert "Best objective score" in card.text()
-            assert "Frozen-eval" in card.text()
             assert "2 runs without adopting a tuned config" in card.text()
+        for word in ("Fallback", "Frozen-eval"):
+            assert word not in newest_card.text(), f"{word!r} is in the line and in a card"
         other = _cards(loaded["list"])[1].text()
         assert "runs without adopting" not in other
 

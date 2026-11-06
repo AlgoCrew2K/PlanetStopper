@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 
@@ -98,7 +99,7 @@ def _route_json(monkeypatch, *replies, page=support.CAPTURED_MODELS_PAGE) -> dic
     return support.evaluate_via_route()
 
 
-def test_unresolved_family_model_line_reads_model_unavailable(monkeypatch, unresolved_models):
+def test_unresolved_family_model_line_says_the_model_is_not_known(monkeypatch, unresolved_models):
     fake = support.new_fake()
     support.install_route_world(monkeypatch, fake)
     support.queue_failing_listings(fake)
@@ -109,9 +110,11 @@ def test_unresolved_family_model_line_reads_model_unavailable(monkeypatch, unres
 
     line = _provenance_line(_render(data))
 
-    assert "model unavailable" in line, (
-        f"an empty generation_model must read as unavailable: {line!r}"
+    assert "model unavailable" not in line.lower(), f"the placeholder words print: {line!r}"
+    assert "not known" in line.lower(), (
+        f"an empty generation_model must say the model is not known: {line!r}"
     )
+    assert not re.search(r"Model:\s*(?:·|<|$)", line), f"an empty model is rendered: {line!r}"
 
 
 def test_model_line_names_the_reply_model_when_a_reply_arrived(monkeypatch):
@@ -131,7 +134,8 @@ def test_model_line_is_rendered_on_an_error_response_too(monkeypatch, unresolved
 
     line = _provenance_line(_render(data))
 
-    assert "model unavailable" in line
+    assert "model unavailable" not in line.lower()
+    assert "not known" in line.lower()
 
 
 def test_security_model_text_is_escaped_in_the_model_line(monkeypatch):

@@ -161,3 +161,121 @@ def test_a_fragment_change_to_a_hidden_tab_brings_it_into_view(name):
     assert r["view"]["active"], f"{name} is not the selected tab"
     assert r["view"]["whole"], f"{name} is selected but off screen: {r['view']}"
     assert r["jumps"] == []
+
+
+# ---------------------------------------------------------------------------
+# The cue at each edge of the strip (the plan's AC-7): a cue shows only on an edge that has a tab
+# out of view. The scenario gives the strip its geometry, as above; a cue is shown when it has no
+# ``hidden`` attribute and no inline ``display: none`` (the harness's own notion of visible).
+# ---------------------------------------------------------------------------
+
+CUE_SCENARIO = r"""
+const cueOf = function (side) { return H.$('[data-testid="cap-nav-cue-' + side + '"]'); };
+const shown = function (side) { const c = cueOf(side); return !!c && H.visible(c); };
+const cues = function () {
+  if (!cueOf('start') || !cueOf('end')) throw new Error('the page has no cap-nav-cue-start / cap-nav-cue-end element');
+  return { start: shown('start'), end: shown('end') };
+};
+const scrolled = async function (left) {
+  row.scrollLeft = left;
+  row.dispatchEvent({ type: 'scroll', bubbles: false });
+  await H.settle();
+};
+const END = row.scrollWidth - row.clientWidth;
+"""
+
+
+def _cues(scenario: str):
+    return _run(CUE_SCENARIO + scenario)
+
+
+def test_the_cue_elements_exist_and_are_not_exposed_to_assistive_technology():
+    r = _run(
+        CUE_SCENARIO
+        + """
+        await H.boot();
+        return ['start', 'end'].map(function (s) {
+          const c = cueOf(s);
+          return { side: s, there: !!c, ariaHidden: c ? c.getAttribute('aria-hidden') : null,
+                   inTablist: c ? row.contains(c) && c.closest('[role="tablist"]') !== null : null };
+        });
+        """
+    )
+    for item in r:
+        assert item["there"], f"no cap-nav-cue-{item['side']} element"
+        assert item["ariaHidden"] == "true", f"the {item['side']} cue is read out"
+
+
+def test_a_row_that_overflows_shows_the_end_cue_and_no_start_cue_before_it_is_scrolled():
+    r = _cues("await H.boot(); return cues();")
+    assert r == {"start": False, "end": True}, r
+
+
+def test_scrolled_to_the_end_the_start_cue_shows_and_the_end_cue_goes_and_back_again():
+    r = _cues(
+        """
+        await H.boot();
+        await scrolled(END);
+        const atEnd = cues();
+        await scrolled(END / 2);
+        const middle = cues();
+        await scrolled(0);
+        return { atEnd, middle, atStart: cues() };
+        """
+    )
+    assert r["atEnd"] == {"start": True, "end": False}, r
+    assert r["middle"] == {"start": True, "end": True}, r
+    assert r["atStart"] == {"start": False, "end": True}, r
+
+
+def test_a_row_with_every_tab_in_view_shows_no_cue():
+    r = _cues(
+        """
+        row.scrollWidth = row.clientWidth;
+        await H.boot();
+        return cues();
+        """
+    )
+    assert r == {"start": False, "end": False}, r
+
+
+def test_a_resize_that_brings_every_tab_into_view_removes_the_end_cue_and_a_narrower_one_restores_it():
+    r = _cues(
+        """
+        await H.boot();
+        const before = cues();
+        row.clientWidth = row.scrollWidth;
+        await H.fireWindow('resize');
+        const wide = cues();
+        row.clientWidth = 200;
+        await H.fireWindow('resize');
+        return { before, wide, narrow: cues() };
+        """
+    )
+    assert r["before"] == {"start": False, "end": True}, r
+    assert r["wide"] == {"start": False, "end": False}, r
+    assert r["narrow"] == {"start": False, "end": True}, r
+
+
+def test_choosing_the_last_tab_scrolls_the_row_to_its_end_and_the_cues_follow_the_scroll():
+    r = _cues(
+        f"""
+        await H.boot();
+        await H.click('[role="tab"][data-tab="{TAB_NAMES[-1]}"]');
+        row.dispatchEvent({{ type: 'scroll', bubbles: false }});
+        await H.settle();
+        return cues();
+        """
+    )
+    assert r == {"start": True, "end": False}, r
+
+
+def test_a_fraction_of_a_pixel_short_of_the_end_still_counts_as_the_end():
+    r = _cues(
+        """
+        await H.boot();
+        await scrolled(END - 0.4);
+        return cues();
+        """
+    )
+    assert r["end"] is False, "a rounding gap under one pixel kept a cue on a finished edge"

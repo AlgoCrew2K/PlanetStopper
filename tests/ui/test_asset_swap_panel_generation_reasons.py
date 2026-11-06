@@ -11,7 +11,7 @@ Contract under test:
 - a result whose ``message`` carries any of the six generation reason codes says
   that no swap was generated this run, never that the gate rejected one;
 - a zero-survivor result with no reason code keeps the gate wording;
-- the model line reads ``model unavailable`` for an empty ``generation_model`` and
+- the model line says the model is not known for an empty ``generation_model`` and
   names the model otherwise;
 - the message is escaped in the page.
 """
@@ -38,6 +38,7 @@ _UNSERVED_OVERRIDE = "operator-chosen-model"
 _GENERATED_TITLE = "No swap was generated this run"
 _GATE_TITLE = "No swap cleared the gate this run"
 _UNAVAILABLE_LINE = "model unavailable"
+_NOT_KNOWN_LINE = "not known"
 
 # Runs the real panel script; reads the route's JSON body from stdin, prints the results HTML.
 _DRIVER = r"""
@@ -227,13 +228,15 @@ class TestTheTitleSaysWhatHappened:
 
 @pytest.mark.usefixtures("unresolved_models")
 class TestTheModelLine:
-    def test_an_empty_generation_model_reads_model_unavailable(self, client, fake, monkeypatch):
+    def test_an_empty_generation_model_says_the_model_is_not_known(self, client, fake, monkeypatch):
         run = _produce_model_unavailable(client, fake, monkeypatch)
         assert run.data["provenance"]["generation_model"] == "", "self-guard"
 
-        assert _model_line(_render(run.data)).count(_UNAVAILABLE_LINE) == 1
+        line = _model_line(_render(run.data))
+        assert _UNAVAILABLE_LINE not in line.lower()
+        assert line.lower().count(_NOT_KNOWN_LINE) == 1
 
-    def test_an_early_error_with_no_resolved_family_reads_model_unavailable(
+    def test_an_early_error_with_no_resolved_family_says_the_model_is_not_known(
         self, client, fake, monkeypatch
     ):
         run = sup.post_evaluate(client, fake, sup.objective_body(), composer_key=False)
@@ -243,7 +246,8 @@ class TestTheModelLine:
 
         page = _render(run.data)
 
-        assert _model_line(page).count(_UNAVAILABLE_LINE) == 1
+        assert _UNAVAILABLE_LINE not in _model_line(page).lower()
+        assert _model_line(page).lower().count(_NOT_KNOWN_LINE) == 1
         assert 'data-testid="error-state"' in page
 
     def test_a_named_model_is_shown_and_never_labelled_unavailable(self, client, fake, monkeypatch):

@@ -158,7 +158,8 @@ _ON_SCREEN_JS = """() => {
   };
   const row = document.querySelector("#autotune-runs-list [data-testid='autotune-run-row']");
   const head = document.querySelector('#autotune-runs-list .autotune-row--head');
-  const frozen = row.querySelector('.autotune-run-frozen');
+  // Outcome is the same in every seeded row, so the page states it once in the shared line.
+  const frozen = document.querySelector("#autotune-runs-list [data-testid='autotune-shared-line']");
   const scoreHead = head.querySelector('.autotune-run-score');
   const label = row.querySelector('.autotune-score-label');
   const streakHead = head.querySelector('.autotune-run-streak');
@@ -167,6 +168,7 @@ _ON_SCREEN_JS = """() => {
   return {
     inkDim: colour('var(--studio-ink-dim)'),
     frozenText: frozen.innerText,
+    frozenInRow: row.querySelector('.autotune-run-frozen') !== null,
     frozenBox: box(frozen),
     frozenColour: getComputedStyle(frozen).color,
     headDisplay: getComputedStyle(head).display,
@@ -199,7 +201,9 @@ def test_the_missing_frozen_verdict_and_the_scores_objective_are_on_screen_on_a_
 ):
     _seed(3)
     wide = _open_at(advisor_probe, 1440, 900)
-    assert wide["frozenText"] == "Frozen-eval not evaluated", wide
+    assert wide["frozenText"].startswith("Same for every run: "), wide
+    assert "Frozen-eval not evaluated" in wide["frozenText"], wide
+    assert wide["frozenInRow"] is False, "the row repeats what the line states once"
     assert wide["frozenBox"]["w"] > 100 and wide["frozenBox"]["h"] >= 12, wide
     assert wide["frozenColour"] == wide["inkDim"], "the reason is in dim ink"
     # Wide: the header row names the column and the objective; a row holds the figure only.
@@ -219,7 +223,9 @@ def test_the_missing_frozen_verdict_and_the_scores_objective_are_on_screen_on_a_
 ):
     _seed(3)
     narrow = _open_at(advisor_probe, 375, 812)
-    assert narrow["frozenText"] == "Frozen-eval not evaluated", narrow
+    assert narrow["frozenText"].startswith("Same for every run: "), narrow
+    assert "Frozen-eval not evaluated" in narrow["frozenText"], narrow
+    assert narrow["frozenInRow"] is False, "the phone row repeats what the line states once"
     assert narrow["frozenBox"]["w"] > 100 and narrow["frozenBox"]["h"] >= 10, narrow
     assert narrow["frozenColour"] == narrow["inkDim"], narrow
     # Narrow: there is no header, so the row names its own score objective and its own streak.

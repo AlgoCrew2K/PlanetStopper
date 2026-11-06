@@ -44,6 +44,7 @@ import pytest
 from tests import _asset_swap_llm_support as sup
 from tests._anthropic_http_fake import FAKE_API_KEY, load_fixture
 from tests.llm_request.conftest import CAPTURED, newest_id
+from tests.ui import _page_copy as copy_fixture
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -473,6 +474,10 @@ def _tab_attribution(html: str, tab: str) -> str:
 
 # Tabs that are not the AI-reasoned Asset Swaps / Logic Changes paths and so must not claim
 # the reasoned-path attribution.
+# The reasoned-path wording is the plan's Copy table C row A05 (read from the committed fixture),
+# compared without case because the unresolved form (MU2) capitalises its first word.
+_REASONED_PHRASE = copy_fixture.row("A05", "C")["new_text"].split(" · ", 1)[1].lower()
+
 _OTHER_TABS = (
     "overview",
     "correlations",
@@ -488,7 +493,7 @@ def _assert_reasoned_attribution_on(html: str, tab: str, label: str) -> None:
     assert _STALE_LABEL not in _tab_panel(html, tab), (
         f"{label} panel still contains the stale label {_STALE_LABEL!r} - the reasoned path must retire it."
     )
-    assert "reasons over your live tree" in attribution, (
+    assert _REASONED_PHRASE in attribution.lower(), (
         f"{label} panel head does not carry the reasoned-path attribution copy. "
         f"Attribution line: {attribution!r}"
     )
@@ -496,7 +501,7 @@ def _assert_reasoned_attribution_on(html: str, tab: str, label: str) -> None:
 
 def _assert_no_reasoned_attribution_elsewhere(html: str) -> None:
     for tab in _OTHER_TABS:
-        assert "reasons over your live tree" not in _tab_panel(html, tab), (
+        assert _REASONED_PHRASE not in _tab_panel(html, tab).lower(), (
             f"the {tab} tab claims the reasoned-path attribution it does not have."
         )
 

@@ -306,6 +306,65 @@ class TestIncumbentDisplayNameResolution:
         )
 
 
+def _title_of(card: str) -> str:
+    from bs4 import BeautifulSoup
+
+    node = BeautifulSoup(card, "html.parser").select_one('[data-testid="fr-incumbent-name"]')
+    assert node is not None, "the card has no fr-incumbent-name"
+    return " ".join(node.get_text(" ").split())
+
+
+class TestCardTitlesAreToldApartByProposalNumber:
+    """Plan row NM8 (read from the committed copy fixture): the title is the incumbent's name,
+    or its hash where no name resolves, then the proposal's id."""
+
+    def test_five_proposals_of_one_incumbent_read_five_different_titles(self, client, monkeypatch):
+        from tests.ui import _page_copy as copy_fixture
+
+        ids = [31, 32, 33, 34, 35]
+        rows = [_make_pending_row(row_id=i, symphony_id="hash-abc123") for i in ids]
+        html = _render_advisor_page(
+            client,
+            monkeypatch,
+            pending_rows=rows,
+            bot_state={"hash-abc123": {"name": "My Real Symphony"}},
+        )
+        titles = [_title_of(_card_source(html, i)) for i in ids]
+        wanted = [
+            " ".join(
+                copy_fixture.fill(
+                    copy_fixture.row("NM8", "C")["new_text"], name="My Real Symphony", id=str(i)
+                ).split()
+            )
+            for i in ids
+        ]
+        assert titles == wanted
+        assert len(set(titles)) == 5
+
+    def test_an_unresolved_name_reads_the_hash_then_the_proposal_number(self, client, monkeypatch):
+        from tests.ui import _page_copy as copy_fixture
+
+        row = _make_pending_row(row_id=36, symphony_id="unresolvable-hash-xyz")
+        html = _render_advisor_page(client, monkeypatch, pending_rows=[row], bot_state={})
+        wanted = " ".join(
+            copy_fixture.fill(
+                copy_fixture.row("NM8", "C")["new_text"], name="unresolvable-hash-xyz", id="36"
+            ).split()
+        )
+        assert _title_of(_card_source(html, 36)) == wanted
+
+    def test_the_title_attribute_still_carries_the_hash_alone(self, client, monkeypatch):
+        row = _make_pending_row(row_id=37, symphony_id="hash-abc123")
+        html = _render_advisor_page(
+            client, monkeypatch, pending_rows=[row], bot_state={"hash-abc123": {"name": "Named"}}
+        )
+        card = _card_source(html, 37)
+        assert (
+            'title="hash-abc123"'
+            in card[card.find('data-testid="fr-incumbent-name"') - 120 :][:400]
+        )
+
+
 # ===========================================================================
 # Group B: frontrunner_builder-source card identity + explainer + overlay
 # summary + overlay preview (AC-4, AC-5, AC-6)
@@ -385,11 +444,20 @@ class TestFrontrunnerSourceCardOverlayIdentity:
             f"the fr-overlay-preview <details> must be collapsed by default — got {opening_tag!r}"
         )
 
-    def test_raw_preview_relabeled_full_spliced_symphony(self, card):
-        assert "Full spliced symphony (preview)" in card, (
-            f"the existing raw-candidate preview must be relabeled per AC-5 — card "
-            f"slice: {card[:2000]!r}"
+    def test_raw_preview_is_labelled_as_the_full_symphony_with_the_overlay_added(self, card):
+        # The label is the plan's Copy table C row X15, read from the committed fixture.
+        from tests.ui import _page_copy as copy_fixture
+
+        assert copy_fixture.text("X15", "C") in card, (
+            f"the raw-candidate preview must carry the X15 label — card slice: {card[:2000]!r}"
         )
+        assert "Full spliced symphony (preview)" not in card, "the old label still shows"
+
+    def test_overlay_preview_is_labelled_view_the_added_overlay(self, card):
+        from tests.ui import _page_copy as copy_fixture
+
+        assert copy_fixture.text("X14", "C") in card
+        assert "View overlay delta" not in card
 
 
 # ===========================================================================

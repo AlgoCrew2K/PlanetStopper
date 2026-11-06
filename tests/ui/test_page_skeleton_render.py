@@ -279,7 +279,10 @@ def test_advisor_description_is_a_legend_in_the_first_panel(client):
     caption = root.find(testid="advisor-caption")
     assert caption is not None, "the Advisor has no data-testid=advisor-caption"
     assert "legend-as-of" in caption.classes and _inside(caption, _first_panel(root))
-    assert "operator must approve" in caption.text.lower()
+    # The caption is the plan's Copy table A row A01, read from the committed fixture.
+    from tests.ui import _page_copy as copy_fixture
+
+    assert " ".join(caption.text.split()) == copy_fixture.text("A01", "A")
     assert "claude-powered" not in caption.text.lower()
 
 
