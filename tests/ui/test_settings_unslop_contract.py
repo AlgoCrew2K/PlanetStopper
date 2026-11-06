@@ -5,8 +5,8 @@ Source scans of ``templates/settings.html``, ``static/settings.js`` and ``static
 
 * no upper-case labels, no weight above 500, no side accent bar, no glyph used as an icon;
 * a status is a dot and one word: the page's mode word and the modal's badges are sentence case;
-* a credential field says nothing until something is typed in it (the note above the fields says
-  blank fields are ignored), so nine rows do not each repeat "unchanged";
+* a credential field says nothing until something is typed in it (and then that the dashboard does
+  not save it, ``copy.json`` row S12s), so nine rows do not each repeat "unchanged";
 * text on a filled control is the paper token (white is below 4.5:1 on the dark theme's accents);
 * the modal's look is one stylesheet, so its controls have hover and focus states.
 
@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import pathlib
 import re
+
+from tests.ui import _page_copy as copy
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 TEMPLATE = (REPO / "templates" / "settings.html").read_text(encoding="utf-8")
@@ -107,15 +109,18 @@ class TestCredentialsSayNothingUntilTyped:
         assert len(statuses) == 9
         assert all(text == "" for text in statuses), statuses
 
-    def test_the_status_reads_only_ready_to_save_once_typed(self):
-        assert "'Ready to save' : ''" in PAGE_JS
+    def test_the_status_reads_only_the_not_saved_here_words_once_typed(self):
+        status = copy.text("S12s", "C")
+        assert f"'{status}'" in PAGE_JS
+        assert copy.row("S12s", "C")["old_text"] not in PAGE_JS
         assert "unchanged" not in PAGE_JS
 
     def test_an_empty_status_takes_no_room(self):
         assert re.search(r"\.cred-status:empty\s*\{\s*display:\s*none", _style_block())
 
-    def test_the_note_that_blank_fields_are_ignored_is_still_stated_once(self):
-        assert TEMPLATE.count("Blank fields are ignored") == 1
+    def test_the_note_above_the_credential_fields_is_stated_once(self):
+        assert TEMPLATE.count('class="cred-warn"') == 1
+        assert TEMPLATE.count("Blank fields are ignored") == 0
 
 
 class TestTextOnAFilledControlClearsTheBar:

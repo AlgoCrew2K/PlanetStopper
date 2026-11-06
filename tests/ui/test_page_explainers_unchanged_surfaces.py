@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 
 import pytest
+from bs4 import BeautifulSoup
 
 from tests.app.conftest import _reset_scheduler_run_state  # noqa: F401  (autouse, health state)
+from tests.ui import _page_copy as copy
 from tests.ui import _page_explainers as harness
 from tests.ui._shell_support import (  # noqa: F401  (the two overrides and the empty directory)
     PAGES,
@@ -98,6 +101,28 @@ def test_the_reference_capture_holds_every_world_host_banner_and_route(ref):
 # ---------------------------------------------------------------------------
 
 
+# A banner whose words a Copy table C row rewords keeps its element and its attributes; only the
+# text changes, to that row's new text. (The Credentials warning is the one such banner: its row
+# says the dashboard does not save credentials.)
+REWORDED_BANNERS = {"settings_credential_warning": "S12r"}
+
+
+def _reworded_banner_differences(
+    label: str, got: list[str], want: list[str], row: str
+) -> list[str]:
+    def opening_tag(markup: str) -> str:
+        return re.match(r"<[^>]*>", markup).group(0)
+
+    def text(markup: str) -> str:
+        return " ".join(BeautifulSoup(markup, "html.parser").get_text().split())
+
+    problems = _differences(
+        f"{label} element", [opening_tag(m) for m in got], [opening_tag(m) for m in want]
+    )
+    expected = " ".join(copy.text(row, "C").split())
+    return problems + _differences(f"{label} text", [text(m) for m in got], [expected] * len(want))
+
+
 @pytest.mark.parametrize("name", harness.WORLDS)
 def test_every_risk_banner_is_byte_identical_to_the_reference(world, ref, name):
     client = world(name)
@@ -105,7 +130,13 @@ def test_every_risk_banner_is_byte_identical_to_the_reference(world, ref, name):
     problems: list[str] = []
     for key, (host, selector) in harness.BANNER_SELECTORS.items():
         got = harness.banner_markup(pages[host], selector)
-        problems += _differences(f"{name} {key}", got, ref["worlds"][name]["banners"][key])
+        want = ref["worlds"][name]["banners"][key]
+        if key in REWORDED_BANNERS:
+            problems += _reworded_banner_differences(
+                f"{name} {key}", got, want, REWORDED_BANNERS[key]
+            )
+        else:
+            problems += _differences(f"{name} {key}", got, want)
     assert not problems, "\n".join(problems)
 
 
