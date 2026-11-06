@@ -67,7 +67,8 @@ def _relabel_matchers() -> list[re.Pattern]:
     text is a pointer to a source line gives no text to match and is skipped.
     """
     matchers = []
-    for record in copy.rows("C"):
+    # A reworded Copy A row (a kept element given a new text) is excluded by its old text too.
+    for record in (*copy.rows("C"), *(r for r in copy.rows("A") if r["kind"] == "reworded")):
         old = record["old_text"]
         if " at `" in old or old.startswith("the ") or "with A05" in old:
             continue
@@ -100,6 +101,11 @@ def _control_key(control: dict) -> tuple:
     )
 
 
+def _is_removed_figure(text: str) -> bool:
+    """A figure that is one of the three controls AC-5 removes (its id names the control)."""
+    return any(text.startswith(t) for t in harness.REMOVED_CONTROL_TEXTS)
+
+
 def _is_removed_control(control: dict) -> bool:
     return any(control["text"].startswith(t) for t in harness.REMOVED_CONTROL_TEXTS)
 
@@ -114,7 +120,7 @@ def figure_differences(reading: list, reference: list, matchers: list[re.Pattern
     for key, text in reference:
         index = seen[key]
         seen[key] += 1
-        if _is_relabelled(text, matchers):
+        if _is_relabelled(text, matchers) or _is_removed_figure(text):
             continue
         heads = got.get(key, [])
         if index >= len(heads):
