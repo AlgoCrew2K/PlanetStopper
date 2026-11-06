@@ -86,6 +86,18 @@ summary:focus-visible,
   outline-offset: 2px;
 }
 
+/* Collapsed by default: what each reason means. */
+.hp-more { margin-top: 12px; font-size: 12px; color: var(--studio-ink-dim); }
+.hp-more[hidden] { display: none; }
+.hp-more summary { cursor: pointer; width: fit-content; border-radius: 4px; }
+.hp-more summary:hover { color: var(--studio-ink); }
+.hp-more dl { margin-top: 8px; display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+.hp-more dt { color: var(--studio-ink); }
+@media (max-width: 700px) {
+  .hp-more dl { grid-template-columns: 1fr; gap: 0; }
+  .hp-more dd { margin-bottom: 8px; }
+}
+
 /* ---- Shared dashboard primitives (SC-5) ----
    Moved in order from the inline style block of templates/index.html and
    restyled once by the unslop pass: a status is a dot and a word, stat

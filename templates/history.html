@@ -111,8 +111,7 @@
         }
 
         .window-selector button:focus-visible,
-        .history-exits-btn:focus-visible,
-        .hp-more summary:focus-visible {
+        .history-exits-btn:focus-visible {
             outline: 2px solid var(--studio-accent);
             outline-offset: 2px;
         }
@@ -287,14 +286,6 @@
             background: var(--studio-rule);
         }
 
-        /* Collapsed by default: what each reason means. */
-        .hp-more { margin-top: 12px; font-size: 12px; color: var(--studio-ink-dim); }
-        .hp-more[hidden] { display: none; }
-        .hp-more summary { cursor: pointer; width: fit-content; border-radius: 4px; }
-        .hp-more summary:hover { color: var(--studio-ink); }
-        .hp-more dl { margin-top: 8px; display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
-        .hp-more dt { color: var(--studio-ink); }
-
         .hp-empty { text-align: center; }
         .hp-empty-title { font-size: 16px; font-weight: 500; color: var(--studio-ink); margin-bottom: 4px; }
         .hp-empty-body { font-size: 13px; color: var(--studio-ink-dim); }
@@ -353,8 +344,6 @@
             }
             .hp-reasons td.hp-empty-cell { grid-column: 1 / -1; text-align: center; }
             .hp-rate { justify-content: flex-start; }
-            .hp-more dl { grid-template-columns: 1fr; gap: 0; }
-            .hp-more dd { margin-bottom: 8px; }
         }
 
         @media (max-width: 480px) {

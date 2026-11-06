@@ -23,7 +23,7 @@ import threading
 import time
 import types
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from datetime import datetime as _DatetimeType  # real class, immune to a patched app.datetime
@@ -2657,6 +2657,107 @@ def _tenure_review_settings() -> dict:
         if value is not None:
             env[key] = value
     return env
+
+
+def _plain_number(value: object, *, decimals: int) -> str | None:
+    """value rounded to decimals places with trailing zeros after the point stripped, or None
+    when it is not a finite real number (a bool is not a number)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value):
+        return None
+    text = f"{round(value, decimals):.{decimals}f}"
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _whole_number_or_none(value: object) -> int | None:
+    """value as an int when it is an int or a finite float with no fraction (never a bool)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not (math.isfinite(value) and value == int(value)):
+        return None
+    return int(value)
+
+
+def _copy_tenure_threshold(tenure_review: dict | None) -> str:
+    stored = (
+        _whole_number_or_none(tenure_review.get("threshold_in_effect"))
+        if isinstance(tenure_review, dict)
+        else None
+    )
+    if stored is not None:
+        return str(stored)
+    from advisors import tenure_review as _tenure_module
+
+    configured = _tenure_review_settings().get(_TENURE_REVIEW_THRESHOLD_KEY)
+    return str(_tenure_module.parse_threshold(configured).value)
+
+
+def _copy_screen_threshold(retirement_last_run: dict | None) -> str:
+    if isinstance(retirement_last_run, dict) and retirement_last_run.get("status") == "ok":
+        run_threshold = retirement_last_run.get("screen_threshold")
+        if (
+            isinstance(run_threshold, (int, float))
+            and not isinstance(run_threshold, bool)
+            and math.isfinite(run_threshold)
+        ):
+            return f"{run_threshold}"
+    from advisors.retirement_recommender import CORRELATION_SCREEN_THRESHOLD
+
+    return f"{CORRELATION_SCREEN_THRESHOLD}"
+
+
+def _copy_stress_fraction_pct() -> str | None:
+    from advisors.retirement_recommender import STRESS_WINDOW_FRACTION
+
+    # The fraction is shown as a percentage of aligned days.
+    if _plain_number(STRESS_WINDOW_FRACTION, decimals=6) is None:
+        return None
+    return _plain_number(STRESS_WINDOW_FRACTION * 100, decimals=1)
+
+
+def _copy_watch_trail_pp() -> str | None:
+    from advisors.tenure_review import BACKTEST_TRAIL_WATCH_PP
+
+    return _plain_number(BACKTEST_TRAIL_WATCH_PP, decimals=6)
+
+
+def _copy_friction_pct() -> str | None:
+    from autotuner import SIM_EXIT_FRICTION_PCT
+
+    return _plain_number(SIM_EXIT_FRICTION_PCT, decimals=6)
+
+
+def _copy_shadow_retention_days() -> str:
+    # Read as the nightly prune reads it: the settings file only, default 180 days.
+    raw = dotenv_values(ENV_FILE_PATH).get("SHADOW_HISTORY_RETENTION_DAYS", "180")
+    return str(int(raw))
+
+
+def _page_copy_values(
+    slots: Iterable[str],
+    *,
+    tenure_review: dict | None = None,
+    retirement_last_run: dict | None = None,
+) -> dict:
+    """The requested page-copy slots as display strings, each from its own authority.
+
+    A slot whose authority fails is None, so one failure never changes another slot."""
+    resolvers = {
+        "tenure_threshold": lambda: _copy_tenure_threshold(tenure_review),
+        "screen_threshold": lambda: _copy_screen_threshold(retirement_last_run),
+        "stress_fraction_pct": _copy_stress_fraction_pct,
+        "watch_trail_pp": _copy_watch_trail_pp,
+        "friction_pct": _copy_friction_pct,
+        "shadow_retention_days": _copy_shadow_retention_days,
+    }
+    values: dict = {}
+    for slot in slots:
+        try:
+            values[slot] = resolvers[slot]()
+        except Exception:
+            values[slot] = None
+    return values
 
 
 def _eastern_stamp(moment: datetime) -> str:
