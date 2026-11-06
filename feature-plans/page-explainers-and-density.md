@@ -1,5 +1,5 @@
 # Feature: Page explainers and denser layouts
-Status: gate-1
+Status: ready
 Story: none: the request is quoted in Trigger and saved verbatim in feature-plans/page-explainers-and-density.source.md
 Type: feat
 Suite: none
@@ -867,6 +867,7 @@ none: judged by the live check and the screenshot comparison in Definition of Do
 | D-12 | (PM ruling G-27) The header's five items are defined by `title` or accessible description (placement A), with no visible change to the header and its look pins untouched; the engine state's definition follows the state static/chrome.js writes | They are terms and controls, not sections, and the header's look is pinned |
 | D-13 | (PM ruling G-28) The detail panel's View logs, Go to cash and Edit variables buttons, which no script handles, are not rendered; Edit variables is included because it has no handler either (`templates/index.html:2132`; no reference in `static/`) | A control that does nothing misleads; removing an inert control changes no working behavior |
 | D-14 | (PM ruling G-29) The Credentials copy states that the dashboard does not save credentials; the refusal itself is unchanged | Copy must be true of the code; the backend refuses by design |
+| D-15 | (PM ruling under the operator's full-autonomy directive, [PM-ASSUMED]) The plan at 6e0eea80 is approved as written, together with the Gate-2 approach `feature-plans/approach/page-explainers-and-density.md`; every open question takes its recorded ruling or default and every Not Building entry is approved | The operator runs this project fully autonomously, and the PM approves on the operator's behalf |
 | D-7 | The empty-region size is 240 by 80 px | It catches the audit's findings A1 to A11 and A13 (each at least 250 by 80 px) and leaves A12, A14 and the 35 px rows of A15, which the audit ranked lowest (NB-10) |
 
 ## Docs to Update
