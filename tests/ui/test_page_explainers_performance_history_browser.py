@@ -58,6 +58,7 @@ from tests.ui.test_page_copy_performance_history import (
     friction_text,
     norm,
     term_groups,
+    warm_market_calendar,
 )
 
 pytestmark = pytest.mark.browser
@@ -83,6 +84,7 @@ def seeded(tmp_path, monkeypatch):
     import autotuner
 
     perf.seed_world()
+    warm_market_calendar()
     harness.fix_clock_and_token(monkeypatch.setattr)
     monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
     seed_history_exits(tmp_path, monkeypatch.setattr)

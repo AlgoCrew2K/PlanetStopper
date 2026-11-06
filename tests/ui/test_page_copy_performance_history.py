@@ -42,7 +42,7 @@ import app as app_module
 from tests.ui import _history_answers as hist
 from tests.ui import _page_copy as pc
 from tests.ui import _performance_page as perf
-from tests.ui._page_js_harness import render_page, route, run_page
+from tests.ui._page_js_harness import page_scripts, render_page, route, run_page
 from tests.ui._shell_support import (  # noqa: F401  (fixtures: autouse overrides)
     _empty_post_mortem_directory,
     _stub_database_load_state_for_advisor_routes,
@@ -382,6 +382,7 @@ class TestTradingCostSlot:
             t.get("data-term"): norm(t.get_text())
             for t in soup_of(client, "/performance").select("[data-term]")
         }
+        assert "F24" in baseline, "premise: the F24 definition is on the page"
         changed = {k for k in baseline if baseline[k] != after[k]}
         assert changed == {"F24"}, changed
 
@@ -565,10 +566,19 @@ class TestSharedDisclosureRule:
 # ---------------------------------------------------------------------------
 
 
+def warm_market_calendar() -> None:
+    """Build the market calendar under the real clock: ``perf.get_real`` answers under a patched
+    ``datetime`` class, which the calendar's first build cannot use."""
+    with app_module.app.test_client() as warm:
+        assert warm.get("/performance").status_code == 200
+
+
 @pytest.fixture
 def world(monkeypatch):
     monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
-    return perf.seed_world()
+    state = perf.seed_world()
+    warm_market_calendar()
+    return state
 
 
 PERFORMANCE_STATE = """
@@ -585,8 +595,17 @@ PERFORMANCE_STATE = """
 
 class TestPerformanceScriptBuilt:
     def run(self):
-        return perf.run_performance(
-            PERFORMANCE_STATE + "return state();", perf.real_routes(), chart="stub"
+        # The stub Chart class stands in for the vendored library, which would otherwise be loaded
+        # over it and refuse the stub DOM's canvas.
+        html = render_page(perf.PERFORMANCE_PATH)
+        scripts = [name for name in page_scripts(html) if "chart.js" not in name]
+        return run_page(
+            html,
+            "await H.boot();\n" + PERFORMANCE_STATE + "return state();",
+            routes=perf.real_routes(),
+            scripts=scripts,
+            pathname=perf.PERFORMANCE_PATH,
+            chart="stub",
         ).result
 
     def test_the_chart_datasets_name_if_held_and_the_bot_shadow_record(self, world):
@@ -634,6 +653,7 @@ def seed_history_with_all_four_reasons(tmp_path, monkeypatch) -> str:
     changed to the stored value ``Trailing Stop``. The route body the page reads is the real
     route's over those files. Returns the day that then holds all four reasons.
     """
+    warm_market_calendar()
     seed_history_exits(tmp_path, monkeypatch.setattr)
     day = "2026-06-23"
     path = pathlib.Path(analytics._POST_MORTEMS_DIR) / f"post_mortem_{day}.json"
