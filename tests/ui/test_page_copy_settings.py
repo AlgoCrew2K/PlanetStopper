@@ -97,7 +97,12 @@ def _page_text(soup: BeautifulSoup) -> str:
 
 
 def _rows(host: str, table: str) -> list[dict]:
-    return [r for r in copy.rows(table) if copy.host_of(r) == host]
+    """The rows of ``table`` whose host is ``host`` or names a place on it ("Settings Live execution body")."""
+    return [
+        r
+        for r in copy.rows(table)
+        if copy.host_of(r) == host or copy.host_of(r).startswith(host + " ")
+    ]
 
 
 SETTINGS_A = _rows("Settings", "A")
@@ -126,12 +131,12 @@ def _is_literal_old_text(old: str) -> bool:
     return bool(old) and old != "none" and " at `" not in old and not old.startswith("the ")
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def settings_html() -> str:
     return render_page("/settings")
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def settings_page(settings_html):
     return _soup(settings_html)
 
@@ -297,7 +302,9 @@ def test_the_credentials_section_says_nothing_of_saving_beyond_its_three_rows(se
 
 
 def test_the_credentials_description_says_the_dashboard_does_not_save_them(settings_page):
-    text = _text(settings_page.select_one('[data-explainer="S11"]'))
+    element = settings_page.select_one('[data-explainer="S11"]')
+    assert element is not None, "the Credentials description element is missing"
+    text = _text(element)
     assert "does not save credentials" in text and ".env" in text and "host" in text
 
 
@@ -414,7 +421,8 @@ def test_the_no_longer_held_row_keeps_its_title_and_the_meaning_is_also_in_a_lin
 
 DISCARD_THREE_TIMES = """
 const before = H.$$('[data-explainer]').map((e) => e.textContent);
-H.$('details[data-terms="S14"]').setAttribute('open', '');
+const disclosure = H.$('details[data-terms="S14"]');
+if (disclosure) disclosure.setAttribute('open', '');
 for (let i = 0; i < 3; i += 1) {
   await H.set('#execution-start-time', '09:3' + (i + 1));
   await H.click('#btn-discard');
@@ -422,7 +430,7 @@ for (let i = 0; i < 3; i += 1) {
 await H.click('.sym-list-btn:last-child');
 const after = H.$$('[data-explainer]').map((e) => e.textContent);
 return {before, after, content: H.$('.settings-content').innerHTML,
-        open: H.$('details[data-terms="S14"]').hasAttribute('open')};
+        open: !!H.$('details[data-terms="S14"]') && H.$('details[data-terms="S14"]').hasAttribute('open')};
 """
 
 
@@ -455,6 +463,7 @@ def test_switching_section_with_an_unsaved_edit_keeps_the_edit_and_the_descripti
 ):
     out = run_settings(settings_html, SWITCH_SECTIONS_WITH_AN_EDIT, roster)
     result = out.result
+    assert result["before"], "the page shows no description to keep"
     assert result["after"] == result["before"]
     assert result["value"] == "09:35", "the unsaved edit was dropped"
     assert result["saveDisabled"] is False and result["discardDisabled"] is False

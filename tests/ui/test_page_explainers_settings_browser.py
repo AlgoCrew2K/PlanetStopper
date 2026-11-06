@@ -140,7 +140,7 @@ def settings_open(firefox, server, *, size=WIDE):  # noqa: F811
         probe.page.route("**/api/settings", _add_no_longer_held)
         record_writes(probe, server)
         open_page(probe, "/settings")
-        probe.page.wait_for_selector("#sym-list .sym-list-btn")
+        probe.page.wait_for_selector("#sym-list .sym-list-btn", state="attached")
         yield probe
         assert probe.page_errors == [], probe.page_errors
 
@@ -237,6 +237,7 @@ def test_at_375_every_description_shows_in_full_and_the_page_does_not_scroll_sid
         keys = ["S01", *SECTION_ROWS[section]]
         if section in SECTION_TERMS:
             target, terms = SECTION_TERMS[section]
+            _only(probe, f'details[data-terms="{target}"] > summary')
             probe.page.click(f'details[data-terms="{target}"] > summary')
             keys += terms
         for key in keys:
