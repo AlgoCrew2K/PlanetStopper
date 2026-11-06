@@ -92,13 +92,6 @@ def soup_of(client, path: str) -> BeautifulSoup:
     return BeautifulSoup(response.get_data(as_text=True), "html.parser")
 
 
-@pytest.fixture
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
 def filled(key: str, table: str, **slots: str) -> str:
     return norm(pc.fill(pc.text(key, table), **slots))
 
