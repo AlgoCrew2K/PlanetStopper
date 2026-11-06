@@ -104,6 +104,9 @@ def _autotuner():
         (5.06, 1, "5.1"),
         (10_000_000.0, 1, "10000000"),
         (-2.5, 1, "-2.5"),
+        (120, 0, "120"),
+        (100.4, 0, "100"),
+        (0.0, 0, "0"),
     ],
 )
 def test_a_finite_number_prints_rounded_with_trailing_zeros_and_a_bare_point_stripped(
