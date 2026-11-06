@@ -669,7 +669,7 @@ def test_hero_chart_has_legend(dashboard_client):
     )
     legend = re.search(r'data-testid="chart-legend".*?legend-basis-note', html, re.DOTALL)
     assert legend is not None, "the chart-legend block must list its series before the basis note"
-    legend_text = re.sub(r"<[^>]+>", " ", legend.group(0))
+    legend_text = re.sub(r"<[^>]+>", "", legend.group(0))
     bot_label = _page_copy.fill(_page_copy.text("D06c", "C"), mode="dry-run")
     assert bot_label in " ".join(legend_text.split()), (
         f"chart-legend must carry the Bot series label {bot_label!r} for the Bot line."
