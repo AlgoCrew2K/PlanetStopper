@@ -117,7 +117,8 @@ BANNER_SELECTORS: dict[str, tuple[str, str]] = {
     "settings_live_warning": ("/settings", "#live-banner"),
     "settings_credential_warning": ("/settings", ".cred-warn"),
     "settings_maintenance_note": ("/settings", ".maint-warn"),
-    "cvar_notes": ("/", "#cvar-diagnostic-panel .dash-panel-note"),
+    # The panel's own two notes; the description a page adds beside them is not one of them.
+    "cvar_notes": ("/", "#cvar-diagnostic-panel .dash-panel-note:not([data-explainer])"),
     "fleet_banner": ("/", "#fleet-correlation-banner"),
     "fleet_modal": ("/", "#fleet-info-modal"),
 }

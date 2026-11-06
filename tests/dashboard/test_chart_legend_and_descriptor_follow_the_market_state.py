@@ -16,6 +16,7 @@ Contract pinned
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -23,18 +24,25 @@ import pytest
 from tests.dashboard import _index_js_harness as hx
 from tests.dashboard import _refresh_timing_support as sup
 from tests.dashboard.test_closed_market_labels_name_the_session import Worlds
+from tests.ui import _page_copy
 
 REPO = Path(__file__).resolve().parents[2]
-OPEN_LEGEND = "Live (if held)"
+OPEN_LEGEND = _page_copy.text("NM6", "C")
 CLOSED_LEGEND = "If held"
-DESCRIPTOR_TAIL = "All symphonies at their latest values, before exit friction."
+DESCRIPTOR_TAIL = _page_copy.text("D03r", "C")
+# Performance names a series, not a clock; its own wording is not this page's.
+PERFORMANCE_SERIES_NAME = "Live (if held)"
+LEGEND_CONSTANTS = (
+    f"const OPEN_LEGEND = {json.dumps(OPEN_LEGEND)};\n"
+    f"const CLOSED_LEGEND = {json.dumps(CLOSED_LEGEND)};\n"
+)
 
 PRELUDE = r"""
 const D = H.sandbox.document;
 const norm = function (s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); };
 const legend = function () {
   return Array.prototype.filter.call(D.querySelectorAll('[data-testid="detail-panel"] span'), function (e) {
-    return /^(Live \(if held\)|If held)$/.test(norm(e.textContent));
+    return [OPEN_LEGEND, CLOSED_LEGEND].indexOf(norm(e.textContent)) !== -1;
   }).map(function (e) { return norm(e.textContent); });
 };
 const descriptor = function () {
@@ -57,7 +65,7 @@ def run(worlds: Worlds, page: dict, scenario: str, other_state: dict | None = No
     now = worlds.open_now if page is worlds.opened else worlds.closed_now
     return hx.run_scenario(
         page,
-        PRELUDE + "await H.boot({ extras: true });" + scenario,
+        LEGEND_CONSTANTS + PRELUDE + "await H.boot({ extras: true });" + scenario,
         scripts=sup.CHROME_AND_INDEX,
         extra_bodies={"other": {"state": other_state}},
         now_iso=now,
@@ -139,5 +147,5 @@ class TestAfterThePoll:
 def test_the_performance_page_keeps_its_live_if_held_series_name():
     template = (REPO / "templates" / "performance.html").read_text(encoding="utf-8")
     script = (REPO / "static" / "performance.js").read_text(encoding="utf-8")
-    assert f"<span>{OPEN_LEGEND}</span>" in template
-    assert f"label: '{OPEN_LEGEND}'" in script
+    assert f"<span>{PERFORMANCE_SERIES_NAME}</span>" in template
+    assert f"label: '{PERFORMANCE_SERIES_NAME}'" in script

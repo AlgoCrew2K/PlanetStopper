@@ -38,12 +38,13 @@ import pytest
 from tests.dashboard import _index_js_harness as hx
 from tests.dashboard import _refresh_timing_support as sup
 from tests.dashboard._first_paint_dom import js_to_fixed
+from tests.ui import _page_copy
 
 WORLD = "default"
 PANELS_WORLD = "cards-panels"
 MDD_ROW = "mdd"
-LIVE_LEGEND = "Planet Stopper (live)"
-DRY_LEGEND = "Planet Stopper (dry-run)"
+LIVE_LEGEND = _page_copy.fill(_page_copy.text("D06c", "C"), mode="live")
+DRY_LEGEND = _page_copy.fill(_page_copy.text("D06c", "C"), mode="dry-run")
 NEG, POS_WHITE, CHIP_BG, INK_DIM = (
     "var(--studio-neg)",
     "var(--studio-white)",

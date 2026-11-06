@@ -3485,7 +3485,12 @@ def _first_paint_verdict(sym: dict) -> dict:
     ):
         return {"_verdict_text": _DIAL_DASH, "_verdict_has_value": False}
     magnitude = analytics.js_to_fixed(abs(ga), 1)
-    text = f"Good call · saved +{magnitude}%α" if ga > 0 else f"Early exit · gave up {magnitude}%α"
+    if magnitude == "0.0":
+        text = "Exit matched holding"
+    elif ga > 0:
+        text = f"Exit beat holding by {magnitude}%"
+    else:
+        text = f"Exit trailed holding by {magnitude}%"
     return {"_verdict_text": text, "_verdict_has_value": True}
 
 
@@ -3809,6 +3814,7 @@ def _render_dashboard(
         sleeves=_sleeves_for_render(panels["sleeves"] or []),
         cvar_view=_cvar_for_render(cvar_diagnostic),
         atlas_cache_health=_atlas_cache_health(),
+        copy_values=_page_copy_values(("shadow_retention_days", "friction_pct")),
     )
 
 

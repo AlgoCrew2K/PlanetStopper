@@ -33,6 +33,7 @@ from tests.app._refresh_timing_card_world import (
     set_live_return,
 )
 from tests.app._refresh_timing_state_world import TRIGGERED_ID
+from tests.dashboard._exit_verdict_copy import verdict_lead, verdict_sentence
 from tests.dashboard._first_paint_dom import js_to_fixed, run_page
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -45,8 +46,7 @@ _CSRF = {"/api/csrf-token": {"body": {"csrf_token": "csrf-fixture-token"}}}
 def _verdict(guard_alpha: float, label: str) -> str:
     """The text a card shows for a guard alpha: figure sentence and label."""
     magnitude = js_to_fixed([abs(guard_alpha)], 1)[0]
-    lead = "Good call · saved +" if guard_alpha > 0 else "Early exit · gave up "
-    return f"{lead}{magnitude}%α {label}"
+    return f"{verdict_sentence(guard_alpha, magnitude)} {label}"
 
 
 def _run(tmp_path, page: str, first_body: dict, later_bodies: list[dict]) -> list[tuple[str, dict]]:
@@ -128,7 +128,8 @@ class TestLabelWhileTheMarketIsOpen:
 
         saved = _verdict(exit_return - below, LABEL_OPEN)
         gave_up = _verdict(exit_return - above, LABEL_OPEN)
-        assert saved.startswith("Good call") and gave_up.startswith("Early exit"), "fixture"
+        assert saved.startswith(verdict_lead("beat")), "fixture"
+        assert gave_up.startswith(verdict_lead("trailed")), "fixture"
         assert [card["verdict"]["text"] for _, card in seen] == [saved, saved, gave_up]
 
     def test_three_polls_with_no_cycle_between_them_leave_the_verdict_unchanged(
@@ -155,7 +156,7 @@ class TestLabelWhileTheMarketIsOpen:
         current = live_entry(TRIGGERED_ID)["current_return"]
         assert body["bot_state"][TRIGGERED_ID]["guard_alpha"] == round(exit_return - current, 6)
 
-    def test_a_figure_of_exactly_zero_reads_as_an_early_exit_with_the_label(
+    def test_a_figure_of_exactly_zero_reads_as_a_match_with_the_label(
         self, monkeypatch, tmp_path
     ):
         world = open_cards_world(monkeypatch, tmp_path)
@@ -167,7 +168,7 @@ class TestLabelWhileTheMarketIsOpen:
         seen = _run(tmp_path, page, body, [body])
 
         assert {card["verdict"]["text"] for _, card in seen} == {_verdict(0.0, LABEL_OPEN)}
-        assert _verdict(0.0, LABEL_OPEN) == "Early exit · gave up 0.0%α vs held now"
+        assert _verdict(0.0, LABEL_OPEN) == f"{verdict_lead('matched')} {LABEL_OPEN}"
 
 
 # ---------------------------------------------------------------------------
