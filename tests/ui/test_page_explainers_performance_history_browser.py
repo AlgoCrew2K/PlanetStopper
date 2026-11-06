@@ -233,6 +233,7 @@ def test_each_disclosure_starts_closed_and_opens_to_its_exact_rows(
         groups = term_groups(HOST_OF_PATH[path])
         for anchor, rows in groups.items():
             selector = f'details[data-terms="{anchor}"]'
+            assert probe.page.locator(selector).count() == 1, f"no disclosure for {anchor}"
             assert probe.page.evaluate("(s) => document.querySelector(s).open", selector) is False
             hidden_before = probe.page.evaluate(
                 "(s) => [...document.querySelectorAll(s + ' [data-term]')]"
@@ -254,6 +255,7 @@ def test_the_trading_cost_phrase_is_the_patched_authoritys_value(
 ):
     with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
         _open(probe, "/performance")
+        assert probe.page.locator('details[data-terms="F21"]').count() == 1
         probe.page.click('details[data-terms="F21"] > summary')
         text = probe.page.evaluate(_VISIBLE_TEXT_JS, '[data-term="F24"]')[0]["text"]
     assert text == friction_text("F24", "0.25")
