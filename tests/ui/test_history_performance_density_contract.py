@@ -26,6 +26,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.ui import _page_copy as page_copy
+
 REPO = Path(__file__).resolve().parents[2]
 TEMPLATES = REPO / "templates"
 STATIC = REPO / "static"
@@ -152,7 +154,7 @@ _STACKED_TABLES = {
     ),
     "exit-turnover-table": (
         "metrics-tbl--ledger-turn",
-        ["30d", "90d", "365d", "Est. annual friction drag"],
+        ["30d", "90d", "365d", page_copy.text("F22r", "C").split("; ")[1]],
     ),
 }
 
@@ -275,12 +277,13 @@ def test_history_reason_ledger_stacks_on_a_phone_with_its_own_labels():
     for label in (
         "Sum of exit alpha",
         "Dollar result",
-        "Triggers",
+        page_copy.text("Y06", "C"),
         "Wins",
         "Win rate",
         "Avg per exit",
     ):
         assert f'data-label="{label}"' in script, label
+    assert 'data-label="Triggers"' not in script
 
 
 def test_the_risk_metrics_table_draws_figures_alone():

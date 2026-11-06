@@ -24,6 +24,7 @@ import analytics
 import app as app_module
 import database
 from tests.app.test_calendar_window_routes import _freeze, _seed_flat_history, _weekdays
+from tests.ui import _page_copy as page_copy
 from tests.ui.test_static_js_page_harness import (
     captured,
     captured_json,
@@ -532,7 +533,7 @@ def test_every_other_metric_cell_and_headline_keeps_its_existing_text(client):
         "Annualized volatility": ("volatility", "pct_frac"),
         "Total return": ("total_return", "pct_frac"),
         "Annualized return (CAGR)": ("annualized_return", "pct_frac"),
-        "Win rate": ("win_rate", "frac"),
+        page_copy.text("NM7", "C"): ("win_rate", "frac"),
     }
     rows = _metric_rows(result)
     for label, (key, kind) in kinds.items():

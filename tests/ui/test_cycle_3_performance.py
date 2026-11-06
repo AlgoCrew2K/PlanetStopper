@@ -433,7 +433,7 @@ def test_performance_metrics_table_has_required_metric_labels(perf_client):
         "Sortino",
         "Max DD",
         "Calmar",
-        "Win rate",
+        "Up days",
     ):
         assert label.lower() in html.lower(), (
             f"Metrics table must include row for '{label}'. "

@@ -237,10 +237,12 @@ def test_history_page_names_itself_in_the_nav_and_its_caption(hist_client):
 
 
 def test_history_page_header_subtitle(hist_client):
-    """Header subtitle must mention post-mortem or rollup."""
+    """The caption says what the totals come from: the bot's daily exit records."""
+    from tests.ui import _page_copy as page_copy
+
     resp = hist_client.get("/history")
-    html = resp.data.decode("utf-8", errors="replace").lower()
-    assert "post-mortem" in html or "rollup" in html or "snapshot" in html
+    html = " ".join(resp.data.decode("utf-8", errors="replace").split())
+    assert page_copy.text("Y02", "C") in html
 
 
 # ===========================================================================
@@ -1036,7 +1038,7 @@ def test_history_js_reason_card_has_win_rate_element():
         pytest.fail("Could not extract renderReasonCards body")
 
     # Must have 3 distinct stat cells — look for labels
-    has_triggers_label = "trigger" in body.lower() or "Triggers" in body
+    has_triggers_label = "Exits" in body
     has_wins_label = "wins" in body.lower() or "Wins" in body
     has_win_rate_label = "win rate" in body.lower() or "Win Rate" in body or "winRate" in body
     assert has_triggers_label, "reason card missing Triggers stat cell"

@@ -11,7 +11,8 @@ Contract pinned
   and it follows a state change in either direction, as the panel's Live return heading does.
 * The headline descriptor ends "All symphonies at their latest values, before exit friction." in every
   market state, at first paint and after a poll, and never says "today".
-* The Performance page keeps its own "Live (if held)" series name: it names a series, not a clock.
+* The Performance page keeps its own series name for the if-held path ("If held", Copy table C row
+  F12b): it names a series, not a clock, and is not the dashboard's open-market legend.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ OPEN_LEGEND = _page_copy.text("NM6", "C")
 CLOSED_LEGEND = "If held"
 DESCRIPTOR_TAIL = _page_copy.text("D03r", "C")
 # Performance names a series, not a clock; its own wording is not this page's.
-PERFORMANCE_SERIES_NAME = "Live (if held)"
+RETIRED_PERFORMANCE_SERIES_NAME = "Live (if held)"
 LEGEND_CONSTANTS = (
     f"const OPEN_LEGEND = {json.dumps(OPEN_LEGEND)};\n"
     f"const CLOSED_LEGEND = {json.dumps(CLOSED_LEGEND)};\n"
@@ -144,8 +145,12 @@ class TestAfterThePoll:
         assert_descriptor(result, "closed page, open poll")
 
 
-def test_the_performance_page_keeps_its_live_if_held_series_name():
+def test_the_performance_page_keeps_its_own_if_held_series_name():
     template = (REPO / "templates" / "performance.html").read_text(encoding="utf-8")
     script = (REPO / "static" / "performance.js").read_text(encoding="utf-8")
-    assert f"<span>{PERFORMANCE_SERIES_NAME}</span>" in template
-    assert f"label: '{PERFORMANCE_SERIES_NAME}'" in script
+    series_name = _page_copy.text("F12b", "C")
+    assert f"<span>{series_name}</span>" in template
+    assert f"label: '{series_name}'" in script
+    for other in (RETIRED_PERFORMANCE_SERIES_NAME, OPEN_LEGEND):
+        assert f"<span>{other}</span>" not in template
+        assert f"label: '{other}'" not in script

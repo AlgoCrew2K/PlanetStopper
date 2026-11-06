@@ -3,7 +3,7 @@
  *
  * Read-only operator surface:
  *   - Fetches /api/performance and /api/performance/symphonies.
- *   - Renders cumulative-return curves (live vs Planet Stopper-exited) via Chart.js.
+ *   - Renders cumulative-return curves (if held vs bot (shadow)) via Chart.js.
  *   - Renders a 7-metric quantstats table with delta column.
  *
  * Auto-refresh floor is 60s (the aggregate series derives from shadow_history's
@@ -61,7 +61,7 @@
         // --- return ---
         ['total_return',        'Total return',              'pct_frac', true],
         ['annualized_return',   'Annualized return (CAGR)',  'pct_frac', false],
-        ['win_rate',            'Win rate',                  'frac',     false],
+        ['win_rate',            'Up days',                   'frac',     false],
     ];
 
     // toFixed that never prints a minus sign for a value that rounds to zero ("-0.00"); the same
@@ -229,7 +229,7 @@
             labels: payload.dates,
             datasets: [
                 {
-                    label: 'Live (if held)',
+                    label: 'If held',
                     data: liveSeries,
                     borderColor: liveColor,
                     backgroundColor: 'transparent',
@@ -240,7 +240,7 @@
                     borderDash: [4, 4],
                 },
                 {
-                    label: 'Planet Stopper-Exited (shadow)',
+                    label: 'Bot (shadow)',
                     data: botSeries,
                     borderColor: botColor,
                     backgroundColor: divFill,
@@ -907,7 +907,6 @@
 
     function turnoverWindowCell(windowStats) {
         var td = document.createElement('td');
-        td.style.textAlign = 'right';
         if (!windowStats) {
             td.textContent = '--';
             return td;
@@ -942,7 +941,6 @@
         tr.appendChild(turnoverWindowCell(windows['365']));
 
         var dragTd = document.createElement('td');
-        dragTd.style.textAlign = 'right';
         var drag = turnover && turnover.est_annual_friction_drag_pct;
         dragTd.textContent = (drag === null || drag === undefined) ? '--' : Number(drag).toFixed(2) + '%';
         tr.appendChild(dragTd);

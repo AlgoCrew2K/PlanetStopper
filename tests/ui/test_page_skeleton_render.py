@@ -29,6 +29,7 @@ import pytest
 import app as app_module
 from tests._ux_truth_support import Node, parse_html
 from tests.ui import _dashboard_primitives_capture as cap
+from tests.ui import _page_copy as page_copy
 from tests.ui._shell_support import seed_pending_frontrunner_proposal
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -253,14 +254,14 @@ def test_history_caption_is_a_legend_in_the_first_panel(client):
     assert caption is not None, "History has no data-testid=history-caption"
     assert "legend-as-of" in caption.classes
     assert _inside(caption, _first_panel(root))
-    assert re.search(r"post-mortem|rollup", caption.text, re.IGNORECASE)
+    assert " ".join(caption.text.split()) == page_copy.text("Y02", "C")
 
 
 def test_performance_basis_and_observation_captions_are_legends_in_the_first_panel(client):
     root = _page(client, "/performance")
     first = _first_panel(root)
     legends = [n for n in first.find_all(cls="legend-as-of")]
-    basis = [n for n in legends if "Live (if held) vs Planet Stopper-exited (shadow)" in n.text]
+    basis = [n for n in legends if page_copy.text("F04", "C") in " ".join(n.text.split())]
     assert basis, "the basis sentence is not a .legend-as-of caption in the first panel"
     observation = root.find(testid="obs-caption")
     assert observation is not None

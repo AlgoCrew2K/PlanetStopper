@@ -338,8 +338,10 @@ def test_performance_metrics_table_has_updated_column_headers():
     with app_module.app.test_client() as client, _patch_analytics_phase2():
         html = client.get("/performance").data.decode("utf-8")
     # Accept either the exact design wording or reasonable paraphrases.
-    has_held_header = "if-held baseline" in html.lower() or "if held baseline" in html.lower()
-    has_bot_header = "bot (planet stopper)" in html.lower() or "planet stopper" in html.lower()
+    from tests.ui import _page_copy as page_copy
+
+    has_held_header = page_copy.text("F14a", "C") in html
+    has_bot_header = page_copy.text("F14b", "C") in html
     has_delta_header = "delta (bot" in html.lower() or "delta" in html.lower()
     missing = []
     if not has_held_header:

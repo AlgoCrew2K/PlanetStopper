@@ -23,6 +23,7 @@ import pathlib
 import pytest
 
 from tests.app.conftest import _reset_scheduler_run_state  # noqa: F401  (autouse, health state)
+from tests.ui import _page_copy as page_copy
 from tests.ui import _page_explainers as harness
 from tests.ui._shell_support import (  # noqa: F401  (the two overrides and the empty directory)
     PAGES,
@@ -114,13 +115,31 @@ def test_every_risk_banner_is_byte_identical_to_the_reference(world, ref, name):
 # ---------------------------------------------------------------------------
 
 
+def _renamed_headings() -> dict[str, str]:
+    """Reference heading to its new text, for each Copy table C row that rewords a heading.
+
+    A row names old and new texts in step (joined by "; "); a heading is reworded when it equals
+    one of the old texts, so a cycle that adds a heading rename needs no edit here.
+    """
+    renamed: dict[str, str] = {}
+    for record in page_copy.rows("C"):
+        old, new = record.get("old_text") or "", record.get("new_text") or ""
+        olds, news = old.split("; "), new.split("; ")
+        if len(olds) == len(news):
+            renamed.update(dict(zip(olds, news, strict=True)))
+    return renamed
+
+
+_RENAMED_HEADINGS = _renamed_headings()
+
+
 @pytest.mark.parametrize("name", harness.WORLDS)
 def test_every_host_lists_its_sections_in_the_reference_order(world, ref, name):
     client = world(name)
     problems: list[str] = []
     for host in PAGES:
         got = harness.section_headings(client.get(host).get_data(as_text=True))
-        want = ref["worlds"][name]["headings"][host]
+        want = [_RENAMED_HEADINGS.get(h, h) for h in ref["worlds"][name]["headings"][host]]
         # A section may be added; every reference section stays, in its reference order.
         remaining = iter(got)
         missing = [h for h in want if h not in remaining]
