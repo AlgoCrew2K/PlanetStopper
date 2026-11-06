@@ -312,13 +312,11 @@ def test_every_disclosure_is_closed_on_load_and_shows_each_term_when_opened(
     seeded("dashboard_full")
     slots = _slots()
     with _Dashboard(firefox, advisor_server, WIDE[0]) as probe:
-        _open_first_card(probe)
         state = probe.page.evaluate(DISCLOSURE_STATE_JS)
         assert state, "premise: the page carries disclosures"
         assert not any(d["open"] for d in state), "a disclosure is open on load"
-        for disclosure in state:
-            key = disclosure["key"]
-            host = "detail panel" if key in DETAIL_DESCRIPTIONS else "/"
+
+        def check(key: str, host: str) -> None:
             summary = _see(probe, f'[data-terms="{key}"] > summary')
             assert summary["hiddenBy"] is None and summary["text"] == DISCLOSURE_SUMMARY, key
             probe.page.locator(f'[data-terms="{key}"] > summary').click()
@@ -332,6 +330,15 @@ def test_every_disclosure_is_closed_on_load_and_shows_each_term_when_opened(
             probe.page.locator(f'[data-terms="{key}"] > summary').click()
             first = _terms(host, key)[0]["key"]
             assert _see(probe, f'[data-term="{first}"]')["hiddenBy"] == "a closed disclosure", key
+
+        # The detail panel's scrim covers the page while it is open, so the page's own disclosures
+        # are read first, with the panel closed, and the panel's after a card is opened.
+        keys = [d["key"] for d in state]
+        for key in (k for k in keys if k not in DETAIL_DESCRIPTIONS):
+            check(key, "/")
+        _open_first_card(probe)
+        for key in (k for k in keys if k in DETAIL_DESCRIPTIONS):
+            check(key, "detail panel")
 
 
 def test_a_disclosure_opens_and_closes_from_the_keyboard(
