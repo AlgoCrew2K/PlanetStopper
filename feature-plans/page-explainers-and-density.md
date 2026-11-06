@@ -260,7 +260,7 @@ Questions: Q-5, Q-6
 
 ### AC-4: Copy that names a configured value shows the configured value
 Requirement items: R-12
-Rule: When a row of Copy table A or B holds a slot from the Values table, the host shall print the value that slot's authority holds when the page renders, in the slot's format, and never a number typed into a template or script; if the authority's value cannot be read, the host shall print the slot's fallback words instead.
+Rule: When a row of Copy table A or B holds a slot from the Values table, the host shall print the value that slot's authority holds when the page renders, in the slot's format, and never a number typed into a template or script; if the authority's value cannot be read, the host shall replace the whole phrase that holds the slot with that row's fallback phrase from the Values table.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
@@ -274,7 +274,7 @@ Rule: When a row of Copy table A or B holds a slot from the Values table, the ho
 | S-4.6 | B | `BACKTEST_TRAIL_WATCH_PP` patched to 7.5 | the tab's disclosure opens | R27 watch reads "by more than 7.5 percentage points" |
 | S-4.7 | B | `SIM_EXIT_FRICTION_PCT` patched to 0.25 | `/` and `/performance` disclosures open | D25 and F24 read "0.25 percentage points" |
 | S-4.8 | N7 | `_PERFORMANCE_MIN_HISTORY_DAYS` | `/performance` renders the insufficient banner | it prints `min_history_days` from context as at the ref, now with the F10 wording |
-| S-4.9 | N3 | a slot's authority raises or yields None | the host renders | the row prints the slot's fallback words and no number, and the rest of the page renders |
+| S-4.9 | N3 | each slot's authority raises or yields None, one at a time | the host renders | each copy row in the Values table prints its fallback phrase in place of the phrase holding the slot, the sentence around it unchanged, no number shows, and the rest of the page renders |
 | S-4.10 | N7 | the templates and scripts after the change | they are searched for the slot values next to the new copy | no slot value is typed as a literal; each comes from context or from a value the server writes into the page |
 
 Negative coverage: N1 S-4.3 · N2 n/a: no input is judged · N3 S-4.9 · N4 n/a: the values are non-secret module constants and two non-secret environment keys; no credential reaches a page · N5 n/a: each render reads the authority once and a refresh changes no copy · N6 S-4.9 · N7 S-4.8, S-4.10 · N8 n/a: no slot sits on an editable form
@@ -664,15 +664,18 @@ Placement V means the definition is the visible description named; D means a lin
 | X15 | Frontrunner full preview summary (`templates/ai_advisor.html:3004`) | template | Full spliced symphony (preview) | Full symphony with the overlay added (preview) | `advisors/frontrunner_builder.py` (`splice_candidate_into_symphony`) |
 
 #### Values table (AC-4)
-| Slot | Rows | Authority at the ref | In template context at the ref | Format | Fallback words |
-|---|---|---|---|---|---|
-| {tenure_threshold} | R22 | the stored review's `threshold_in_effect` when a review exists (`templates/ai_advisor.html:2121`); otherwise `TENURE_REVIEW_MIN_TRADING_DAYS` read the way the review reads it, from the env file first and from the process environment only when the file has no value (`app.py:2616-2623`), resolved by `advisors/tenure_review.py:430` (`parse_threshold`, default `DEFAULT_MIN_TENURE_TRADING_DAYS` at `:41`) | yes, as `tenure_review.threshold_in_effect`, only when a review exists; no otherwise (Gate 2 states how the configured value reaches the page) | whole number | the configured number of |
-| {screen_threshold} | R02 | the stored ok run's `screen_threshold` when one exists, so R02 and the Pairs tile print the same value (`app.py:7094-7097`); otherwise `advisors/retirement_recommender.py:58` (`CORRELATION_SCREEN_THRESHOLD`) | only inside `retirement_last_run.screen_threshold` for an ok run; not when no run exists | as the Pairs tile prints it (`app.py:7097`) | the screen |
-| {stress_fraction_pct} | R19b | `advisors/retirement_recommender.py:97` (`STRESS_WINDOW_FRACTION`) times 100 | no | whole number when whole, else one decimal | (the phrase "the worst {stress_fraction_pct} percent of days" becomes "their worst days") |
-| {watch_trail_pp} | R27b | `advisors/tenure_review.py:49` (`BACKTEST_TRAIL_WATCH_PP`) | no | the number with no trailing ".0" | a set number of |
-| {friction_pct} | D25, F24 | `autotuner.py:1444` (`SIM_EXIT_FRICTION_PCT`) | no | the number with no trailing zeros | a fixed cost of |
-| {shadow_retention_days} | D07 | `SHADOW_HISTORY_RETENTION_DAYS`, read from the env file as the 02:00 prune reads it, default 180 (`app.py:1792-1793`, `:2930`) | no | whole number | a set number of |
-| {min_history_days} | F10 | `app.py:58` (`_PERFORMANCE_MIN_HISTORY_DAYS`) | yes (`templates/performance.html:542`) | whole number | never needed: always in context |
+One row per copy row that holds a slot. When the slot's authority can be read, the phrase is printed with the value in the slot's format; when it cannot, the whole phrase is replaced by the fallback phrase, so the sentence still reads correctly. The {min_history_days} value is already in context at the ref, so its fallback is a guard only.
+
+| Slot | Copy row | Phrase holding the slot (exact) | Fallback phrase (exact) | Authority at the ref | In template context at the ref | Format |
+|---|---|---|---|---|---|---|
+| {tenure_threshold} | R22 | Once a symphony has been invested for {tenure_threshold} trading days, | Once a symphony has been invested for the configured minimum number of trading days, | the stored review's `threshold_in_effect` when a review exists (`templates/ai_advisor.html:2121`); otherwise `TENURE_REVIEW_MIN_TRADING_DAYS` read the way the review reads it, from the env file first and from the process environment only when the file has no value (`app.py:2616-2623`), resolved by `advisors/tenure_review.py:430` (`parse_threshold`, default `DEFAULT_MIN_TENURE_TRADING_DAYS` at `:41`) | yes, as `tenure_review.threshold_in_effect`, only when a review exists; no otherwise (Gate 2 states how the configured value reaches the page) | whole number |
+| {screen_threshold} | R02 | at a correlation of {screen_threshold} or more, | at or above the correlation screen, | the stored ok run's `screen_threshold` when one exists, so R02 and the Pairs tile print the same value (`app.py:7094-7097`); otherwise `advisors/retirement_recommender.py:58` (`CORRELATION_SCREEN_THRESHOLD`) | only inside `retirement_last_run.screen_threshold` for an ok run; not when no run exists | as the Pairs tile prints it (`app.py:7097`) |
+| {stress_fraction_pct} | R19b | on the worst {stress_fraction_pct} percent of days, | on their worst days, | `advisors/retirement_recommender.py:97` (`STRESS_WINDOW_FRACTION`) times 100 | no | whole number when whole, else one decimal |
+| {watch_trail_pp} | R27b | by more than {watch_trail_pp} percentage points of total return, | by more than the set margin of total return, | `advisors/tenure_review.py:49` (`BACKTEST_TRAIL_WATCH_PP`) | no | the number with no trailing ".0" |
+| {friction_pct} | D25 | after taking {friction_pct} percentage points off every exit, | after taking a fixed trading cost off every exit, | `autotuner.py:1444` (`SIM_EXIT_FRICTION_PCT`) | no | the number with no trailing zeros |
+| {friction_pct} | F24 | at {friction_pct} percentage points per exit times the exits per year. | at a fixed cost per exit times the exits per year. | `autotuner.py:1444` (`SIM_EXIT_FRICTION_PCT`) | no | the number with no trailing zeros |
+| {shadow_retention_days} | D07 | kept for the last {shadow_retention_days} days. | kept for a limited number of days. | `SHADOW_HISTORY_RETENTION_DAYS`, read from the env file as the 02:00 prune reads it, default 180 (`app.py:1792-1793`, `:2930`) | no | whole number |
+| {min_history_days} | F10 | At least {min_history_days} trading days of portfolio history are needed | More trading days of portfolio history are needed | `app.py:58` (`_PERFORMANCE_MIN_HISTORY_DAYS`) | yes (`templates/performance.html:542`) | whole number |
 
 ## Rule-by-Entry-Point Matrix
 | Rule | `/` | detail panel | Performance | History | Settings | settings modal | Overview | Correlations | Retirement | Asset Swaps | Logic Changes | Chat | Strategy Builder | Frontrunner Builder |
@@ -739,7 +742,7 @@ The Retirement tab on a database with one ok recommender run (11 of 12 symphonie
 
 Under "Symphony tenure review" the operator now reads: "Once a symphony has been invested for 126 trading days, this review asks whether it still earns its place: its real results against its own backtest, its effect on the whole portfolio, and whether it duplicates another symphony. Each eligible symphony gets keep, watch, retire-candidate or no verdict; the review only advises, and approving a retirement records your decision without changing anything in Composer." Opening "What the terms mean" there shows, among others, "watch: it trails its own backtest by more than 10 percentage points of total return, or the portfolio would have a higher return and no deeper drawdown without it." The Blocked tile's detail reads "too uncertain 4, too few worst days 4, apart on worst days 0, no score to compare 0. The worst-days check needs at least 181 days on which both symphonies have a return." At 1440 the two subsections sit side by side, because each is shorter than 320 px.
 
-Main failure case (S-4.9): the tenure threshold cannot be read and no review is stored. The line then reads "Once a symphony has been invested for the configured number of trading days, ..." with no number, and the rest of the tab renders.
+Main failure case (S-4.9): the tenure threshold cannot be read and no review is stored. The line then reads "Once a symphony has been invested for the configured minimum number of trading days, this review asks ..." with no number, and the rest of the tab renders.
 
 ## Fail-Closed Behaviour
 none: the feature sends no input to any write route and adds no refusal; the existing refusals it shows are pinned unchanged by S-5.11.
