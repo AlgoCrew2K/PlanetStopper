@@ -154,6 +154,24 @@ def test_get_performance_returns_200_html(client, mock_analytics):
     )
 
 
+def test_get_performance_banner_prints_the_context_number_in_the_risk_metrics_wording(
+    client, mock_analytics, monkeypatch
+):
+    """The insufficient-history banner prints ``min_history_days`` as the route passes it.
+
+    The sentence is the expected text of Copy table C row F10 (``tests/ui/_page_copy``); the number
+    is one the module constant does not hold, so a literal in the template cannot satisfy it.
+    """
+    import app as app_module
+    from tests.ui import _page_copy as page_copy
+
+    monkeypatch.setattr(app_module, "_PERFORMANCE_MIN_HISTORY_DAYS", 53)
+    body = " ".join(client.get("/performance").get_data(as_text=True).split())
+    expected = " ".join(page_copy.fill(page_copy.text("F10", "C"), min_history_days="53").split())
+    assert expected in body.replace("<strong>Insufficient history.</strong> ", "")
+    assert "quantstats metrics" not in body
+
+
 def test_get_performance_includes_chartjs_cdn_reference(client, mock_analytics):
     """
     The Performance tab plots live-vs-shadow return curves with Chart.js.

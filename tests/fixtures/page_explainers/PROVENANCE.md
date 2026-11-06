@@ -64,3 +64,22 @@ match a parser or a test.
   browser checks fail with a recapture message instead of comparing.
 - **Size note:** the file is a golden record like `tests/fixtures/dashboard/heading_margin_baseline/baseline.json`,
   not a dataset a test asserts counts over.
+
+## Worlds built inside a test module (Performance and History)
+
+No file is committed for these; each is written at test time through a real writer and named here
+so a reviewer can see what is captured and what is changed.
+
+- **History with all four exit reasons** (`tests/ui/test_page_copy_performance_history.py`,
+  `seed_history_with_all_four_reasons`): `tests/ui/_shell_support.seed_history_exits` writes the
+  captured post-mortem days (`tests/fixtures/prod_droplet/post_mortems/`); none of them holds a
+  `Trailing Stop` exit (the captured reasons are `Take-Profit`, `VWAP Breakdown` and `VWAP Bleed
+  Cut`). The one field `exit_reason` of one captured `Take-Profit` trigger of 2026-06-23 is changed
+  to `Trailing Stop`; nothing else in the record changes. The route body the page reads is the real
+  `/api/history` answer over those files. A second case edits one exit's `reason` in that body to
+  `Manual override` (a reason no map knows) to show an unmapped reason is shown as sent.
+- **Performance with 11 precondition rows** (`tests/ui/test_page_explainers_performance_history_browser.py`,
+  `_usable_preconditions_body`): the real `/api/guard-alpha-preconditions` answer over the captured
+  shadow rows (13 days, below the 40-observation floor, so every verdict is `INSUFFICIENT_DATA` and the
+  page draws no row); each symphony's shadow `verdict` is changed to `NOT_MET`, every other field is
+  the route's own. Synthetic in that one field, so the panel's populated state can be measured.

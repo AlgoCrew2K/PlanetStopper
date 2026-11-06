@@ -11,7 +11,8 @@ Contract pinned
   and it follows a state change in either direction, as the panel's Live return heading does.
 * The headline descriptor ends "All symphonies at their latest values, before exit friction." in every
   market state, at first paint and after a poll, and never says "today".
-* The Performance page keeps its own "Live (if held)" series name: it names a series, not a clock.
+* The Performance page keeps its own series name for the if-held path ("If held", Copy table C row
+  F12b): it names a series, not a clock, and is not the dashboard's open-market legend.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import pytest
 from tests.dashboard import _index_js_harness as hx
 from tests.dashboard import _refresh_timing_support as sup
 from tests.dashboard.test_closed_market_labels_name_the_session import Worlds
+from tests.ui import _page_copy as page_copy
 
 REPO = Path(__file__).resolve().parents[2]
 OPEN_LEGEND = "Live (if held)"
@@ -136,8 +138,11 @@ class TestAfterThePoll:
         assert_descriptor(result, "closed page, open poll")
 
 
-def test_the_performance_page_keeps_its_live_if_held_series_name():
+def test_the_performance_page_keeps_its_own_if_held_series_name():
     template = (REPO / "templates" / "performance.html").read_text(encoding="utf-8")
     script = (REPO / "static" / "performance.js").read_text(encoding="utf-8")
-    assert f"<span>{OPEN_LEGEND}</span>" in template
-    assert f"label: '{OPEN_LEGEND}'" in script
+    series_name = page_copy.text("F12b", "C")
+    assert f"<span>{series_name}</span>" in template
+    assert f"label: '{series_name}'" in script
+    assert f"<span>{OPEN_LEGEND}</span>" not in template
+    assert f"label: '{OPEN_LEGEND}'" not in script
