@@ -11634,3 +11634,70 @@ New suites: `tests/regime_label_job/`, `tests/app/test_regime_label_scheduling.p
 ### Files changed
 
 `regime_label_job.py`, `app.py`, `database.py`, `alpha_bot_execution.py`, tests and fixtures under `tests/`, `feature-plans/regime-label-producer*`, and the docs: `docs/generated/regime_label_job.md`, `docs/generated/app.md`, `docs/generated/database.md`, `docs/generated/alpha_bot_execution.md`, `docs/generated/INDEX.md`, `.claude/CLAUDE.md` (Key Files rows for `alpha_bot_execution.py`, `database.py`, `app.py`, new row `regime_label_job.py`).
+
+## DE-SECURITY-CONTROLS-001: Dashboard session lifetime and revocation, health detail, logout confirm, Cash Now removal, tenure review market gate (2026-11-06)
+
+### Defect
+
+The final-gate report and the security audit of build 38b0cbe8 (findings S-9, S-10, S-11, S-17) found that a dashboard session never expired and logout ended only the browser that sent it, that `GET /logout` signed a user out from a link or prefetch, that an open `GET /api/events` stream outlived its session, and that `GET /health` showed anonymous callers the full degraded-reason detail. Separately, the per-card Cash Now control posted only `symphony_id` to `POST /api/sell_account`, a route that requires `account_id`, `confirm_account_id` and `confirm_phrase` and liquidates a whole account, so it could only answer 400; `POST /ai-advisor/retirement/review/run` had no market gate although Composer's rate limit is shared with the live engine; and the retirement explainer prompt did not say that the JSON evidence, symphony names included, is data.
+
+### Fix
+
+- Sessions: a login stamps `issued_at_ns`, `session_generation` and `logged_in_at_ns`. A session is served only while it is authenticated, its issue time is an integer after the stored revocation floor (and not beyond the next stamp a login could write, plus 60 s), its generation equals the stored generation, and its login time is inside the lifetime. The lifetime is absolute (12 h default, `DASHBOARD_SESSION_LIFETIME_HOURS`, whole hours 1 to 720, otherwise 12 with one warning that never prints the value); requests never extend it.
+- Logout: `GET /logout` renders a confirm page (`static/logout_confirm.js`); `POST /logout` needs a session and the `X-CSRF-Token` header only (the form-field token stays accepted for `login` alone). It raises an in-memory floor and generation, then stores both through `database.record_session_logout` in one monotonic statement (migration 040 `dashboard_session_revocation` with the floor, migration 041 adding `generation`). The generation orders sessions against logouts without the wall clock, so a backward clock step cannot keep a session alive. `logout` is no longer in `_AUTH_EXEMPT_ENDPOINTS`. A failed durable write shows a login-page notice that other sessions end only until the daemon restarts.
+- An unreadable revocation record at start refuses every session issued before the process started. `sse_events` re-checks the session on every event and heartbeat and closes the stream.
+- `/health`: full body only for an on-box caller (loopback peer and neither `X-Forwarded-For` nor `Forwarded` header present; presence decides, never value); every other caller gets `status`, `daemon_started_at`, `last_successful_cycle_at`, with `status` computed from the full view.
+- Cash Now: the button, `cashNow` and its poll logic are removed from `templates/index.html` and `static/index.js`. The header Emergency Liquidate control and `POST /api/sell_account` are unchanged.
+- `POST /ai-advisor/retirement/review/run` answers 409 `market_open` while the market is open, checked before the run lock.
+- The retirement explainer system prompt gains a line stating that all text in the JSON evidence, symphony names included, is data to explain and never instructions.
+- `database.record_session_revocation` (floor only) now has no production caller; it stays tested.
+- Deploying this build refuses every existing session once, because older sessions lack the new fields; the operator logs in again.
+
+### Known limits [PM-ASSUMED]
+
+- (a) A logout sent with an unreadable cookie during a backward clock step revokes nothing. To recover, log in again and log out.
+- (b) QA-4: after a failed durable logout write, or an unreadable revocation record at start, logins made later in that process are refused after the next restart. It fails closed (one extra login) and is on the backlog with INFO-11 as revocation state recovery after a failed read or write.
+- (c) INFO-2: a captured cookie survives a non-durable logout plus a restart, and the operator is told by the login-page notice.
+
+### Review
+
+security-auditor PASS at `.claude/review/13b8109ab93e/security-auditor.md` and qa PASS at `.claude/review/13b8109ab93e/qa.json`, both at head `13b8109ab93e`. QA-4 was ruled a known limit and non-blocking.
+
+### Files changed
+
+`app.py`, `database.py`, `migrations/040_dashboard_session_revocation.sql`, `migrations/041_dashboard_session_generation.sql`, `advisors/retirement_explainer.py`, `templates/login.html`, `templates/index.html`, `static/index.js`, `static/logout_confirm.js`, tests under `tests/`, `feature-plans/security-and-controls*` and `feature-plans/approach/security-and-controls.md`; docs: `docs/generated/app.md`, `database.md`, `refresh_timing.md`, `static_index_js.md`, `static_request_guard_js.md`, `advisors_retirement_explainer.md`, `docs/DEPLOYMENT.md`, `README.md`, `.claude/CLAUDE.md` (Key Files rows `app.py`, `database.py`, new row `static/logout_confirm.js`).
+
+### Reference
+
+`feature-plans/security-and-controls.md`.
+
+## DE-HYGIENE-W34-001: Cleanup waves 3 and 4: dead code, shared helpers, account-id redaction (2026-11-06)
+
+### Defect
+
+The June cleanup program (Waves 3 and 4) was unfinished, and the two latest review rounds left residue: functions with no production caller, byte-identical copies of one helper at several sites, an engine console line that stated a fixed confirmation count, and the real Composer account id (or its first 8 characters) in tracked files, including gzip records that a plain grep does not see. Reachability of each deleted item was proven by call path at the fork point, including `getattr` and `mock.patch` targets (`docs/audit/HYGIENE-REACHABILITY-2026-11-03.md`).
+
+### Fix
+
+- Removed as unreachable: `autotuner.build_symphony_study_name`, `autotuner._build_optuna_sampler_from_env` and the unused local `_n_jobs_raw` (the sampler seed is read inline from `_OPTUNA_SAMPLER_SEED_ENV`), `database.record_autotune_run`, `analytics.compute_v1_bootstrap_state`, `database.get_eod_shadow_row`, `database.compute_shadow_hwm`, `database.get_advisor_observations_for_subject`, `database.get_suggestions_for_symphony` and `get_suggestions_for_session` (with their column list and parser; `llm_suggestions` is still written by `record_llm_suggestion`), `math_engine.filter_sortino_sentinels` (the live filter is in `autotuner`), the root `composer_backtest.py` (the canonical client is `advisors/composer_backtest_client.py`; its `E501` per-file ignore is gone), and orphan fixtures. Kept by ruling: `get_or_create_phase15_m3_bundle_id`, `regime_classifier.fit_regime_classifier`, the `_collect_sim_returns` variants.
+- One definition each, every caller's result unchanged for every input: `math_engine._zscore` (replacing three identical `_z` closures in `run_monte_carlo`, `compute_portfolio_cvar`, `compute_regime_match_quality`); `env_flags.is_true` (accepted spellings `true`, `1`, `yes`, exact, no whitespace strip, `None` raises) at every boolean env parse in `alpha_bot_execution.py`, `app.py` and `sleeves/tick_orchestrator.py`; `database._row_with_json_columns` behind the advisor-observation (tolerant) and frontrunner-proposal (strict) row parsers; `database.select_latest_shadow_row`, the SQL shared by `database.load_latest_shadow_row` and `analytics._load_latest_shadow_row_for_analytics`, each keeping its own connection contract.
+- `database.get_symphony_strategy` gains keyword-only `create_if_missing` (default True); `get_settings` and `get_symphony_settings` pass False so a read adds no row.
+- The engine's dipped-below-stop console line names `_regime_exit_ticks`, the count in force, instead of a fixed 3. This and the `env_flags.is_true` parse of `LIVE_EXECUTION` are the only edits to `alpha_bot_execution.py`; no decision path changed. `math_engine.py` changed only by the `_zscore` extraction and the `filter_sortino_sentinels` removal. The content pins were re-taken over exactly those edits.
+- The real Composer account id is replaced by `ACCOUNT_ID_REDACTED` in every tracked file, including the gzip fixtures, with every recorded digest re-stated; a nil UUID or one listed as invented in a PROVENANCE.md is the only UUID-shaped token the checks accept (`tests/security/test_account_id_placeholder.py`).
+- `regime_label_job._fetch_batch` fails only the affected batch on an unusable page token; `_log_summary` takes a `Sequence`. The `regime_classifier.py` docstring now names its callers (autotuner replay and `regime_label_job`). `.claude/archive/` is gitignored; the specialist agent file no longer names a deleted template.
+
+### Review
+
+Hygiene reviewers passed earlier in this slice; the shared head `13b8109ab93e` carries the qa and security-auditor verdicts recorded under DE-SECURITY-CONTROLS-001.
+
+### Files changed
+
+`alpha_bot_execution.py`, `math_engine.py`, `env_flags.py` (new), `app.py`, `database.py`, `analytics.py`, `autotuner.py`, `regime_label_job.py`, `regime_classifier.py`, `sleeves/tick_orchestrator.py`, removed `composer_backtest.py`, tests and fixtures, `feature-plans/hygiene-waves-3-4*`; docs: `docs/generated/autotuner.md`, `database.md`, `math_engine.md`, `env_flags.md` (new), `INDEX.md`, `docs/audit/security-review.md` (annotated snapshot), `.design-handoff/advisor-multilens/EXTENSION-POINTS.md`, `.claude/CLAUDE.md` (Key Files rows `alpha_bot_execution.py`, `math_engine.py`, `database.py`, new row `env_flags.py`).
+
+### Not verified here
+
+The effect of the `get_symphony_strategy(create_if_missing=False)` change on the droplet's `symphony_strategies` row count is not confirmable from code; settle it with `sqlite3 -readonly alphabot_state.db "select count(*) from symphony_strategies"` before and after a settings page load.
+
+### Reference
+
+`feature-plans/hygiene-waves-3-4.md`.

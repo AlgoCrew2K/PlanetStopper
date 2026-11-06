@@ -25,10 +25,10 @@ Iterates a list of dicts and calls `_reject_non_finite` on named fields. Missing
 
 ---
 
-### Sortino Sentinel Filter
+### Shared z-score
 
-#### `filter_sortino_sentinels(sortino_values: list[float]) → list[float]`
-Removes `_SORTINO_SENTINEL` (1e6) entries from the trial Sortino series before the Harvey & Liu selection haircut. A sentinel's ~1e6 magnitude would produce an extreme t-statistic that dominates the cross-trial distribution. The input list is not mutated.
+#### `_zscore(values, mean, std) → ndarray`
+Private. Standardizes `values` as `(values - mean) / std`, and returns all zeros (same shape, float) when `std == 0.0` exactly. It is the one definition of the zero-spread branch for the three analog-matching distance computations: `run_monte_carlo`, `compute_portfolio_cvar` and `compute_regime_match_quality`, each of which previously carried its own copy of this logic. The scalar `today_ret_z`/`today_vol_z` lines in those functions are separate and unchanged. `filter_sortino_sentinels` was removed (no caller); `_SORTINO_SENTINEL` (1e6) remains the value `compute_sortino_ratio` callers treat as the zero-downside sentinel.
 
 ---
 

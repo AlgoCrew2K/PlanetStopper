@@ -322,7 +322,6 @@ V1 calibration sweep over `PARABOLIC_VELOCITY_THRESHOLD` and `VWAP_CROSS_HWM_PCT
 **Overfitting controls (same methodology as production):**
 - Harvey & Liu BHY haircut (`_haircut_select`) — multiplicity axis
 - `compute_n_effective` wired via `lambda: []` (no prior-run ledger for the calibration context; NEFF-001 fix — ledger returns empty, so `n_eff == len(haircut_trials)`, byte-identical to pre-wiring behavior)
-- `filter_sortino_sentinels` removes zero-downside and partial-sentinel trials before the haircut
 - PBO veto status exposed but NOT applied as a hard veto here (the advisory report surfaces it; the operator decides)
 
 ---
@@ -391,17 +390,13 @@ All three are wrapped in `try/except logger.warning` — Advisor failures are no
 
 ### Walk-Forward State Machine Helpers
 
-#### `build_symphony_study_name(timestamp: str, symphony_id: str) → str`
-Returns `"{timestamp}__{symphony_id}"`. Study names must never be reused.
-
 #### `_fresh_replay_state() → dict`
 Returns a fresh per-position transient-state dict. Used by all three simulation callers.
 
 #### `_replay_grace_minutes() → int`
 Returns `alpha_bot_execution.VWAP_OPEN_WINDOW_GRACE_MINUTES`. Function-local import avoids circular import.
 
-#### `_build_optuna_sampler_from_env() → optuna.samplers.TPESampler`
-Returns `TPESampler` with seed sourced from `OPTUNA_SAMPLER_SEED` env var (None when unset; preserves non-deterministic behaviour for operators who have not opted in to reproducibility).
+`run_autotuner` reads `OPTUNA_SAMPLER_SEED` itself (through `_OPTUNA_SAMPLER_SEED_ENV`) and builds the `TPESampler` with that seed, `None` when unset (non-deterministic, as before). The helpers `_build_optuna_sampler_from_env` and `build_symphony_study_name` were removed (no caller); the study name is built inline as `{timestamp}__{symphony_id}` and must never be reused.
 
 #### `_resolve_optuna_n_jobs_from_env() → int`
 Returns n_jobs from `OPTUNA_N_JOBS` env var; falls back to 1 on unset or garbled. Default 1 (not cpu_count) because SQLite RDBStorage does not support parallel writes.

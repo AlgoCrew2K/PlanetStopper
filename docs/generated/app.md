@@ -23,7 +23,7 @@ See the Cycle-2e-labelled sections below.) Prior: 2026-09-03 (DE-PERF-WINDOW-TRU
 - **Dashboard routes** — operator UI routes. Two CSRF-protected write paths exist: `POST /api/settings` (allowlisted .env keys) and `POST /api/symphony-settings/<name>` (per-symphony live-mode toggle). Templates open SQLite read-only; the dashboard is NOT a live-trade-action surface.
 - **AI Advisor routes** — unified single-page SPA at `GET /ai-advisor` renders all 7 tabs in one server-side render (Frontrunner Builder added as the 7th tab, frontrunner-builder wave-2, 2026-07-11); GET sub-routes for the old per-tab pages now 302-redirect to `/ai-advisor`; POST action routes (suggest, evaluate, accept, reject, chat/send, strategy-builder/run, frontrunner-builder/run, proposal/approve, proposal/reject) kept their request shapes and paths. The three operator-Evaluate routes (asset-swaps/evaluate, logic-changes/evaluate, strategy-builder/run) gained substantial response-JSON extensions in the advisor-remediation-r1 cycle — N=1 statistical-honesty caveats, a granular `rejection_reason` per candidate, a `low_power` statistical-power flag (plus caveat text), and (Strategy Builder only) run-level built-new/Atlas provenance + degraded-mode reporting; Strategy Builder additionally gained R2-1's `provenance` object (generation model + injected-evidence manifest + run-id, symphony-scoped runs only), and Logic Changes gained R2-2's own reuse of the same contract (present on EVERY return path, not just success); Asset Swaps gained R2-3's reuse of the SAME contract on the SAME stricter present-on-every-path shape, plus a new objective-only REASONED mode (both `from_ticker`/`to_ticker` omitted) that runs alongside the byte-preserved EXPLICIT-PAIR mode. See `DE-ADVISOR-R1-001`/`DE-ADVISOR-R2-1-001`/`DE-ADVISOR-R2-2-001`/`DE-ADVISOR-R2-3-001` and `DE-FRONTRUNNER-002` in `DECISIONS.md` and the route sections below.
 - **CSRF infrastructure** — `_validate_csrf()` hook; `_csrf_before_request` before-request handler; `GET /api/csrf-token` token endpoint; `_SETTINGS_WRITE_ALLOWLIST` restricts which .env keys the settings write path can touch.
-- **Dashboard auth gate** — single-password Flask signed-session gate protecting the entire Flask surface (AC-1..AC-13). `_auth_before_request` before-request hook registered before CSRF; `_AUTH_EXEMPT_ENDPOINTS` frozenset allowlist (`login`, `logout`, `static`, `get_csrf_token`, `health`); `_resolve_dashboard_credential()` for hash-preferred credential resolution (`DASHBOARD_PASSWORD_HASH` over `DASHBOARD_PASSWORD`); `_is_api_or_xhr()` dispatches 401 JSON vs 302 redirect; in-memory throttle `_AUTH_FAILED_ATTEMPTS`; **fail-closed**: missing credential or `SECRET_KEY` denies ALL requests.
+- **Dashboard auth gate** — single-password Flask signed-session gate protecting the entire Flask surface (AC-1..AC-13). `_auth_before_request` before-request hook registered before CSRF; `_AUTH_EXEMPT_ENDPOINTS` frozenset allowlist (`login`, `static`, `get_csrf_token`, `health`; `logout` is not exempt and needs a valid session); `_resolve_dashboard_credential()` for hash-preferred credential resolution (`DASHBOARD_PASSWORD_HASH` over `DASHBOARD_PASSWORD`); `_is_api_or_xhr()` dispatches 401 JSON vs 302 redirect; in-memory throttle `_AUTH_FAILED_ATTEMPTS`; **fail-closed**: missing credential or `SECRET_KEY` denies ALL requests.
 - **Event-driven dashboard push** — `GET /api/events` SSE endpoint streams `cycle-complete` notifications to all connected dashboard clients; `_notify_cycle_complete()` fans out after every engine subprocess exit (success or failure). Primary update path; 30 s poll is the resilience fallback. See `DE-SSE-PUSH-001` in `DECISIONS.md`.
 
 Module-level thread-safety constructs:
@@ -48,7 +48,8 @@ Module-level thread-safety constructs:
 | `DASHBOARD_PASSWORD_HASH` | preferred | Werkzeug hash of the dashboard password (`pbkdf2:`, `scrypt:`, or `bcrypt:` prefix). Takes precedence over `DASHBOARD_PASSWORD`. |
 | `DASHBOARD_PASSWORD` | fallback | Plaintext dashboard password. Used only when `DASHBOARD_PASSWORD_HASH` is absent. Never written to logs. |
 | `SECRET_KEY` | required | Flask session signing key. If absent/empty, all requests are denied (fail-closed). Fallback env name: `FLASK_SECRET_KEY`. |
-| `SESSION_COOKIE_SECURE` | optional | Set to `1`, `true`, or `yes` to add `Secure` flag to the session cookie (enable when TLS terminates at a reverse proxy). |
+| `DASHBOARD_SESSION_LIFETIME_HOURS` | optional | Absolute session lifetime in whole hours, 1 to 720. Default 12. A session ends that long after its login; requests never extend it. A value outside the range or not a whole number logs one warning (never the value) and uses 12. |
+| `SESSION_COOKIE_SECURE` | optional | Set to `1`, `true`, or `yes` (parsed by `env_flags.is_true`) to add `Secure` flag to the session cookie (enable when TLS terminates at a reverse proxy). |
 | `TRUST_PROXY` | optional | When truthy, the login handler reads the real client IP from `X-Forwarded-For` (first entry) for throttle keying. Leave unset when not behind a trusted proxy. |
 | `_AUTH_MAX_ATTEMPTS` | optional | Max consecutive wrong-password attempts before lockout. Default: `10`. |
 | `_AUTH_LOCKOUT_SECONDS` | optional | Lockout duration in seconds after exceeding `_AUTH_MAX_ATTEMPTS`. Default: `300` (5 minutes). |
@@ -89,7 +90,7 @@ Flask `before_request` hook (registered before `_csrf_before_request`). Enforces
 - Bypassed when `_auth_check_enabled` is `False` (test contexts).
 - Exempt endpoints (`_AUTH_EXEMPT_ENDPOINTS`) pass through unconditionally.
 - Fail-closed: missing `SECRET_KEY` or missing credential → 503 JSON / redirect to `/login`.
-- Authenticated session (`session['authenticated']`) → pass through.
+- Authenticated session → pass through only when `_session_is_valid()` holds: `session['authenticated']` is true, `issued_at_ns` is an integer after the stored revocation floor (and not past the next stamp a login could write, plus a 60 s tolerance), the `session_generation` equals the stored logout generation, and `logged_in_at_ns` is inside the lifetime. A session written before `logged_in_at_ns` existed counts its lifetime from `issued_at_ns`.
 - Unauthenticated: `/api/*` or XHR → 401 JSON; HTML routes → 302 `/login`.
 
 #### `_is_api_or_xhr() → bool`
@@ -110,8 +111,16 @@ Login page (AC-3 through AC-9, AC-13).
 - **GET:** Renders `templates/login.html` with the process-lifetime CSRF token. If the session is already authenticated, redirects to the dashboard (AC-13).
 - **POST:** Throttle-check → credential resolution → constant-time compare (`hmac.compare_digest` for plaintext; `werkzeug.security.check_password_hash` for hashed credentials with `pbkdf2:`/`scrypt:`/`bcrypt:` prefix) → on success: `session.clear()` + `session['authenticated'] = True` + redirect (AC-4, session-fixation prevention); on failure: increment throttle + re-render with generic "Incorrect password." error (AC-5, AC-9). Client IP resolved via `X-Forwarded-For` when `TRUST_PROXY` is set.
 
-#### `GET /logout` — `logout()`
-Clears the session and redirects to `/login` (AC-11).
+#### `GET /logout` and `POST /logout`: `logout()`
+Needs a valid session (not in `_AUTH_EXEMPT_ENDPOINTS`).
+
+- **GET:** renders the confirm page (`templates/login.html` with `confirm_logout=True`, script `static/logout_confirm.js`). It ends nothing, so a link or prefetch cannot sign anyone out.
+- **POST:** the `X-CSRF-Token` header is the only accepted token (a `csrf_token` form field is refused; only `login` accepts the form field). Calls `_revoke_sessions_issued_before(now)`, which ends every session issued before now, clears this session and redirects to `/login`. When the durable write failed, the login page shows "Signed out. Other sessions are ended until the daemon restarts." (`_LOGOUT_NOT_DURABLE_TEXT`).
+
+#### Session revocation
+`login()` stamps `issued_at_ns` (`max(login time, floor + 1)`), `session_generation` (the stored generation) and `logged_in_at_ns` (wall-clock login time, the lifetime anchor). A logout raises an in-memory floor and generation first (`_revoke_sessions_issued_before`), then stores both in one statement through `database.record_session_logout(floor_ns, generation)`; the return value is `False` when that write failed. The pair is read from `dashboard_session_revocation` once per process (`_load_revocation_state_locked`); an unreadable record sets the floor to the process start instant and the generation to 0, so every session issued before this start is refused. The generation orders sessions against logouts without the wall clock, so a logout still ends sessions stamped ahead of the clock after a backward step. `GET /api/events` (`sse_events`) re-checks the session it opened with on every event and heartbeat and closes the stream when it is no longer valid. `app.permanent_session_lifetime` comes from `_session_lifetime_hours(os.environ.get("DASHBOARD_SESSION_LIFETIME_HOURS"))`. Deploying the build that introduced the new session fields refuses every older session once, so the operator logs in again.
+
+Known limits, none fixed here: (a) a logout sent with an unreadable cookie during a backward clock step revokes nothing, so log in again and log out to recover; (b) after a failed durable logout write, or an unreadable revocation record at start, logins made later in that process are refused after the next restart (fails closed, one extra login); (c) a captured cookie survives a non-durable logout plus a restart, which the login notice tells the operator.
 
 ---
 
@@ -137,7 +146,7 @@ Flask `before_request` hook. Injects CSRF enforcement for the two guarded write 
 ### Liveness Probe
 
 #### `GET /health` — `health()`
-Minimal unauthenticated liveness probe (F-005, `DE-OPS-CLUSTER-001`, 2026-07-21). Registered right after `get_csrf_token()` (app.py); exempt from the auth gate via `_AUTH_EXEMPT_ENDPOINTS` (endpoint name `'health'` — the frozenset already carried this entry from the original auth-gate cycle, but no route backed it until now). Read-only: sources `last_successful_cycle_at` from `database.load_state()` (the same top-level engine-written field `_compute_portfolio_strip` reads, see State Helpers below) wrapped in try/except (degrades to `{}` on failure) — never opens a read-write connection, per architecture constraint 5. GET-only; `POST /health` 405s via Flask's default routing (no `methods=["POST"]` registered).
+Liveness probe, no session needed. Detail depends on the caller: a caller on box (loopback peer, no `X-Forwarded-For` or `Forwarded` header, `_health_caller_is_on_box`) gets the full body; every other caller gets only `status`, `daemon_started_at` and `last_successful_cycle_at`. Original description (F-005, `DE-OPS-CLUSTER-001`, 2026-07-21). Registered right after `get_csrf_token()` (app.py); exempt from the auth gate via `_AUTH_EXEMPT_ENDPOINTS` (endpoint name `'health'` — the frozenset already carried this entry from the original auth-gate cycle, but no route backed it until now). Read-only: sources `last_successful_cycle_at` from `database.load_state()` (the same top-level engine-written field `_compute_portfolio_strip` reads, see State Helpers below) wrapped in try/except (degrades to `{}` on failure) — never opens a read-write connection, per architecture constraint 5. GET-only; `POST /health` 405s via Flask's default routing (no `methods=["POST"]` registered).
 
 **Response shape:**
 ```json
@@ -1276,14 +1285,14 @@ These changes are documented in their own pages; this section lists the `app.py`
 | `GET /api/armed-symphonies` | `{"armed": [{name, flags, state: "live"}]}` from live `bot_state` (never the frozen snapshot), real symphony entries only; 500 with a generic body on failure |
 | `GET /api/frontrunner-build/last-run` | `{"last_run": <newest FRONTRUNNER_BUILD_SUMMARY raw_response or null>}`; 500 generic on failure |
 | `GET /api/history/ytd` (`/api/history/<any(ytd):days>`) | the History summary from 1 January; the integer form `/api/history/<days>` is unchanged |
-| `POST /ai-advisor/retirement/review/run` | starts one tenure review in the background: 202 `started`, 409 `already_running`; no market gate; reads no body |
+| `POST /ai-advisor/retirement/review/run` | starts one tenure review in the background: 409 `market_open` while the NYSE session is open (checked before the run slot, because Composer's rate limit is shared with the live engine), 202 `started`, 409 `already_running`; reads no body |
 | `GET /api/retirement-recommendations` | additionally returns `review_run`, `review_entries`, `review_status`, `review_read_failed` (seven keys in all) |
 | `GET /api/exit-turnover` | session-anchored while closed; 500 on a failed read |
 | `GET /api/performance` | accepts the `5y` window token |
 | `POST /api/settings` | all-or-nothing value validation; 400 leaves `.env` unchanged |
 | `POST /api/settings/flush-resync` | keeps post-mortem files dated on or after `_PRODUCTION_GO_LIVE_DAY` |
 
-The CSRF check (`_validate_csrf`) accepts the `csrf_token` form field only on the `login` endpoint and refuses a POST whose `Sec-Fetch-Site` is `same-site` or `cross-site`; every other route needs the `X-CSRF-Token` header. This replaces the earlier "form field for any form-encoded POST" rule.
+The CSRF check (`_validate_csrf`) accepts the `csrf_token` form field only on the `login` endpoint and refuses a POST whose `Sec-Fetch-Site` is `same-site` or `cross-site`; every other route needs the `X-CSRF-Token` header, including `POST /logout`. This replaces the earlier "form field for any form-encoded POST" rule.
 
 ## Internal Dependencies
 
