@@ -70,6 +70,9 @@ G-1 to G-3 are the operator's source, verbatim. G-4 to G-26 are PM rulings from 
 [G-24] (PM ruling on the audit's notes; [PM-ASSUMED]) ""model unavailable" pasted into a sentence ("via model unavailable") is IN scope as a copy defect. The sentence must read correctly whether or not a model name resolves. Render-only."
 [G-25] (PM ruling on the audit's notes; [PM-ASSUMED]) "At 375, the advisor tab strip must show that more tabs exist, and every tab must be reachable. State the WHAT only; no new visual language."
 [G-26] (PM ruling on the audit's notes; [PM-ASSUMED]) "Phone repetition (P1 autotune rows, P2 identical Frontrunner titles) is IN scope. Repeated identical status text may be stated once. Cards that would carry identical titles must be told apart by data already on the card (for example the proposal number or the overlay summary). Render-only, and no data is dropped."
+[G-27] (PM ruling on Q-1; [PM-ASSUMED]) The shared header's terms are in scope as definitions only, with no layout or visual change to the header: "Dry run" (no real orders are sent; global live execution is off), the market state word, the account selector, Force run now and Emergency Liquidate (what each does, and that liquidate sells the whole account). A title attribute or accessible description is enough, because these are terms and controls, not sections. The chrome look pins stay untouched.
+[G-28] (PM ruling on NB-5; [PM-ASSUMED]) A control with no handler in any script ("Go to cash" and "View logs" in the detail panel) is not rendered. This is render-only, and no working control changes; it is the one stated exception to the nothing-else-changes criterion.
+[G-29] (PM ruling on KU-6; [PM-ASSUMED]) The code keeps refusing credential keys by design, but the copy must be true: the Settings Credentials text says the dashboard does not save credentials and that they are set in the .env file on the host, and a save path that cannot succeed does not claim it will. The backend behavior is unchanged.
 
 ## Requirement Inventory
 | R-n | Requirement item | Source (G ids) | Maps to (AC ids, or NB-n) | Scope (full, or narrowed: what is left out) |
@@ -82,7 +85,7 @@ G-1 to G-3 are the operator's source, verbatim. G-4 to G-26 are PM rulings from 
 | R-6 | The density criteria are measurable by a browser test | G-15 | AC-6, AC-7 | full |
 | R-7 | Every page and section says, in plain words, what it is and why the operator should care | G-3, G-4, G-6 | AC-1 | narrowed: the shared header is not covered (NB-2, Q-1) |
 | R-8 | Each section description is visible without hover | G-6 | AC-1 | full |
-| R-9 | Each jargon term gets a plain definition at its first appearance on a page, by a stated placement rule | G-3, G-7 | AC-2, NB-2, NB-3, NB-4, NB-5 | narrowed: the audit's terms less the header items, model-written lens text, text a route returns in JSON and the two inert detail-panel buttons |
+| R-9 | Each jargon term gets a plain definition at its first appearance on a page, by a stated placement rule | G-3, G-7 | AC-2, NB-2, NB-3, NB-4 | narrowed: the audit's terms less the header's wordmark tag, clock, countdown, bell and Tweaks button, model-written lens text and text a route returns in JSON |
 | R-10 | The plan carries the exact copy, one row per item, for tests and qa | G-8, G-20 | AC-1, AC-2, AC-3 | full |
 | R-11 | Every sentence is true of the code at 1988ce5f, with the file:line it describes | G-9 | AC-1, AC-2, AC-3 | full |
 | R-12 | Copy that names a configured value renders it from its authority, never a literal | G-10 | AC-4 | full |
@@ -104,6 +107,9 @@ G-1 to G-3 are the operator's source, verbatim. G-4 to G-26 are PM rulings from 
 | R-28 | A sentence that embeds the model name reads correctly whether or not a model resolves | G-24 | AC-3 | full |
 | R-29 | At 375 the Advisor tab strip shows that more tabs exist and every tab is reachable | G-25 | AC-7 | full |
 | R-30 | Repeated identical autotune status text is stated once, and same-title frontrunner cards are told apart by data on the card, with no data dropped | G-26 | AC-8 | full |
+| R-31 | The header's mode pill, market state word, account selector, Force run now and Emergency Liquidate carry definitions, with no change to the header's layout or look | G-27 | AC-2 | full |
+| R-32 | A control with no handler in any script is not rendered | G-28 | AC-5 | full |
+| R-33 | The Settings Credentials copy says the dashboard does not save credentials and that they are set in .env on the host, and no copy claims a save that cannot succeed | G-29 | AC-3 | full |
 
 ## User Tasks
 Workflow (AI Advisor Retirement tab): no workflow file: `.claude/workflows/` does not exist at the ref; the task is the operator's own example (G-3)
@@ -196,8 +202,8 @@ Negative coverage: N1 S-1.17, S-1.18 · N2 n/a: a description refuses nothing an
 Questions: Q-1, Q-8
 
 ### AC-2: Each jargon term is defined where it first appears on a page
-Requirement items: R-9, R-10, R-11, R-13, R-14, R-24
-Rule: When a host renders, each row of Copy table B for that host shall be readable at the term's first appearance on that host by the row's placement: V (inside the visible description it names) or D (a line "Term: definition", in table order, inside one closed disclosure with the summary "What the terms mean" placed directly under the description of the section it names); no term shall be defined by a `title` attribute alone, and each Advisor tab, the dashboard detail panel and the settings modal count as hosts of their own (D-4).
+Requirement items: R-9, R-10, R-11, R-13, R-14, R-24, R-31
+Rule: When a host renders, each row of Copy table B for that host shall be readable at the term's first appearance on that host by the row's placement: V (inside the visible description it names) or D (a line "Term: definition", in table order, inside one closed disclosure with the summary "What the terms mean" placed directly under the description of the section it names); no term shall be defined by a `title` attribute alone, except that the header rows (placement A) are carried by the control's `title` or its accessible description, with no visible change to the header (D-12); and each Advisor tab, the dashboard detail panel and the settings modal count as hosts of their own (D-4).
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
@@ -218,13 +224,15 @@ Rule: When a host renders, each row of Copy table B for that host shall be reada
 | S-2.15 | N3 | the section a row names does not render (CVaR hidden, no frontrunner proposals) | the host renders | its disclosure is absent with it, and the term is not shown elsewhere on that host |
 | S-2.16 | N8 | a pending live-mode toggle in the modal | the M01 disclosure is opened and closed | the pending toggle and the confirm dialog behave as at the ref |
 | S-2.17 | N6 | the modal's settings fetch fails | the error state shows | no definitions show and the error text is unchanged |
+| S-2.19 | B | any page at 1440 and 375 | the header renders, and the engine state moves through each state static/chrome.js can write | the mode pill, the engine status element, the account selector, Force run now and Emergency Liquidate each carry their Copy table B header definition, exactly, as a `title` or an accessible description; the status element's definition is the one for the state it shows |
+| S-2.20 | N7 | the header | it renders | its layout, sizes, colors and visible text are as at the ref; `tests/ui/test_chrome_look_contract.py` and `tests/ui/test_chrome_look_browser.py` pass unchanged; the existing `title` text of the engine states (the degraded reasons included) is kept |
 | S-2.18 | N6 | a host's script fails to load | the server render is read | every template-built disclosure is present, closed, with its definitions exactly as Copy table B gives them |
 
-Negative coverage: N1 S-2.11, S-2.12 · N2 n/a: a definition refuses nothing · N3 S-2.15 · N4 n/a: the hosts sit behind the unchanged auth hook (S-5.8) · N5 S-2.14 · N6 S-2.17, S-2.18 · N7 S-2.13 · N8 S-2.16
+Negative coverage: N1 S-2.11, S-2.12 · N2 n/a: a definition refuses nothing · N3 S-2.15 · N4 n/a: the hosts sit behind the unchanged auth hook (S-5.8) · N5 S-2.14 · N6 S-2.17, S-2.18 · N7 S-2.13, S-2.20 · N8 S-2.16
 Questions: Q-8
 
 ### AC-3: Jargon labels are reworded the same way by the server and the scripts
-Requirement items: R-10, R-11, R-13, R-23, R-24, R-26, R-28
+Requirement items: R-10, R-11, R-13, R-23, R-24, R-26, R-28, R-33
 Rule: When a label in Copy table C renders, the host shall show its new text in place of its old text, identically whether the server rendered it or a script wrote it on a poll or after a run, and the old text shall no longer appear on that host.
 
 | ID | Kind | Given | When | Then |
@@ -241,11 +249,13 @@ Rule: When a label in Copy table C renders, the host shall show its new text in 
 | S-3.10 | N5 | the dashboard poll and the Overview 15 s refresh run five times | the hosts are read | no reworded label ever shows its old text |
 | S-3.11 | N6 | a host's script fails to load | the server render is read | every template-built row of Copy table C shows its new text |
 | S-3.12 | B | every other row of Copy table C | its host renders | the new text shows and the old text is absent from that host |
+| S-3.16 | B | the Credentials section of `/settings` | it renders and a value is typed into a credential field (static/settings.js) | the S11, S12r and S12s rows show; no text on the page says a credential will be saved or written to .env |
+| S-3.17 | N7 | a save that carries a typed credential | Save is chosen | `POST /api/settings` still answers 400 and writes nothing, as at the ref; the page's error text is unchanged |
 | S-3.13 | B | the suggestion and synthesis models resolve to display names | `/ai-advisor` renders | each model sentence of Copy table C (rows MU1 to MU5) reads its resolved form with the name in place |
 | S-3.14 | N3 | the models do not resolve (`model_config.py:66-73` gives "model unavailable") | `/ai-advisor` renders | each model sentence reads its unresolved form, and the words "model unavailable" appear nowhere on the page |
 | S-3.15 | N7 | every concept that had two names at the ref (the Bot series, If held, exits, each exit reason, max drawdown, exit alpha, Performance's share of up days) | every host renders | each shows only the name Copy table C gives it, on every host |
 
-Negative coverage: N1 S-3.4 · N2 n/a: no label refuses anything · N3 S-3.5, S-3.14 · N4 n/a: unchanged auth hook (S-5.8) · N5 S-3.10 · N6 S-3.11 · N7 S-3.7, S-3.15 · N8 n/a: no reworded label sits on a form that holds an unsaved edit
+Negative coverage: N1 S-3.4 · N2 n/a: no label refuses anything · N3 S-3.5, S-3.14 · N4 n/a: unchanged auth hook (S-5.8) · N5 S-3.10 · N6 S-3.11 · N7 S-3.7, S-3.15, S-3.17 · N8 n/a: a typed credential is an unsaved edit, and S-3.16 shows its status text is the new one
 Questions: Q-5, Q-6
 
 ### AC-4: Copy that names a configured value shows the configured value
@@ -271,8 +281,8 @@ Negative coverage: N1 S-4.3 · N2 n/a: no input is judged · N3 S-4.9 · N4 n/a:
 Questions: Q-2
 
 ### AC-5: No figure, control, banner, contract or honesty text changes
-Requirement items: R-1, R-15, R-16, R-17, R-18, R-21
-Rule: If this change is applied, then every figure, control, banner, route, JSON body, database read and write and honesty text shall stay as it was at 1988ce5f, apart from the rows of the three copy tables and the layout of AC-6.
+Requirement items: R-1, R-15, R-16, R-17, R-18, R-21, R-32
+Rule: If this change is applied, then every figure, control, banner, route, JSON body, database read and write and honesty text shall stay as it was at 1988ce5f, apart from the rows of the three copy tables and the layout of AC-6, with one stated exception: a control that no script handles is no longer rendered, which at the ref is the detail panel's View logs, Go to cash and Edit variables buttons (`templates/index.html:1991-1992`, `:2132`).
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
@@ -288,9 +298,11 @@ Rule: If this change is applied, then every figure, control, banner, route, JSON
 | S-5.10 | N3 | a figure that is absent, null or not finite | its host renders | it shows the same dash as at the ref |
 | S-5.11 | N2 | Run recommender or Run tenure review chosen while the market is open | the route answers 409 | the refusal text is the same as at the ref |
 | S-5.12 | N8 | a pending live toggle in the modal | Save is chosen | the "Confirm live trading" dialog shows as at the ref and nothing is saved before it |
+| S-5.14 | B | a card on `/` | the detail panel opens at 1440 and 375 | no View logs, Go to cash or Edit variables button is in the panel; the close button and the overlay toggles are present and work |
+| S-5.15 | N7 | every page | it renders | every other control is rendered as at the ref, and a search of `static/` and `templates/` finds no other rendered button without a handler, an `onclick` or a form |
 | S-5.13 | N7 | `alpha_bot_execution.py`, `math_engine.py` and `database.py` | a test reads each file with line endings normalized to LF and hashes it | each SHA-256 equals the value recorded from the file at 1988ce5f |
 
-Negative coverage: N1 n/a: this criterion judges no input · N2 S-5.11 · N3 S-5.10 · N4 S-5.8 · N5 n/a: no action is added; repeated actions keep their existing guards, pinned by their existing tests · N6 n/a: no dependency is added; existing failure states are pinned by S-5.4 · N7 S-5.2, S-5.3, S-5.4, S-5.5, S-5.6, S-5.7, S-5.9, S-5.13 · N8 S-5.12
+Negative coverage: N1 n/a: this criterion judges no input · N2 S-5.11 · N3 S-5.10 · N4 S-5.8 · N5 n/a: no action is added; repeated actions keep their existing guards, pinned by their existing tests · N6 n/a: no dependency is added; existing failure states are pinned by S-5.4 · N7 S-5.2, S-5.3, S-5.4, S-5.5, S-5.6, S-5.7, S-5.9, S-5.13, S-5.15 · N8 S-5.12
 Questions: Q-5
 
 ### AC-6: At 1440 px no panel holds a large empty region
@@ -390,7 +402,7 @@ Columns: Key, the host and where the line sits at the ref, who builds it, the ki
 | S01 | Settings, the page subtitle (`templates/settings.html:963`) | template | reworded | .env globals + SQLite-isolated symphony strategies · live edits, no restart | Global settings and per-symphony overrides · saved changes apply from the next minute, no restart | `templates/settings.html:986-989` |
 | S03 | Settings, Master controls subtitle (`templates/settings.html:998`) | template | kept | The mode and the start time that govern real-money execution. Treat both with care. | unchanged | `templates/settings.html:1001-1033` |
 | S08 | Settings, Algorithm parameters subtitle (`templates/settings.html:1040`) | template | kept | Global defaults applied to every symphony. Per-symphony overrides in the next section take precedence. | unchanged | `static/settings.js:197-220` |
-| S11 | Settings, Credentials subtitle (`templates/settings.html:1047`) | template | reworded | the subtitle at `templates/settings.html:1047` | The keys, account ids and webhook address the bot uses for Composer, Alpaca, Discord and Anthropic, kept in the server's .env file. The server shows only masked placeholders, so secrets never round-trip through the browser. | `app.py:9513-9525`, `:9651-9656` |
+| S11 | Settings, Credentials subtitle (`templates/settings.html:1047`) | template | reworded | the subtitle at `templates/settings.html:1047` | The keys, account ids and webhook address the bot uses for Composer, Alpaca, Discord and Anthropic. The dashboard does not save credentials: they are set in the .env file on the host, and the server shows only masked placeholders here. | `app.py:9513-9525`, `:9651-9656`, `:9708-9729` |
 | S14 | Settings, Per-symphony overrides subtitle (`templates/settings.html:1128`) | template | kept | the subtitle at `templates/settings.html:1128` | unchanged | `static/settings.js:490-591` |
 | S17 | Settings, Maintenance subtitle (`templates/settings.html:1139`) | template | kept | the subtitle at `templates/settings.html:1139` | unchanged | `templates/settings.html:1141-1188` |
 | M04 | settings modal, the "Execution mode" header's empty sub line (`static/settings-modal.js:471`) | static/settings-modal.js | new | none | Whether this symphony may send real sell orders. It trades live only when this switch and the server's global live switch are both on. | `static/settings-modal.js:369-391` |
@@ -419,9 +431,9 @@ Columns: Key, the host and where the line sits at the ref, who builds it, the ki
 | X05 | Frontrunner, under "Pending approval (N)" (`templates/ai_advisor.html:2925`) | template | new | none | Copies waiting for your decision. Compare each copy's Calmar, CAGR and drawdown with the original before you approve; approving creates a new undeployed symphony and trades nothing. | `templates/ai_advisor.html:2861-2867`; `advisors/frontrunner_builder.py:15-21` |
 
 #### Copy table B: term definitions
-Audit items covered by other rows: D11 by D06a and D10; D27 by D25; D60 by D58d; F06 by F01; F18 by F17a; F22 by F21 and F22r; Y11 by Y10; A02 by the tab rows O01, C01, R01, W01, L01, T02, B00 and X01; O17 by MU1; R24 by R22; B04 by B01 and B02; X13 by X06. W08 and S09 are excluded by NB-4, H01 to H11 by NB-2, O21 by NB-3 and D52 by NB-5.
+Audit items covered by other rows: D11 by D06a and D10; D27 by D25; D60 by D58d; F06 by F01; F18 by F17a; F22 by F21 and F22r; Y11 by Y10; A02 by the tab rows O01, C01, R01, W01, L01, T02, B00 and X01; O17 by MU1; R24 by R22; B04 by B01 and B02; X13 by X06. W08 and S09 are excluded by NB-4, H02, H03, H07, H08, H09 and H10 by the header rows, H01, H04, H05, H06 and H11 by NB-2, O21 by NB-3 and D52 by NB-5.
 
-Placement V means the definition is the visible description named; D means a line in the "What the terms mean" disclosure under that section's description. Each disclosure is built by whatever builds its section (the template unless the row says a script).
+Placement V means the definition is the visible description named; D means a line in the "What the terms mean" disclosure under that section's description; A means the control's `title` or accessible description, used for the header rows only (D-12). Each disclosure is built by whatever builds its section (the template unless the row says a script).
 
 | Key | Host | Term as shown | Placement | Built by | Definition (exact) | True of |
 |---|---|---|---|---|---|---|
@@ -528,6 +540,11 @@ Placement V means the definition is the visible description named; D means a lin
 | S18 | Settings | synthetic post-mortem, re-syncs account totals | D S17 | template | Synthetic post-mortem: a daily exit record that was generated or seeded rather than captured live. Re-syncs account totals: reads the account totals from Composer again. | `templates/settings.html:1150-1155`; `static/settings.js:350-353` |
 | M01 | settings modal | Dry-run (global off), Live, Dry-run | D M04 | static/settings-modal.js | Dry-run (global off): the server's live switch is off, so nothing trades live. Live: this symphony sends real sell orders. Dry-run: this symphony is watched but sends no orders. | `static/settings-modal.js:369-376` |
 | M08 | settings modal | Clear, Watch, Breach | D M07 | static/settings-modal.js | Clear: the check passed. Watch: worth a look, not a failure. Breach: the check failed. | `app.py:113-123` |
+| H08 | header, every page | the mode pill, Dry run or Live | A | template | Dry run: global live execution is off, so the bot sends no real orders. Live: global live execution is on; a symphony trades live only when its own live switch is on too. | `app.py:3905`; `templates/_chrome.html:57-59`; `static/settings-modal.js:369-376` |
+| H02 | header, every page | the engine state word | A | template and static/chrome.js | Live: the market is open and the engine is checking stops every minute. Closed: the market is closed. Rebalance pause: the scheduled pause before the close; stops resume at the close. Opening: the session's first cycle is running. Stale: no recent engine cycle, so positions may not be guarded. Not updating: the page has not received data for a while. Degraded: the server reports a problem, named in the tooltip. Connection Lost: the last refresh failed, and the values shown are from the last data received. Each state carries only its own sentence. | `static/chrome.js:283-303`, `:351-377`; `templates/_chrome.html:20-26`; `app.py:2924` |
+| H07 | header, every page | the account selector | A | template | Account: the Composer account the dashboard shows figures for; choosing another reloads the dashboard for it. The short code is the start of the account's id. | `static/chrome.js:59-77`, `:90-150`; `app.py:8351-8361` |
+| H09 | header, every page | Force run now | A | template | Force run now: asks the server for an engine run; the server declines and answers that runs come only from the scheduler, so pressing it starts nothing. | `app.py:8345-8349`; `static/chrome.js:1-50` |
+| H10 | header, every page | Emergency Liquidate | A | template | Emergency Liquidate: after you choose an account and type LIQUIDATE, asks Composer to sell every symphony in that whole account to cash. While global live execution is off it only logs and sends the alert, and sells nothing. | `app.py:8970-9030`, `:8923-8935`; `static/chrome.js:170-245` |
 | A03 | Advisor, every tab | the dot beside a tab name | D A01 | template | Tab dots: green marks low risk; amber marks a tab to read with more care: higher overfitting risk, a real Composer write, or explanations only. | `templates/ai_advisor.html:476-485`, `:1135-1197` |
 | A04 | Advisor, every tab | model not known | D A01 | template | Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family. | `model_config.py:38`, `:66-73`, `:184`, `:207-212`; `app.py:10953-10954` |
 | O04 | Overview | OOS | D O03 | template | OOS: out of sample, recent history the tuning never saw, kept back to check that a result is not fitted to noise. | `ai_advisor.py:99-105` (`_OOS_HOLDOUT_FRACTION`) |
@@ -642,6 +659,8 @@ Placement V means the definition is the visible description named; D means a lin
 | NM7 | Performance metric row (`templates/performance.html:642`; `static/performance.js:64`) | template and static/performance.js | Win rate | Up days | `analytics.py:467-468` |
 | NM8 | Frontrunner card title (`templates/ai_advisor.html:2945`) | template | {name} | {name} · proposal #{id} (AC-8) | `templates/ai_advisor.html:2938-2940` |
 | X04 | Frontrunner unavailable body (`templates/ai_advisor.html:2876-2879`) | template | the body at `templates/ai_advisor.html:2876-2879` | The Frontrunner build needs an Anthropic API key in the server's .env file to generate candidates. Proposals already queued still show below. | `templates/ai_advisor.html:2870-2880` |
+| S12r | Settings, Credentials warning (`templates/settings.html:1049-1053`) | template | Heads up. Saving any of these fields writes the new value to .env immediately. Blank fields are ignored (existing value preserved). | Heads up. The dashboard cannot save these fields, and a save that includes one is refused with nothing written. To change a credential, edit the .env file on the host; some keys take effect only after the daemon restarts. | `app.py:9708-9729`; `app.py:10413` |
+| S12s | Settings, a credential field's status after typing (`static/settings.js:244`) | static/settings.js | Ready to save | Not saved from here: set it in .env on the host | `app.py:9708-9729` |
 | X15 | Frontrunner full preview summary (`templates/ai_advisor.html:3004`) | template | Full spliced symphony (preview) | Full symphony with the overlay added (preview) | `advisors/frontrunner_builder.py` (`splice_candidate_into_symphony`) |
 
 #### Values table (AC-4)
@@ -664,6 +683,10 @@ Placement V means the definition is the visible description named; D means a lin
 | AC-6 density at 1440 | S-6.1, S-6.2 | S-6.6 | S-6.6 | S-6.6 | S-6.6 | S-6.6 | S-6.6 | S-6.6 | S-6.3 | S-6.6 | S-6.6 | S-6.6 | S-6.6 | S-6.5 |
 | AC-7 growth at 375 | S-7.1 | S-7.1 | S-7.1 | S-7.1, S-7.3 | S-7.1 | S-7.1 | S-7.1 | S-7.1 | S-7.1 | S-7.1 | S-7.1 | S-7.1 | S-7.1 | S-7.1 |
 
+| Rule | header, every page |
+|---|---|
+| AC-2 definitions (placement A) | S-2.19, S-2.20 |
+
 | Rule | template render | script refresh or run (static/*.js) | page served with the script failed |
 |---|---|---|---|
 | AC-3 the same text from both builders | S-3.1, S-3.6 | S-3.2, S-3.8, S-3.9, S-3.10 | S-3.11 |
@@ -672,15 +695,15 @@ Placement V means the definition is the visible description named; D means a lin
 ## Not Building
 Non-goals a reader could expect but will not get:
 - NB-1: A help or docs page, a glossary page or an onboarding tour (approved by the PM, [PM-ASSUMED], G-19).
-- NB-2: Descriptions or definitions in the shared header: the "guard" tag, the engine status words, the clock, the countdown, the bell, the account chip, the mode pill, Force run now and the Tweaks button (audit items H01 to H11; excludes part of R-7 and part of R-9; proposed, Q-1). The header is not one of the surfaces G-5 names, and it is shared chrome on every page.
-- NB-3: A glossary for the model-written Market Prism text (lens summaries and the rationale, audit item O21); it is model output whose words change nightly and cannot be asserted (excludes part of R-9; proposed).
-- NB-4: Rewording or defining text a route returns in a JSON body: the precondition verdict sentences (`guard_preconditions.py:166-201`; their verdict words are defined by F19a to F19e), the Settings parameter names and help (`app.py:9536-9574`, audit item S09), the autotune decision words stored in the database ("Adopted AI", "Reset to Global Default") and the raw data warnings on swap results (audit item W08) (excludes part of R-9; proposed). Changing them changes a JSON value (G-16); the parameter names are the keys the operator sets and are left as the route returns them.
-- NB-5: A definition for "Go to cash" and "View logs" in the detail panel (audit item D52): no script at the ref references `dp-go-cash-btn` or `dp-view-logs-btn` (`templates/index.html:1991-1992`), so a sentence saying what they do would not be true (excludes part of R-9; proposed; Follow-Ups).
+- NB-2: Section descriptions in the shared header, any change to its layout or look, and definitions for the "guard" tag, the clock, the countdown, the bell and the Tweaks button (audit items H01, H04, H05, H06, H11; excludes part of R-7 and part of R-9; approved by the PM, [PM-ASSUMED], narrowed by G-27).
+- NB-3: A glossary for the model-written Market Prism text (lens summaries and the rationale, audit item O21); it is model output whose words change nightly and cannot be asserted (excludes part of R-9; approved by the PM, [PM-ASSUMED]).
+- NB-4: Rewording or defining text a route returns in a JSON body: the precondition verdict sentences (`guard_preconditions.py:166-201`; their verdict words are defined by F19a to F19e), the Settings parameter names and help (`app.py:9536-9574`, audit item S09), the autotune decision words stored in the database ("Adopted AI", "Reset to Global Default") and the raw data warnings on swap results (audit item W08) (excludes part of R-9). Changing them changes a JSON value (G-16); the parameter names are the keys the operator sets and are left as the route returns them (approved by the PM, [PM-ASSUMED]).
+- NB-5: removed: flipped in by the PM ruling G-28; AC-5 states the exception and S-5.14 tests it.
 - NB-6: removed: the Universe input's path is confirmed at the ref and B03u defines it.
 - NB-7: removed: brought into scope by the PM ruling G-26 (AC-8).
 - NB-8: removed: brought into scope by the PM ruling G-25 (AC-7).
 - NB-9: removed: brought into scope by the PM ruling G-24 (AC-3, rows MU1 to MU5).
-- NB-10: Empty regions under the AC-6 size: the Stop-justification channel (A14, about 170 px wide), the frontrunner run card's button row (A12, 35 px tall) and the Logic Changes button row (A15, 35 px tall) (excludes part of R-2; proposed).
+- NB-10: Empty regions under the AC-6 size: the Stop-justification channel (A14, about 170 px wide), the frontrunner run card's button row (A12, 35 px tall) and the Logic Changes button row (A15, 35 px tall) (excludes part of R-2; approved by the PM, [PM-ASSUMED]).
 
 Behavior that stays exactly as it is:
 - NB-11: Every figure's value, every route and JSON body, the database, every migration, the scheduler, `alpha_bot_execution.py` and `math_engine.py` (approved by the PM, [PM-ASSUMED], G-16, G-19).
@@ -692,8 +715,8 @@ Behavior that stays exactly as it is:
 - NB-17: No new color, icon, illustration, font weight or type size; only the restyle's primitives and studio tokens (approved by the PM, [PM-ASSUMED], G-19).
 
 Deferred:
-- NB-18: The header explanations of NB-2, if Q-1's default holds (Follow-Ups).
-- NB-19: Wiring or removing the inert "Go to cash" and "View logs" buttons of NB-5 (Follow-Ups).
+- NB-18: Definitions for the header items NB-2 leaves out (Follow-Ups).
+- NB-19: removed: the inert buttons are no longer rendered (G-28, AC-5).
 
 Protected surfaces this consumes but does not change:
 - NB-20: `tests/app/test_dashboard_no_order_path.py`, every `tests/security/*no_trade_boundary*.py`, the auth and CSRF hooks in `app.py`, `static/request_guard.js` (`PSRequest`) and the panic modal in `templates/_chrome.html` and `static/chrome.js`.
@@ -776,10 +799,10 @@ No declared design system; the restyle's conventions and the `--studio-*` tokens
 | AC | Scenarios | Test level | Real-entrypoint test |
 |---|---|---|---|
 | AC-1 | S-1.1, S-1.2, S-1.3, S-1.4, S-1.5, S-1.6, S-1.7, S-1.8, S-1.9, S-1.10, S-1.11, S-1.12, S-1.13, S-1.14, S-1.15, S-1.16, S-1.17, S-1.18, S-1.19, S-1.20, S-1.21, S-1.22, S-1.23 | render tests through the Flask test client for template rows; browser tests (the `browser` marker, Firefox) for visibility and every script-built row; a text scan of the three copy tables for S-1.18 | `GET /`, `/performance`, `/history`, `/settings`, `/ai-advisor` on the test server; the modal opened from a card |
-| AC-2 | S-2.1, S-2.2, S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.10, S-2.11, S-2.12, S-2.13, S-2.14, S-2.15, S-2.16, S-2.17, S-2.18 | render tests for the disclosure text; browser tests for open, keyboard and refresh survival | the same pages, each disclosure opened by click and by keyboard |
-| AC-3 | S-3.1, S-3.2, S-3.3, S-3.4, S-3.5, S-3.6, S-3.7, S-3.8, S-3.9, S-3.10, S-3.11, S-3.12, S-3.13, S-3.14, S-3.15 | render tests of the first-paint verdict and the Blocked tile text; node tests of the poll and chart label builders | `GET /` with a triggered symphony, then one poll; `GET /ai-advisor` with a stored run |
+| AC-2 | S-2.1, S-2.2, S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.10, S-2.11, S-2.12, S-2.13, S-2.14, S-2.15, S-2.16, S-2.17, S-2.18, S-2.19, S-2.20 | render tests for the disclosure text; browser tests for open, keyboard and refresh survival | the same pages, each disclosure opened by click and by keyboard |
+| AC-3 | S-3.1, S-3.2, S-3.3, S-3.4, S-3.5, S-3.6, S-3.7, S-3.8, S-3.9, S-3.10, S-3.11, S-3.12, S-3.13, S-3.14, S-3.15, S-3.16, S-3.17 | render tests of the first-paint verdict and the Blocked tile text; node tests of the poll and chart label builders | `GET /` with a triggered symphony, then one poll; `GET /ai-advisor` with a stored run |
 | AC-4 | S-4.1, S-4.2, S-4.3, S-4.4, S-4.5, S-4.6, S-4.7, S-4.8, S-4.9, S-4.10, S-4.11, S-4.12 | render tests with each authority patched; a source scan for literals | `GET /ai-advisor`, `/` and `/performance` with patched values |
-| AC-5 | S-5.1, S-5.2, S-5.3, S-5.4, S-5.5, S-5.6, S-5.7, S-5.8, S-5.9, S-5.10, S-5.11, S-5.12, S-5.13 | before-and-after render comparison on one seeded state; route body comparison; the existing no-order and no-trade suites | every listed route on the test client; live: the PM's check |
+| AC-5 | S-5.1, S-5.2, S-5.3, S-5.4, S-5.5, S-5.6, S-5.7, S-5.8, S-5.9, S-5.10, S-5.11, S-5.12, S-5.13, S-5.14, S-5.15 | before-and-after render comparison on one seeded state; route body comparison; the existing no-order and no-trade suites | every listed route on the test client; live: the PM's check |
 | AC-6 | S-6.1, S-6.2, S-6.3, S-6.4, S-6.5, S-6.6, S-6.7, S-6.8, S-6.9, S-6.10, S-6.11, S-6.12, S-6.13, S-6.14 | browser tests at 1440 by 900 and 1240 by 900 measuring empty rectangles inside each panel's content box and figure-row spans | each page on the test server, and the PM's live look at the droplet copy |
 | AC-7 | S-7.1, S-7.2, S-7.3, S-7.4, S-7.5, S-7.6, S-7.7, S-7.8, S-7.9, S-7.10 | browser tests at 375 by 812 and 320 by 812 | each page on the test server; the tab strip by touch, tap and keyboard |
 | AC-8 | S-8.1, S-8.2, S-8.3, S-8.4, S-8.5, S-8.6, S-8.7, S-8.8, S-8.9, S-8.10 | node tests of the autotune table builder in static/ai_advisor.js; render tests of the frontrunner cards; a browser test at 375 | `GET /ai-advisor` with seeded autotune runs and pending proposals, then one 15 s refresh |
@@ -808,22 +831,22 @@ none: judged by the live check and the screenshot comparison in Definition of Do
 - KU-2: removed: settled at the ref (`static/ai_advisor.js:1294-1307` sends the input; `advisors/strategy_builder_engine.py:412-414` uses it when it is not empty).
 - KU-3: The density thresholds (240 by 80 px; 320 px for the Retirement pair; 90 percent figure span) are set from the audit's measurements on one production copy (2026-10-31, market closed). Production states with longer names or more rows may create regions the seeded tests do not; the PM's live check at 1440 is where this surfaces.
 - KU-4: The schedule times in existing copy (03:00 for Market Prism, 03:45 UTC for the recommender) are scheduler literals and host-clock dependent; this plan adds no new clock time and does not change those lines.
-- KU-6: The Settings Credentials warning (`templates/settings.html:1049-1053`) says a save writes the value to .env, but the save route refuses every credential key with a 400 (`app.py:9651-9656`, `:9712-9713`). That is a control defect outside this plan; S11 and T05 no longer repeat the claim, and the warning is left as it is (Follow-Ups).
+- KU-6: The Settings save refuses every credential key with a 400 by design (`app.py:9708-9729`) while the Credentials fields stay on the page. The backend is unchanged (PM ruling G-29); S11, S12r and S12s now say the dashboard does not save credentials, and S-3.17 pins the refusal as it is.
 - KU-7: The exit named "VWAP bleed" (and "VWAP_BLEED_MULTIPLIER", "VWAP_BLEED_TICKS") never reads the volume-weighted average price: it counts checks on which the symphony's own return sits at or below a volatility-scaled loss line (`math_engine.py:982-990`, `:1035-1043`). D29d states the mechanism and keeps the name; renaming the exit is out of scope (PM ruling) and is a follow-up.
 - KU-5: The suggestion card's confidence is read as the model's own field (`ai_advisor.py:251`); if a later change derives it statistically, O07a becomes false. The row cites the field.
 
 ## Open Questions
 | Q-n | Question | Blocks (AC ids or "plan") | Proposed default | Answer |
 |---|---|---|---|---|
-| Q-1 | Is the shared header (status words, clock, bell, account chip, mode pill, Force run now) in scope for descriptions and definitions? | AC-1, AC-2 | no: the header is not one of the surfaces G-5 names; it becomes a follow-up (NB-2, NB-18) | |
-| Q-2 | When a stored tenure review exists, does R22 name the review's `threshold_in_effect` or the configured value? | AC-4 | the stored review's value, so the line matches the verdicts shown; the configured value only when no review exists | |
+| Q-1 | Is the shared header (status words, clock, bell, account chip, mode pill, Force run now) in scope for descriptions and definitions? | AC-1, AC-2 | no: the header is not one of the surfaces G-5 names; it becomes a follow-up (NB-2, NB-18) | overridden by the PM (G-27, D-12): the header's mode pill, engine state word, account selector, Force run now and Emergency Liquidate get definitions only; the rest stays out (NB-2) |
+| Q-2 | When a stored tenure review exists, does R22 name the review's `threshold_in_effect` or the configured value? | AC-4 | the stored review's value, so the line matches the verdicts shown; the configured value only when no review exists | default approved by the PM, [PM-ASSUMED] |
 | Q-3 | removed: answered by the PM ruling G-22 (D-1, D-2, D-3, D-9) | plan | none | ruled by the PM |
-| Q-4 | Claude Design is recorded as the design system of record for new screens. Does this layout change need a Claude Design brief? | AC-6 | no: it creates no new screen and reuses the restyle's primitives, and the restyle itself was built in-team; the ux-expert judges the result | |
-| Q-5 | May the display text the server builds for the page (the triggered verdict on first paint, the Blocked tile text) and the template context change, given G-16 names templates, CSS and static JS only? | AC-3, AC-4, AC-5 | yes, limited to that display text and the AC-4 values; no route, JSON body or stored value changes (D-6) | |
-| Q-6 | Should a verdict gap that prints as 0.0 read "Exit matched holding" instead of "Exit trailed holding by 0.0%"? | AC-3 | yes | |
-| Q-7 | May the dollar-saved panel's 160 px height pin grow by its added description and disclosure summary lines? | AC-6 | yes | |
+| Q-4 | Claude Design is recorded as the design system of record for new screens. Does this layout change need a Claude Design brief? | AC-6 | no: it creates no new screen and reuses the restyle's primitives, and the restyle itself was built in-team; the ux-expert judges the result | default approved by the PM, [PM-ASSUMED] |
+| Q-5 | May the display text the server builds for the page (the triggered verdict on first paint, the Blocked tile text) and the template context change, given G-16 names templates, CSS and static JS only? | AC-3, AC-4, AC-5 | yes, limited to that display text and the AC-4 values; no route, JSON body or stored value changes (D-6) | default approved by the PM, [PM-ASSUMED] |
+| Q-6 | Should a verdict gap that prints as 0.0 read "Exit matched holding" instead of "Exit trailed holding by 0.0%"? | AC-3 | yes | default approved by the PM, [PM-ASSUMED] |
+| Q-7 | May the dollar-saved panel's 160 px height pin grow by its added description and disclosure summary lines? | AC-6 | yes | default approved by the PM, [PM-ASSUMED] |
 | Q-9 | removed: ruled by the PM (D-11): Sensitive stays none | plan | none | ruled by the PM |
-| Q-8 | Do each Advisor tab, the detail panel and the settings modal count as their own page for "first appearance"? | AC-1, AC-2 | yes: each hides the others, so a definition elsewhere is out of sight (D-4) | |
+| Q-8 | Do each Advisor tab, the detail panel and the settings modal count as their own page for "first appearance"? | AC-1, AC-2 | yes: each hides the others, so a definition elsewhere is out of sight (D-4) | default approved by the PM, [PM-ASSUMED] |
 
 ## Decisions
 | ID | Decision | Rationale |
@@ -838,6 +861,9 @@ none: judged by the live check and the screenshot comparison in Definition of Do
 | D-9 | Further one-name renames under G-22: max drawdown is "Max DD" everywhere (NM1, NM2); a single exit's return minus its held return is "exit alpha" (NM3, with History's "exit alpha"); the bot's path is "Bot" (NM5); the session high of the symphony's own return is "Peak", because after an exit it follows the held return and is no longer the bot's (NM4); trading cost is "trading costs" everywhere (D03r, F21, F22r, F24); the open-market held line is "If held · live" (NM6); Performance's share of up days becomes "Up days", so "Win rate" means only History's share of exits ahead of holding (NM7) | PM ruling G-22, applied to every name the audit and this plan found used for one concept on two hosts |
 | D-10 | Same-title frontrunner cards are told apart by the proposal id each card already carries (`templates/ai_advisor.html:2940`), not by the overlay summary, because a legacy card may have no recorded overlay | PM ruling G-26 |
 | D-11 | (PM ruling) Sensitive stays none: the change is display-only and drives no decision path; the risk that a false explanation steers a real-money retire or trade call is covered by the truth pass in the Gate-1 audit and by qa's copy check at review | PM ruling on Q-9 |
+| D-12 | (PM ruling G-27) The header's five items are defined by `title` or accessible description (placement A), with no visible change to the header and its look pins untouched; the engine state's definition follows the state static/chrome.js writes | They are terms and controls, not sections, and the header's look is pinned |
+| D-13 | (PM ruling G-28) The detail panel's View logs, Go to cash and Edit variables buttons, which no script handles, are not rendered; Edit variables is included because it has no handler either (`templates/index.html:2132`; no reference in `static/`) | A control that does nothing misleads; removing an inert control changes no working behavior |
+| D-14 | (PM ruling G-29) The Credentials copy states that the dashboard does not save credentials; the refusal itself is unchanged | Copy must be true of the code; the backend refuses by design |
 | D-7 | The empty-region size is 240 by 80 px | It catches the audit's findings A1 to A11 and A13 (each at least 250 by 80 px) and leaves A12, A14 and the 35 px rows of A15, which the audit ranked lowest (NB-10) |
 
 ## Docs to Update
@@ -847,7 +873,5 @@ none: judged by the live check and the screenshot comparison in Definition of Do
 - A drafted `.claude/CLAUDE.md` Key Files note for `templates/index.html`, `templates/ai_advisor.html` and `static/history.js`, for PM approval.
 
 ## Follow-Ups
-- NB-2 and NB-18: header explanations, if Q-1's default holds; tracked as a backlog line in `feature-plans/BACKLOG.md`.
-- KU-6: the Credentials section's save is refused for every credential key while its warning says it writes .env; backlog line.
+- NB-2 and NB-18: definitions for the header's wordmark tag, clock, countdown, bell and Tweaks button; tracked as a backlog line in `feature-plans/BACKLOG.md`.
 - KU-7: the "VWAP bleed" exit's name does not match its mechanism; a rename is its own plan; backlog line.
-- NB-5 and NB-19: the inert "Go to cash" and "View logs" buttons in the detail panel; backlog line.
