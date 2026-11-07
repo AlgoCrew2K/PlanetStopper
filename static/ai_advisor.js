@@ -743,30 +743,31 @@
         return { cards: cards, older: older };
     }
 
-    // The markup of one run: one table row, used for the main list and for the older-runs list. The words
-    // a header names for the whole column stay in the row as visually hidden text (and show on a phone,
-    // where there is no header, and in a table whose header cannot name the score's objective), so a row
-    // read alone says what each figure is.
-    function autotuneRunRowHtml(r) {
+    // One run as its six cells, in column order. Each cell is {open, inner, text}: the opening tag of
+    // its <span role="cell">, its inner markup and its text as a reader sees it. The words a header
+    // names for the whole column stay in the cell as visually hidden text (and show on a phone, where
+    // there is no header, and in a table whose header cannot name the score's objective), so a row
+    // read alone says what each figure is. sharedObjective is true when the header names the
+    // score's objective.
+    function autotuneRunCells(r, sharedObjective) {
         var decision = r.baseline_decision || '';
         // B-13: human-readable label instead of raw enum.
         var pillLabel = decisionLabel(decision);
         var frozenVerdict = r.frozen_eval_verdict || '';
         // The display name when the live state holds the symphony, else the
         // stored key; the key itself stays in the title.
-        var symLabel = escHtml(r.symphony_name || r.symphony_id || '');
+        var symName = r.symphony_name || r.symphony_id || '';
         var symKey = escHtml(r.symphony_id || '');
         var scoreInfo = autotuneScoreInfo(r.objective);
         // A run that never reached the frozen evaluation has no verdict:
         // say so in dim ink instead of rendering an empty word. It stays on screen:
         // it is the reason there is no verdict, not a word a header already says.
+        var frozenText = frozenVerdict ? 'Frozen-eval ' + frozenVerdict : 'Frozen-eval not evaluated';
         var frozenHtml = frozenVerdict
             ? '<span class="autotune-run-frozen">Frozen-eval ' +
               '<span class="frozen-eval-pill frozen-eval-pill--' + frozenEvalTone(frozenVerdict) + '">' +
               escHtml(frozenVerdict) + '</span></span>'
             : '<span class="autotune-run-frozen">Frozen-eval not evaluated</span>';
-        // Selection t-stat is the Harvey & Liu haircut winner's t-statistic.
-        var selTstat = r.selection_tstat;
         // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal.
         // status == 'streak' with streak_weeks >= 2 (a genuine multi-run pattern, mirrors
         // analytics._NEVER_ADOPTED_MIN_ROWS) or status == 'insufficient_history'
@@ -776,36 +777,66 @@
         // figure; the rest of the sentence stays in the cell as hidden text and shows on a phone.
         var streak = r.never_adopted_streak;
         var streakHtml = '';
+        var streakText = '';
         if (streak && streak.status === 'streak' && streak.streak_weeks >= 2) {
             streakHtml = '<span class="autotune-streak-figure">' + escHtml(streak.streak_weeks) + '</span> ' +
                 '<span class="adv-vh autotune-streak-tail">runs without adopting a tuned config</span>';
+            streakText = streak.streak_weeks + ' runs without adopting a tuned config';
         } else if (streak && streak.status === 'insufficient_history') {
             streakHtml = 'adoption streak: insufficient history (&lt;2 runs)';
+            streakText = 'adoption streak: insufficient history (<2 runs)';
         }
-        return (
-            '<div class="autotune-row" role="row" data-testid="autotune-run-row">' +
-            '<span class="autotune-run-name" role="cell" title="' + symKey + '">' + symLabel + '</span>' +
+        // Selection t-stat is the Harvey & Liu haircut winner's t-statistic.
+        var scoreValue = fmtSharpe(r.naive_sharpe);
+        var tstatValue = fmtSharpe(r.selection_tstat);
+        var time = fmtEtStamp(r.run_timestamp);
+        return [
+            {
+                open: '<span class="autotune-run-name" role="cell" title="' + symKey + '">',
+                inner: escHtml(symName),
+                text: symName,
+            },
             // The New York stamp (the shared formatter), not the stored string.
-            '<span class="autotune-run-time" role="cell">' + escHtml(fmtEtStamp(r.run_timestamp)) + '</span>' +
-            '<span class="autotune-run-outcome" role="cell">' +
-            '<span class="decision-pill decision-pill--' + decisionTone(decision) + '">' + escHtml(pillLabel) + '</span>' +
-            frozenHtml +
-            '</span>' +
-            '<span class="autotune-run-streak" role="cell">' + streakHtml + '</span>' +
-            '<span class="autotune-run-score" role="cell" title="' + escHtml(scoreInfo.tip) + '">' +
-            '<span class="adv-vh autotune-score-label">' + escHtml(scoreInfo.label) + ' </span>' +
-            '<span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span></span>' +
-            '<span class="autotune-run-tstat" role="cell">' +
-            '<span class="adv-vh">Sel t-stat </span><span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span></span>' +
-            '</div>'
-        );
+            { open: '<span class="autotune-run-time" role="cell">', inner: escHtml(time), text: time },
+            {
+                open: '<span class="autotune-run-outcome" role="cell">',
+                inner: '<span class="decision-pill decision-pill--' + decisionTone(decision) + '">' +
+                    escHtml(pillLabel) + '</span>' + frozenHtml,
+                text: pillLabel + ', ' + frozenText,
+            },
+            { open: '<span class="autotune-run-streak" role="cell">', inner: streakHtml, text: streakText },
+            {
+                open: '<span class="autotune-run-score" role="cell" title="' + escHtml(scoreInfo.tip) + '">',
+                inner: '<span class="adv-vh autotune-score-label">' + escHtml(scoreInfo.label) + ' </span>' +
+                    '<span class="mono-bold">' + escHtml(scoreValue) + '</span>',
+                text: sharedObjective ? scoreValue : scoreInfo.label + ' ' + scoreValue,
+            },
+            {
+                open: '<span class="autotune-run-tstat" role="cell">',
+                inner: '<span class="adv-vh">Sel t-stat </span><span class="mono-bold">' + escHtml(tstatValue) + '</span>',
+                text: tstatValue,
+            },
+        ];
+    }
+
+    // The markup of one run: one table row. A column in `lifted` is stated once in the shared line, so
+    // its cell stays in the row as an empty cell that keeps the grid's columns in place.
+    function autotuneRunRowHtml(cells, lifted) {
+        return '<div class="autotune-row" role="row" data-testid="autotune-run-row">' +
+            cells.map(function (cell, i) {
+                return cell.open + (lifted[i] ? '' : cell.inner) + '</span>';
+            }).join('') + '</div>';
     }
 
     // The runs as one table with its own header row (the older-runs list is a separate table, so a bare
     // figure there still has its column name above it). The score column's header names the objective
     // when every row in the table shares one (the usual case); when they differ it says "Best score" and
-    // each row names its own, so the objective is always on screen.
-    function autotuneTableHtml(rows) {
+    // each row names its own, so the objective is always on screen. With withSharedLine, a column whose
+    // cell text is the same, and not empty, in every one of two or more rows is stated once in a line
+    // above the rows (its header, then the text) and left out of each row.
+    var AUTOTUNE_STREAK_COLUMN = 3;
+
+    function autotuneTableHtml(rows, withSharedLine) {
         var labels = [];
         var scoreTip = '';
         rows.forEach(function (r) {
@@ -818,17 +849,38 @@
         var sharedObjective = labels.length === 1;
         var scoreHead = sharedObjective ? labels[0] : 'Best score';
         var scoreHeadTitle = sharedObjective ? ' title="' + escHtml(scoreTip) + '"' : '';
+        var headers = [
+            'Symphony', 'Run time (ET)', 'Outcome', 'Runs without adopting a tuned config', scoreHead, 'Sel t-stat',
+        ];
         var head = '<div class="autotune-row autotune-row--head" role="row">' +
-            '<span role="columnheader">Symphony</span>' +
-            '<span role="columnheader">Run time (ET)</span>' +
-            '<span role="columnheader">Outcome</span>' +
-            '<span role="columnheader" class="autotune-run-streak">Runs without adopting a tuned config</span>' +
+            '<span role="columnheader">' + headers[0] + '</span>' +
+            '<span role="columnheader">' + headers[1] + '</span>' +
+            '<span role="columnheader">' + headers[2] + '</span>' +
+            '<span role="columnheader" class="autotune-run-streak">' + headers[3] + '</span>' +
             '<span role="columnheader" class="autotune-run-score"' + scoreHeadTitle + '>' + escHtml(scoreHead) + '</span>' +
-            '<span role="columnheader" class="autotune-run-tstat">Sel t-stat</span>' +
+            '<span role="columnheader" class="autotune-run-tstat">' + headers[5] + '</span>' +
             '</div>';
-        return '<div class="autotune-table' + (sharedObjective ? '' : ' autotune-table--row-objectives') +
+        var cellRows = rows.map(function (r) { return autotuneRunCells(r, sharedObjective); });
+        var lifted = headers.map(function () { return false; });
+        var shared = [];
+        if (withSharedLine && cellRows.length > 1) {
+            headers.forEach(function (header, i) {
+                var text = cellRows[0][i].text;
+                var same = text !== '' && cellRows.every(function (cells) { return cells[i].text === text; });
+                // The streak cell is a per-run count; its absence from a row must never read as "no streak".
+                if (same && i !== AUTOTUNE_STREAK_COLUMN) {
+                    lifted[i] = true;
+                    shared.push(header + ' ' + text);
+                }
+            });
+        }
+        var line = shared.length
+            ? '<div class="autotune-shared-line" data-testid="autotune-shared-line">Same for every run: ' +
+              escHtml(shared.join('; ')) + '</div>'
+            : '';
+        return line + '<div class="autotune-table' + (sharedObjective ? '' : ' autotune-table--row-objectives') +
             '" role="table" aria-label="Autotune runs">' + head +
-            rows.map(function (r) { return autotuneRunRowHtml(r); }).join('') + '</div>';
+            cellRows.map(function (cells) { return autotuneRunRowHtml(cells, lifted); }).join('') + '</div>';
     }
 
     // The older-runs <details> is static page markup: this writes only its rows container,
@@ -896,7 +948,7 @@
                 }
                 // C-16: render the table with all per-run fields per advisor.jsx.
                 var parts = splitAutotuneRuns(rows);
-                list.innerHTML = autotuneTableHtml(parts.cards);
+                list.innerHTML = autotuneTableHtml(parts.cards, true);
                 renderOlderAutotuneRuns(parts.older);
                 // Last, and on its own: the cards are on screen whatever the chart does.
                 renderAutotuneSparkline(rows);
@@ -1065,6 +1117,44 @@
         return knownNames.indexOf(name) >= 0 ? name : 'overview';
     }
 
+    // The cue at each edge of the tab strip: shown while a tab lies more than this far past that edge.
+    var TAB_CUE_EDGE_PX = 0.5;
+
+    function updateTabCues() {
+        var tabs = document.querySelectorAll('[role="tab"][data-tab]');
+        if (!tabs.length) { return; }
+        var strip = tabs[0].parentNode;
+        var startCue = document.querySelector('[data-testid="cap-nav-cue-start"]');
+        var endCue = document.querySelector('[data-testid="cap-nav-cue-end"]');
+        var hiddenBefore = strip.scrollLeft;
+        var hiddenAfter = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
+        if (startCue) { startCue.hidden = !(hiddenBefore > TAB_CUE_EDGE_PX); }
+        if (endCue) { endCue.hidden = !(hiddenAfter > TAB_CUE_EDGE_PX); }
+    }
+
+    // The Retirement tab's two subsections share one row while each is no taller than this when
+    // laid out in one column; at or below the stacking breakpoint they always stack.
+    var RETIREMENT_PAIR_MAX_HEIGHT_PX = 320;
+    var RETIREMENT_PAIR_STACK_MAX_WIDTH_PX = 700;
+
+    function refreshRetirementPair() {
+        var pair = document.querySelector('[data-testid="retirement-pair"]');
+        if (!pair) { return; }
+        var first = pair.querySelector('[data-testid="retirement-recommender-section"]');
+        var second = pair.querySelector('[data-testid="tenure-review-section"]');
+        if (!first || !second) { return; }
+        // Measured stacked, so the side layout never changes what is measured.
+        pair.classList.remove('retirement-pair--side');
+        if (window.innerWidth <= RETIREMENT_PAIR_STACK_MAX_WIDTH_PX) { return; }
+        var firstHeight = first.getBoundingClientRect().height;
+        var secondHeight = second.getBoundingClientRect().height;
+        // A hidden panel has no height: nothing to decide until the tab is open.
+        if (firstHeight > 0 && secondHeight > 0 &&
+            firstHeight <= RETIREMENT_PAIR_MAX_HEIGHT_PX && secondHeight <= RETIREMENT_PAIR_MAX_HEIGHT_PX) {
+            pair.classList.add('retirement-pair--side');
+        }
+    }
+
     function activateTabByName(name) {
         document.querySelectorAll('[role="tab"][data-tab]').forEach(function (btn) {
             var isActive = btn.getAttribute('data-tab') === name;
@@ -1088,6 +1178,8 @@
             }
         });
         if (name === 'overview') { refreshPrismLensClamp(); }
+        if (name === 'retirement') { refreshRetirementPair(); }
+        updateTabCues();
     }
 
     /** Put a rendered tab's name in the URL fragment without adding a history entry. */
@@ -1116,6 +1208,22 @@
         });
         // The first paint follows the URL: no fragment, or one naming no tab, is the Overview.
         activateTabByName(tabNameFromHash(window.location.hash, renderedTabNames()));
+
+        // The edge cues and the Retirement pair follow the strip's scroll and the window's width.
+        // Passive listeners only: no timer, no request.
+        tabs[0].parentNode.addEventListener('scroll', updateTabCues, { passive: true });
+        window.addEventListener('resize', function () {
+            updateTabCues();
+            refreshRetirementPair();
+        }, { passive: true });
+        if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+            document.fonts.ready.then(function () {
+                updateTabCues();
+                refreshRetirementPair();
+            });
+        }
+        updateTabCues();
+        refreshRetirementPair();
     }
 
     // ---------------------------------------------------------------------------
@@ -1384,7 +1492,7 @@
                         if (val) { evidenceParts.push(key + ': ' + val); }
                     });
                     html += '<div class="run-controls-note" data-testid="sb-live-generation-provenance">' +
-                        'Model: ' + escHtml(prov.generation_model || 'model unavailable') +
+                        'Model: ' + escHtml(prov.generation_model || 'not known') +
                         (evidenceParts.length ? ' · Context — ' + escHtml(evidenceParts.join(', ')) : '') +
                         (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
                         '</div>';

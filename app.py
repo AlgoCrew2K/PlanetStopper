@@ -2693,7 +2693,7 @@ def _copy_tenure_threshold(tenure_review: dict | None) -> str:
     return str(_tenure_module.parse_threshold(configured).value)
 
 
-def _copy_screen_threshold(retirement_last_run: dict | None) -> str:
+def _copy_screen_threshold(retirement_last_run: dict | None) -> str | None:
     if isinstance(retirement_last_run, dict) and retirement_last_run.get("status") == "ok":
         run_threshold = retirement_last_run.get("screen_threshold")
         if (
@@ -2704,7 +2704,8 @@ def _copy_screen_threshold(retirement_last_run: dict | None) -> str:
             return f"{run_threshold}"
     from advisors.retirement_recommender import CORRELATION_SCREEN_THRESHOLD
 
-    return f"{CORRELATION_SCREEN_THRESHOLD}"
+    # None for a constant that is not a finite real number (the phrase then reads its fallback).
+    return _plain_number(CORRELATION_SCREEN_THRESHOLD, decimals=6)
 
 
 def _copy_stress_fraction_pct() -> str | None:
@@ -7232,10 +7233,10 @@ def _build_retirement_summary_tiles(last_run: object) -> list[dict]:
     pairs_label = f"Pairs screened at {threshold} or above" if threshold_ok else "Pairs screened"
 
     gate_keys = (
-        ("uncertainty", "blocked_uncertainty"),
-        ("too thin", "blocked_stress_too_thin"),
-        ("below threshold", "blocked_stress_below_threshold"),
-        ("no candidate", "blocked_no_candidate"),
+        ("too uncertain", "blocked_uncertainty"),
+        ("too few worst days", "blocked_stress_too_thin"),
+        ("apart on worst days", "blocked_stress_below_threshold"),
+        ("no score to compare", "blocked_no_candidate"),
     )
     gates = [_retirement_summary_count(last_run.get(key)) for _words, key in gate_keys]
     blocked_total = missing if any(g is None for g in gates) else str(sum(gates))
@@ -7245,9 +7246,9 @@ def _build_retirement_summary_tiles(last_run: object) -> list[dict]:
     too_thin = _retirement_summary_count(last_run.get("blocked_stress_too_thin"))
     if too_thin is not None and too_thin > 0:
         blocked_detail += (
-            ". Stress window needs at least "
+            ". The worst-days check needs at least "
             f"{_retirement_summary_count_text(last_run.get('stress_gate_min_aligned_days'))}"
-            " aligned days."
+            " days on which both symphonies have a return."
         )
 
     return [
@@ -11087,6 +11088,18 @@ def ai_advisor_tab():
     # so it can never wait on the Models API (the startup warm-up fills it).
     advisor_suggestion_model = model_config.peek(model_config.Knob.SUGGESTION).badge_text
     advisor_synthesis_model = model_config.peek(model_config.Knob.SYNTHESIS).badge_text
+    # A model name is known when it resolved or an operator override names it.
+    advisor_suggestion_model_known = (
+        model_config.peek(model_config.Knob.SUGGESTION).source != "unavailable"
+    )
+    advisor_synthesis_model_known = (
+        model_config.peek(model_config.Knob.SYNTHESIS).source != "unavailable"
+    )
+    page_copy = _page_copy_values(
+        ("tenure_threshold", "screen_threshold", "stress_fraction_pct", "watch_trail_pp"),
+        tenure_review=tenure_review_run,
+        retirement_last_run=retirement_last_run,
+    )
 
     return render_template(
         "ai_advisor.html",
@@ -11122,6 +11135,9 @@ def ai_advisor_tab():
         overlay_not_recorded_text=overlay_not_recorded_text,
         advisor_suggestion_model=advisor_suggestion_model,
         advisor_synthesis_model=advisor_synthesis_model,
+        advisor_suggestion_model_known=advisor_suggestion_model_known,
+        advisor_synthesis_model_known=advisor_synthesis_model_known,
+        page_copy=page_copy,
     )
 
 
@@ -12019,13 +12035,16 @@ def ai_advisor_strategy_builder_run():
         _gen_reason = getattr(run, "generation_reason", None)
         _reason_part = f" ({_gen_reason})" if isinstance(_gen_reason, str) and _gen_reason else ""
         _run_prov = getattr(run, "provenance", None)
-        if isinstance(_run_prov, dict) and _run_prov.get("generation_model") == "":
-            # No model served a reply (resolved model answered 404): name none.
-            _badge = _model_config.MODEL_UNAVAILABLE_TEXT
+        _choice = _model_config.peek(_model_config.Knob.SUGGESTION)
+        if (isinstance(_run_prov, dict) and _run_prov.get("generation_model") == "") or (
+            _choice.source == "unavailable"
+        ):
+            # No model served a reply (or none is known): the notice names none.
+            _generation = "Built-new generation"
         else:
-            _badge = _model_config.peek(_model_config.Knob.SUGGESTION).badge_text
+            _generation = f"Built-new generation ({_choice.badge_text})"
         mode_notice = (
-            f"Built-new generation ({_badge}) produced 0 plans{_reason_part} (degraded): "
+            f"{_generation} produced 0 plans{_reason_part} (degraded): "
             f"this run surfaces {atlas_count} Atlas community candidate(s) only."
         )
 

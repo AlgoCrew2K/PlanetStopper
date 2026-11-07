@@ -427,6 +427,8 @@
         .autotune-spark { position: relative; height: 60px; margin-bottom: 12px; }
         /* No chart (no scored run, or no chart library): the box takes no space either. */
         .autotune-spark:has(> canvas[style*="display: none"]) { display: none; }
+        /* The columns that read the same in every run are said once, above the rows. */
+        .autotune-shared-line { color: var(--studio-ink-dim); font-size: 12px; margin: 0 0 4px; }
         .autotune-notice { color: var(--studio-neg); margin: 0 0 8px; font-size: 12px; }
         .autotune-empty { padding: 16px 0; color: var(--studio-ink-dim); font-size: 13px; text-align: left; }
 
@@ -494,6 +496,29 @@
             line-height: 1.4;
             color: var(--studio-ink-dim);
         }
+
+        /* The strip's edge cue: a fade from the page paper to nothing at an edge past which a tab
+           lies out of view. It never takes a tap and is shown by the script only while it applies. */
+        .cap-nav-wrap { position: relative; }
+        .cap-nav-cue {
+            position: absolute;
+            top: 0;
+            bottom: 1px;
+            width: 24px;
+            pointer-events: none;
+        }
+        .cap-nav-cue[hidden] { display: none; }
+        .cap-nav-cue--start { left: 0; background: linear-gradient(to right, var(--studio-paper), transparent); }
+        .cap-nav-cue--end { right: 0; background: linear-gradient(to left, var(--studio-paper), transparent); }
+
+        /* A description under a heading: dim ink, readable size, with its term disclosure right after. */
+        .adv-explainer { margin: 0 0 8px; font-size: 12px; line-height: 1.4; color: var(--studio-ink-dim); }
+        .adv-explainer:has(+ .hp-more) { margin-bottom: 2px; }
+        .adv-explainer + .hp-more { margin: 0 0 12px; }
+        .retirement-subsection .adv-explainer + .hp-more { margin-bottom: 4px; }
+        .hp-more p { margin: 0 0 6px; }
+        /* A closed disclosure holds no box for its terms (not even a hidden one a script could measure). */
+        details.hp-more:not([open]) > :not(summary) { display: none; }
 
         /* Tab panels: only the active panel is visible */
         .tab-panel { display: none; }
@@ -694,6 +719,23 @@
         /* No run yet (or a refused or failed one): nothing to show, so no band between the propose card and the rejected list. */
         #sb-run-results:empty { display: none; }
         .proposal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 12px; }
+        /* Cards that wrap onto a last row stretch across it, so the grid holds no empty cell. */
+        .proposal-cards--fill { display: flex; flex-wrap: wrap; }
+        .proposal-cards--fill > .proposal-card { flex: 1 1 min(100%, 22rem); min-width: 0; }
+        /* A stretched card keeps its short lines in rows that fill its width instead of down its left edge. */
+        .fr-card-flow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+        .fr-card-flow > * { min-width: 0; }
+        .fr-card-flow > .fr-line { margin: 0; }
+        .fr-card-flow > .backtest-error { flex: 1 1 100%; }
+        .proposal-cards--fill .proposal-actions { justify-content: flex-end; }
+        /* Equal columns: a stretched card's labels and figures stay close, with no wide gap between them. */
+        .proposal-cards--fill .stats-table { table-layout: fixed; }
+        /* The build panel's button and its note share a row. */
+        .run-controls-panel--inline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+        .run-controls-panel--inline > .run-controls-header { flex: 1 1 100%; }
+        .run-controls-panel--inline > .run-controls-note { flex: 1 1 20rem; margin-top: 0; }
+        .run-controls-panel--inline > .run-controls-note[data-testid="fr-run-status"],
+        .run-controls-panel--inline > .run-error { flex: 1 1 100%; }
         .proposal-card--survivor { border-color: var(--studio-pos); }
         .proposal-card--rejected { opacity: 0.75; }
         .proposal-card--backtest-failed { background: var(--studio-warn-tint); border-color: var(--studio-warn-border); }
@@ -929,6 +971,18 @@
             border-top: 1px solid var(--studio-rule);
         }
         .retirement-subsection > .section-header { margin-top: 0; }
+        /* Two short subsections share one row; the script adds --side when both fit in 320px or less
+           (it measures them stacked) and the 700px breakpoint always stacks them. */
+        @media (min-width: 701px) {
+            .retirement-pair--side { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; align-items: stretch; }
+            .retirement-pair--side > .retirement-subsection + .retirement-subsection {
+                margin-top: 0;
+                padding-top: 0;
+                border-top: 0;
+                padding-left: 24px;
+                border-left: 1px solid var(--studio-rule);
+            }
+        }
         .retirement-rec-pair { margin-bottom: 4px; }
         .retirement-rec-meta, .retirement-rec-gates {
             display: flex;
@@ -943,6 +997,18 @@
         /* Cycle 2b (AC-7): explanation, live status, approve/reject actions, deterministic checklist. */
         .retirement-rec-explanation { color: var(--studio-ink); font-size: 13px; margin: 8px 0; line-height: 1.5; }
         .retirement-rec-actions { display: flex; gap: 8px; margin-top: 12px; }
+        /* A card's short lines share a row instead of stacking down the left edge: the header and the
+           lifecycle blocks take a full row, the explanation shares one with the actions, which sit at
+           the right edge. */
+        .retirement-rec-card:not(.tenure-review-entry) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+        .retirement-rec-card:not(.tenure-review-entry) > * { min-width: 0; }
+        .retirement-rec-card:not(.tenure-review-entry) > :not(.retirement-rec-meta):not(.retirement-rec-gates):not(.retirement-rec-basis):not(.retirement-rec-explanation):not(.retirement-rec-actions) { flex: 1 1 100%; }
+        .retirement-rec-card:not(.tenure-review-entry) > .card-header-row { margin-bottom: 0; }
+        .retirement-rec-card:not(.tenure-review-entry) .retirement-rec-meta,
+        .retirement-rec-card:not(.tenure-review-entry) .retirement-rec-gates,
+        .retirement-rec-card:not(.tenure-review-entry) .retirement-rec-basis { margin-bottom: 0; }
+        .retirement-rec-card:not(.tenure-review-entry) > .retirement-rec-explanation { flex: 1 1 16rem; margin: 4px 0; }
+        .retirement-rec-card:not(.tenure-review-entry) > .retirement-rec-actions { margin: 0 0 0 auto; }
         .retirement-checklist {
             margin-top: var(--studio-space-sm);
             padding-top: 12px;
@@ -972,6 +1038,14 @@
         .retirement-run-now-status { font-size: 12px; color: var(--studio-ink-dim); }
         .retirement-cards-from-earlier-run { font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 12px; }
         .retirement-run-now-hint { font-size: 12px; color: var(--studio-ink-dim); margin: 0 0 12px; }
+        /* The button, its status and the hint share a row; the status and hint wrap under it when narrow. */
+        .retirement-run-now-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; }
+        .retirement-run-now-line > .retirement-run-now-hint { flex: 1 1 16rem; margin: 0 0 8px; }
+        /* The run's time, basis and series date share a row above the tiles. */
+        .retirement-last-run { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 20px; }
+        .retirement-last-run > .retirement-tiles,
+        .retirement-last-run > .retirement-last-run-excluded,
+        .retirement-last-run > .retirement-last-run-state { flex: 1 1 100%; }
 
         /* Symphony tenure review */
         .tenure-review-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
@@ -988,18 +1062,24 @@
         }
         .tenure-review-notice--failed { color: var(--studio-neg); border-color: var(--studio-neg); }
         .tenure-review-run { display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 12px; }
-        .tenure-review-entry { margin-bottom: 12px; font-size: 13px; }
+        .tenure-review-entry { margin-bottom: 12px; font-size: 13px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; }
+        .tenure-review-entry > .tenure-review-entry-head,
+        .tenure-review-entry > .tenure-review-evidence-grid,
+        .tenure-review-entry > .tenure-review-lifecycle { flex: 1 1 100%; min-width: 0; }
         .tenure-review-entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
         .tenure-review-line { color: var(--studio-ink-dim); font-size: 12px; margin-bottom: 4px; }
         .tenure-verdict-chip--none { --dot: var(--studio-ink-dim); }
         /* The six evidence items read as compact lists side by side, each as tall as its own content. */
         .tenure-review-evidence-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 12px 24px;
             align-items: start;
             margin-top: 8px;
         }
+        /* The six items fill whole rows at every width: three, two or one to a row. */
+        @media (max-width: 1000px) { .tenure-review-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 640px) { .tenure-review-evidence-grid { grid-template-columns: minmax(0, 1fr); } }
         .tenure-review-evidence { border-top: 1px solid var(--studio-rule); padding: 8px 0 0; }
         /* An item is a closed disclosure: the summary is its heading and one headline line; the rest of
            its lines sit inside it. */
@@ -1119,11 +1199,15 @@
                    attribution now lives per-tab below (cap-tab-attribution), driven
                    by the same accessors the engine actually calls, never a hardcoded
                    model-name literal (AC-16 attribution-coherence requirement). #}
-            <p class="legend-as-of adv-caption adv-note" data-testid="advisor-caption">
-                Advisory suite — operator must approve each change through safety gates
-            </p>
+            <p class="legend-as-of adv-caption adv-note" data-testid="advisor-caption" data-explainer="A01">Advisory tools: a suggestion changes nothing until you accept or approve it. The weekly autotune is the one exception: it applies new stop settings by itself when they pass its checks.</p>
+            <details class="hp-more" data-terms="A01">
+                <summary>What the terms mean</summary>
+                <p data-term="A03">Tab dots: green marks low risk; amber marks a tab to read with more care: higher overfitting risk, a real Composer write, or explanations only.</p>
+                <p data-term="A04">Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.</p>
+            </details>
 
         <!-- Capability tab nav — in-place switching via JS (AC2: button not anchor) -->
+        <div class="cap-nav-wrap">
         <nav class="cap-nav" role="tablist" aria-label="Advisor capabilities">
             <button role="tab"
                     aria-selected="true"
@@ -1197,6 +1281,9 @@
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Real Composer write — approval required"></span>
             </button>
         </nav>
+        <span class="cap-nav-cue cap-nav-cue--start" data-testid="cap-nav-cue-start" aria-hidden="true" hidden></span>
+        <span class="cap-nav-cue cap-nav-cue--end" data-testid="cap-nav-cue-end" aria-hidden="true" hidden></span>
+        </div>
         </section>
 
         <!-- ============================================================ -->
@@ -1213,6 +1300,16 @@
            tab; the lens stamp, the run summary and any suggestions follow, then the autotune runs. The
            pointer text comes from _build_retirement_pointer over context this page already reads, so it
            makes no request of its own. #}
+        <p class="adv-explainer" data-explainer="O01">A summary of what the advisor tools have found: suggestions for one symphony on demand, the weekly autotune results, the overnight market read and the latest automated checks. Nothing on this tab changes a symphony until you accept a suggestion.</p>
+        <p class="adv-explainer" data-explainer="O03">Pick a symphony and choose Run Claude advisor for suggested changes to its stop settings. You can accept a suggestion only if it also holds up on recent history the tuning never saw.</p>
+        <details class="hp-more" data-terms="O03">
+            <summary>What the terms mean</summary>
+            <p data-term="O04">OOS: out of sample, recent history the tuning never saw, kept back to check that a result is not fitted to noise.</p>
+            <p data-term="O07a">Confidence: the model's own rating of a suggestion, not a statistical test.</p>
+            <p data-term="O07b">Gates: allowlist checks the setting is one the advisor may suggest; risk direction checks that the direction the model claims for its change, looser or tighter, matches the direction the engine works out; oos frozen eval checks the change holds up on held-back history; locked vars checks the setting is not locked.</p>
+            <p data-term="O06">Fallback OOS: the same held-back score for the settings the symphony had before the latest autotune.</p>
+        </details>
+
         <div data-testid="advisor-grid" class="adv-grid">
 
             <a class="adv-pointer" href="#retirement" data-testid="retirement-pointer">{{ retirement_pointer.text }} <span aria-hidden="true">&rarr;</span></a>
@@ -1261,6 +1358,16 @@
                 <div data-testid="autotune-panel-header" class="section-header autotune-header adv-heading">
                     Recent autotune runs
                 </div>
+                <p class="adv-explainer" data-explainer="O08">Each symphony's latest weekly autotune, which searches past data for better stop settings. New settings are applied only when they also beat the current ones on data the search did not use; Outcome says what each run did.</p>
+                <details class="hp-more" data-terms="O08">
+                    <summary>What the terms mean</summary>
+                    <p data-term="O09a">Runs without adopting a tuned config: how many runs in a row kept the old settings.</p>
+                    <p data-term="O09b">CRRA-EU score: the autotune's score for a set of settings, an average outcome in which losses weigh more than gains of the same size; higher is better.</p>
+                    <p data-term="O09c">Sel t-stat: how clearly the winning settings stand out after correcting for how many settings were tried; higher is stronger.</p>
+                    <p data-term="O10">Fallback: the new settings failed the check on held-back data, so the symphony keeps the settings it had before the run.</p>
+                    <p data-term="O11">Frozen-eval: a final score of the run's best settings on held-back data, under the same objective; not evaluated means the run recorded no such score.</p>
+                    <p data-term="O12">N/A: the run recorded no figure for that column.</p>
+                </details>
                 {# The chart sits in a box of its own with a set height: a responsive chart sizes itself from its
                    parent, and a parent that also holds the table would feed its own height back into the chart. #}
                 <div class="autotune-spark"><canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;width:100%;height:100%;"></canvas></div>
@@ -1312,11 +1419,18 @@
                 <span class="prism-sentiment-chip {{ _chip_class }}"
                       data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
                 {% endif %}
-                <span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
+                <span class="prism-model-badge" data-testid="prism-model-badge">{% if advisor_synthesis_model_known %}Synthesized by {{ advisor_synthesis_model | e }}{% else %}Synthesizing model not known{% endif %}</span>
                 {% if market_prism_summary %}
                     <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
                 {% endif %}
             </div>
+            <p class="adv-explainer" data-explainer="O15">An overnight read of the market through five lenses: technicals, sentiment, derivatives, macro and fundamentals. It is background for your decisions and changes nothing by itself.</p>
+            <details class="hp-more" data-terms="O15">
+                <summary>What the terms mean</summary>
+                <p data-term="O16">risk-on: conditions favor taking risk. risk-off: they favor caution. neutral: no lean either way. limited-inputs: too few lenses had data for a read.</p>
+                <p data-term="O19">Lenses: technicals reads price trends and breadth, sentiment reads news tone, derivatives reads volatility measures, macro reads rates, inflation and jobs data, and fundamentals reads company filings.</p>
+                <p data-term="O24">Numeric verification: each number the read lists as a cited figure is checked against lens data fetched after the read; verified means it matched, and unverifiable means there was nothing to check it against, not that it is wrong. Numbers that appear only in the prose are not checked.</p>
+            </details>
 
             {% if market_prism_summary %}
 
@@ -1535,6 +1649,13 @@
 
         <section data-testid="advisor-observations-section" class="hero-section obs-section adv-panel">
             <div class="section-header obs-section-header adv-heading">Advisor observations<span class="obs-section-note" data-testid="obs-advisory-only" title="Advisory only: nothing here moves money">advisory only, nothing here moves money</span></div>
+            <p class="adv-explainer" data-explainer="O27">The latest verdict from each advisor that records observations: the checks on the tuning process, Market Prism, and the weekly swap and rule-change searches. Each covers something different, so read the note below before you take a Clear as an all-clear.</p>
+            <details class="hp-more" data-terms="O27">
+                <summary>What the terms mean</summary>
+                <p data-term="O28">THEORY spec: the frozen set of objective settings every tuning run shares, such as its risk aversion and utility family. Backtest-selection degrees of freedom: choices made by looking at backtest results, each of which adds overfitting risk.</p>
+                <p data-term="O29">Asset Swap and Logic Change: the weekly searches for a better ticker or rule in each symphony.</p>
+                <p data-term="O30">Clear: the check passed. Watch: worth a look, not a failure. Breach: the check failed. Adopt candidate: a candidate passed the gate and beat the current symphony. Keep incumbent: no candidate beat the current symphony.</p>
+            </details>
             {# AC-14 (F8, doc-reconciliation.md §1.8): the three guardrail producers are
                NOT uniform — Spec Critic is a genuine active control (an empty/missing-facet
                bundle triggers BREACH, not a default CLEAR, so a CLEAR is an evaluated pass);
@@ -1632,6 +1753,14 @@
              data-testid="tab-panel-correlations"
              data-tab="correlations"
              class="tab-panel">
+
+            <p class="adv-explainer" data-explainer="C01">How closely your symphonies' daily returns move together, from the latest successful retirement run; this tab only measures. Two symphonies that move as one add risk without adding diversification; the Retirement tab uses this to suggest which one to drop.</p>
+            <details class="hp-more" data-terms="C01">
+                <summary>What the terms mean</summary>
+                <p data-term="C05">Correlation: a number from minus 1 to 1 for how closely two return series move together; 1 is in lockstep and 0 is unrelated.</p>
+                <p data-term="C03">Stored no pairs: the run analysed the symphonies but saved no pair figures, so there is nothing to draw until a newer run saves them.</p>
+                <p data-term="C07">Fill and markers: the fill deepens as the correlation gets stronger; a thin marker means the pair shares few days, so its figure is rough.</p>
+            </details>
 
             <!-- Crisis caveat banner — always on (AC-1.4) -->
             <div class="crisis-caveat" data-testid="crisis-caveat-banner" role="note">
@@ -1938,10 +2067,28 @@
 
         <section class="hero-section matrix-card adv-panel" data-testid="retirement-recommendations-panel">
             <div class="section-header matrix-card-header adv-heading">Retirement recommendations</div>
+            <p class="adv-explainer" data-explainer="R01">Suggestions to retire a symphony that duplicates another or no longer earns its place. Nothing is retired for you: approving records your decision and gives you a checklist to wind the symphony down yourself in Composer.</p>
+
+            <div class="retirement-pair" data-testid="retirement-pair">
 
             {# The recommender first: the card to act on is at the top, then the run it came from. #}
             <section class="retirement-subsection" data-testid="retirement-recommender-section">
                 <div class="section-header adv-heading">Correlated pairs</div>
+                <p class="adv-explainer" data-explainer="R02">A symphony is flagged when, over enough shared days, its daily returns track another live symphony's {% if page_copy.screen_threshold is not none %}at a correlation of {{ page_copy.screen_threshold }} or more,{% else %}at or above the correlation screen,{% endif %} even at the low end of the estimate's range and on the worst days, and it has the lower combined return and risk score. Each card names the symphony to retire, then the one to keep after the arrow.</p>
+                <details class="hp-more" data-terms="R02">
+                    <summary>What the terms mean</summary>
+                    <p data-term="R04">Deposit-adjusted: the series Composer names deposit-adjusted, which the recommender uses instead of the raw account value series.</p>
+                    <p data-term="R06">Analysed: symphonies with a usable daily series, of all live symphonies.</p>
+                    <p data-term="R07">History: the shortest and longest daily series, in days.</p>
+                    <p data-term="R08">Pairs screened: pairs whose correlation reached the screen, of all pairs compared.</p>
+                    <p data-term="R09">Blocked: screened pairs that did not become a recommendation, counted by the check that stopped them.</p>
+                    <p data-term="R12">Run recommender: runs the nightly analysis now; it takes a minute or two and is refused while the market is open.</p>
+                    <p data-term="R17">kept: the symphony of the pair that stays; the one before the arrow is the one suggested for retirement.</p>
+                    <p data-term="R18">Composite gap: how far the kept symphony's combined return and risk score is ahead of the flagged one's.</p>
+                    <p data-term="R19a">Uncertainty gate: passes only if the correlation is still at or above the screen at the low end of its confidence range, so a high reading from a short history does not count.</p>
+                    <p data-term="R19b">Structural-redundancy gate: passes only if the two still move together {% if page_copy.stress_fraction_pct is not none %}on the worst {{ page_copy.stress_fraction_pct }} percent of days,{% else %}on their worst days,{% endif %} when diversification matters most.</p>
+                    <p data-term="R20">Approve retirement: records your decision and shows a wind-down checklist; it sells nothing and changes nothing in Composer.</p>
+                </details>
             {# Cycle 2e AC-5b: the cards below are scoped to the latest SUCCESSFUL #}
             {# run, so when the most recent run (shown in the block above) was    #}
             {# not that run -- it failed -- say which run the cards come from.    #}
@@ -2069,6 +2216,7 @@
                     <div class="retirement-last-run-line">Not run yet — runs nightly at 03:45 UTC, or use Run recommender.</div>
                 {% endif %}
             </div>
+            <div class="retirement-run-now-line">
             <div class="retirement-run-now-row">
                 <button type="button"
                         class="run-btn"
@@ -2087,11 +2235,30 @@
             <div class="retirement-run-now-hint" data-testid="retirement-run-now-hint">
                 Run recommender is available outside market hours only &mdash; the Composer API is shared with the live engine.
             </div>
+            </div>{# /retirement-run-now-line #}
 
             </section>
 
             <section class="retirement-subsection" data-testid="tenure-review-section">
                 <div class="section-header adv-heading">Symphony tenure review</div>
+                <p class="adv-explainer" data-explainer="R22">{% if page_copy.tenure_threshold is not none %}Once a symphony has been invested for {{ page_copy.tenure_threshold }} trading days,{% else %}Once a symphony has been invested for the configured minimum number of trading days,{% endif %} this review asks whether it still earns its place: its real results against its own backtest, its effect on the whole portfolio, and whether it duplicates another symphony. Each eligible symphony gets keep, watch, retire-candidate or no verdict; the review only advises, and approving a retirement records your decision without changing anything in Composer.</p>
+                <details class="hp-more" data-terms="R22">
+                    <summary>What the terms mean</summary>
+                    <p data-term="R23">Run tenure review: runs the review now instead of waiting for the nightly run; it is refused while the market is open.</p>
+                    <p data-term="R26">trigger: whether the run was the nightly one or one you started. threshold in effect: the trading days a symphony needs before it gets a verdict.</p>
+                    <p data-term="R27a">keep: no evidence against it.</p>
+                    <p data-term="R27b">watch: it trails its own backtest {% if page_copy.watch_trail_pp is not none %}by more than {{ page_copy.watch_trail_pp }} percentage points of total return,{% else %}by more than the set margin of total return,{% endif %} or the portfolio would have a higher return and no deeper drawdown without it.</p>
+                    <p data-term="R27c">retire-candidate: it duplicates another live symphony and scores lower, as under Correlated pairs.</p>
+                    <p data-term="R27d">no verdict: there is not yet enough evidence to judge.</p>
+                    <p data-term="R28">basis: which series the figures use, Composer's realized one or the bot's shadow history. missing: evidence items that could not be computed, with the reason.</p>
+                    <p data-term="R30">not applicable: the item does not apply to this symphony, for the reason shown. paired with: the live symphony this one is compared against. normalized across N symphonies: the score is ranked among that many symphonies.</p>
+                    <p data-term="R29a">Performance: the symphony's realized return and risk over its tenure.</p>
+                    <p data-term="R29b">Composite score: its return and risk score ranked against the other live symphonies.</p>
+                    <p data-term="R29c">Redundancy: its return correlation with the other live symphonies.</p>
+                    <p data-term="R29d">Backtest: Composer's backtest of its current rules, against what it really earned.</p>
+                    <p data-term="R29e">Marginal contribution: the portfolio of eligible symphonies with and without it.</p>
+                    <p data-term="R29f">Long VIX hedge: its long-volatility holdings beside the rest of the portfolio, shown for context and not used in the verdict.</p>
+                </details>
             {# Symphony tenure review: header, run state, then one entry per live symphony. #}
             <div class="tenure-review-header">
                 <button type="button"
@@ -2184,6 +2351,7 @@
             {% endif %}
 
             </section>
+            </div>{# /retirement-pair #}
         </section>{# /retirement-recommendations-panel #}
 
         </div>{# /tab-panel-retirement #}
@@ -2197,7 +2365,15 @@
              data-tab="asset-swaps"
              class="tab-panel">
 
-            <p class="cap-tab-attribution">{{ advisor_suggestion_model | e }} — reasons over your live tree</p>
+            <p class="cap-tab-attribution">{% if advisor_suggestion_model_known %}{{ advisor_suggestion_model | e }} · reasons over your symphony's current rules{% else %}Reasons over your symphony's current rules; model not known{% endif %}</p>
+            <p class="adv-explainer" data-explainer="W01">Test whether replacing one ticker in a symphony with another would have helped, against a statistical gate built to reject lucky results. Leave both tickers blank to let the advisor propose swaps; you make any change yourself in Composer.</p>
+            <details class="hp-more" data-terms="W01">
+                <summary>What the terms mean</summary>
+                <p data-term="W02">The gate: a candidate must beat the current symphony on history held back from the test, beat SPY over the same period, pass the overfitting check, and survive a correction for how many candidates were tested.</p>
+                <p data-term="W06">Baseline: the symphony as it is. Variant: the symphony with the change.</p>
+                <p data-term="W07">PBO: probability of backtest overfitting, the chance the best-looking candidate looked best by luck; a high PBO vetoes the candidate.</p>
+                <p data-term="W09">Model and context: which model reasoned and which evidence it was given.</p>
+            </details>
 
             <div class="advise-only-banner" data-testid="advise-only-banner" role="note">
                 <span class="advise-only-banner-icon" aria-hidden="true"></span>
@@ -2266,7 +2442,16 @@
              data-tab="logic-changes"
              class="tab-panel">
 
-            <p class="cap-tab-attribution">{{ advisor_suggestion_model | e }} — reasons over your live tree</p>
+            <p class="cap-tab-attribution">{% if advisor_suggestion_model_known %}{{ advisor_suggestion_model | e }} · reasons over your symphony's current rules{% else %}Reasons over your symphony's current rules; model not known{% endif %}</p>
+            <p class="adv-explainer" data-explainer="L01">Test a change to a symphony's rules, such as a different lookback, against the same statistical gate: the advisor edits your current rule tree, backtests it and judges the result. Rule changes are the easiest to overfit, so read any pass as a lead to check.</p>
+            <details class="hp-more" data-terms="L01">
+                <summary>What the terms mean</summary>
+                <p data-term="L02a">FDR/Yekutieli correction: raises the bar each candidate must clear as more candidates are tested, so one lucky result among many tries is not taken for skill.</p>
+                <p data-term="L02b">Sound-but-unprovable: passed every check, which still does not prove it will work live.</p>
+                <p data-term="L03">Objectives: reduce drawdown aims for shallower falls, lift risk-adjusted return aims for more return per unit of risk, and reduce turnover aims for fewer trades.</p>
+                <p data-term="L05">Baseline: the symphony as it is. Variant: the symphony with the change. Ann. return: yearly return.</p>
+                <p data-term="L06">Adjusted threshold α: the p-value bar after the correction for how many candidates were tested. p: the candidate's p-value, which must be under the bar to pass.</p>
+            </details>
 
             <div class="fdr-warning-banner"
                  data-testid="fdr-warning-banner"
@@ -2346,16 +2531,13 @@
              data-tab="chat"
              class="tab-panel">
 
-            <p class="cap-tab-attribution">{{ advisor_synthesis_model | e }}</p>
+            <p class="cap-tab-attribution">{% if advisor_synthesis_model_known %}{{ advisor_synthesis_model | e }}{% else %}Chat model not known{% endif %}</p>
 
             <div data-testid="chat-default-state" class="hero-section chat-default-state adv-panel">
                 <div class="chat-default-title">
                     Select a recommendation or diagnostic figure to open a contextual explanation.
                 </div>
-                <p class="chat-default-body">
-                    Chat explains what the advisor found and why. Click &ldquo;Discuss this&rdquo;
-                    on any proposal card to start a scoped conversation.
-                </p>
+                <p class="chat-default-body" data-explainer="T02">Chat explains what the advisor found and why. Use Discuss this proposal or Chat about this on a proposal or suggestion card to start a conversation about it; Chat explains and changes nothing.</p>
                 <ul class="chat-example-prompts" aria-label="Example questions">
                     <li>"Why did the gate reject this swap?"</li>
                     <li>"Why did this Strategy Builder proposal pass the gate?"</li>
@@ -2383,7 +2565,8 @@
              data-sb-labels='{{ {"objectives": sb_objective_labels, "sources": sb_source_labels, "not_recorded": sb_label_not_recorded} | tojson }}'
              class="tab-panel">
 
-            <p class="cap-tab-attribution">{{ advisor_suggestion_model | e }} + community, statistically gated</p>
+            <p class="cap-tab-attribution">{% if advisor_suggestion_model_known %}{{ advisor_suggestion_model | e }} and community strategies, statistically gated{% else %}Claude and community strategies, statistically gated; model not known{% endif %}</p>
+            <p class="adv-explainer" data-explainer="B00">Ask the advisor for new strategies for one goal: it designs some from scratch, adds ranked community strategies, tests them all and keeps only the strongest that clears the gate. A survivor is a suggestion you would build yourself in Composer.</p>
 
             <!--
                 Persistent non-dismissible risk warning (AC-3.2 + AC-3.3).
@@ -2473,13 +2656,21 @@
                    implied a plural "candidates are surfaced" when the gate caps
                    ADOPT_CANDIDATE at exactly one survivor per run. Corrected + made
                    accessor-driven per AC-16 (never a hardcoded model-name literal). #}
-                <p class="run-controls-note">
-                    The advisor generates candidate strategies via {{ advisor_suggestion_model | e }}
+                <p class="run-controls-note" data-explainer="B03">
+                    The advisor generates candidate strategies {% if advisor_suggestion_model_known %}via {{ advisor_suggestion_model | e }}{% else %}with its Claude model{% endif %}
                     (plus ranked community strategies from the Atlas library), compiles
                     and backtests each one, and applies an FDR/Yekutieli-calibrated
                     significance bar. Only the single strongest candidate that clears
                     the bar is ever promoted per run.
                 </p>
+                <details class="hp-more" data-terms="B03">
+                    <summary>What the terms mean</summary>
+                    <p data-term="B01">Community: strategies from the Atlas library, a public catalog of Composer strategies, ranked for your goal.</p>
+                    <p data-term="B02">FDR/Yekutieli correction: raises the bar each candidate must clear as more candidates are tested, so one lucky result among many tries is not taken for skill.</p>
+                    <p data-term="B03o">Objectives: diversify favors strategies that share few holdings with yours, cut drawdown favors shallow falls, and lift risk-adjusted return favors a higher Sharpe ratio.</p>
+                    <p data-term="B03u">Universe (tickers): the tickers the designed strategies may use; leave it empty to allow every tradeable US-listed stock and fund.</p>
+                    <p data-term="B08">PBO: probability of backtest overfitting, the chance the best-looking candidate looked best by luck; a high PBO vetoes the candidate.</p>
+                </details>
                 <div id="sb-run-error"
                      class="run-error"
                      data-testid="sb-run-error"
@@ -2608,6 +2799,12 @@
             <!-- Survivor cards (ADOPT_CANDIDATE) — ZERO action affordances -->
             {% if sb_survivors %}
             <div class="section-header adv-heading">Strategy proposals — gate passed</div>
+            <p class="adv-explainer" data-explainer="B07">Strategies that cleared the statistical gate. To use one, build it in Composer yourself from the rules on its card.</p>
+            <details class="hp-more" data-terms="B07">
+                <summary>What the terms mean</summary>
+                <p data-term="B07t">Live Baseline: the same figures for your live symphony over the same days as the candidate's backtest.</p>
+                <p data-term="B12">Incubating: paper-tracked forward before it is shown as a recommendation. Promoted: its forward results held up. Failed: they did not, or its fall went too deep. Expired: tracking stopped.</p>
+            </details>
             <div class="proposal-cards" data-testid="survivor-cards">
                 {% for obs in sb_survivors %}
                 {% set rr = obs.raw_response %}
@@ -2747,6 +2944,7 @@
             <!-- Backtest-failed cards -->
             {% if sb_bt_failed %}
             <div class="section-header adv-heading">Backtest failures</div>
+            <p class="adv-explainer" data-explainer="B10">Candidates Composer could not backtest, with the error it returned. The gate never judged them.</p>
             <div class="proposal-cards">
                 {% for obs in sb_bt_failed %}
                 {% set rr = obs.raw_response %}
@@ -2847,6 +3045,8 @@
              data-tab="frontrunner-builder"
              class="tab-panel">
 
+            <p class="adv-explainer" data-explainer="X01">Proposes copies of your symphonies with one frontrunner overlay added: a rule placed ahead of the symphony's own logic that switches into VIX-linked funds when its conditions are met, for example a watched ticker's RSI rising above a set level. You approve or reject each copy.</p>
+
             <!--
                 Persistent non-dismissible notice. Unlike every other tab on this
                 page (AC-4.1 HARD: no apply/accept/deploy/trade buttons), THIS tab
@@ -2874,17 +3074,13 @@
                  key WAS configured) still render below regardless. -->
             <div class="hero-section no-api-key-state adv-panel" data-testid="no-api-key-state-fr">
                 <div class="no-api-key-title">Frontrunner Builder Unavailable</div>
-                <div class="no-api-key-body">
-                    <code>ANTHROPIC_API_KEY</code> not configured — the build needs it
-                    for Fable candidate generation. Already-queued pending proposals
-                    (if any) still render below.
-                </div>
+                <div class="no-api-key-body">The Frontrunner build needs an Anthropic API key in the server's .env file to generate candidates. Proposals already queued still show below.</div>
             </div>
 
             {% else %}
 
             <!-- Run controls — no HTML form element; trigger uses JS fetch + X-CSRF-Token header -->
-            <div class="hero-section run-controls-panel adv-panel" data-testid="frontrunner-builder-controls">
+            <div class="hero-section run-controls-panel run-controls-panel--inline adv-panel" data-testid="frontrunner-builder-controls">
                 <div class="section-header run-controls-header adv-heading">Run frontrunner build</div>
                 <div class="run-controls-row">
                     <button id="fr-run-btn"
@@ -2895,7 +3091,7 @@
                         Run build
                     </button>
                 </div>
-                <p class="run-controls-note">
+                <p class="run-controls-note" data-explainer="X03">
                     Runs over every live symphony in the background (this can take
                     several minutes) — reload this tab afterward to see newly-queued
                     proposals below. Also runs automatically on the weekly schedule.
@@ -2923,6 +3119,15 @@
             {% else %}
 
             <div class="section-header adv-heading">Pending approval ({{ frontrunner_proposals | length }})</div>
+            <p class="adv-explainer" data-explainer="X05">Copies waiting for your decision. Compare each copy's Calmar, CAGR and drawdown with the original before you approve; approving creates a new undeployed symphony and trades nothing.</p>
+            <details class="hp-more" data-terms="X05">
+                <summary>What the terms mean</summary>
+                <p data-term="X06">Incumbent: your current symphony. Frontrunner overlay: a rule placed ahead of the symphony's own logic that switches into VIX-linked funds when its conditions are met, for example a watched ticker's RSI rising above a set level.</p>
+                <p data-term="X08">Same title: several cards can copy the same symphony; they differ in their overlay and figures, which View the added overlay shows.</p>
+                <p data-term="X09">Strategy Builder (retrofit): a from-scratch Strategy Builder design offered for this symphony; it does not contain the incumbent's logic.</p>
+                <p data-term="X11">Calmar: yearly return divided by the deepest fall; higher is better. CAGR: the yearly growth rate. Max DD: the deepest fall from a high to a later low.</p>
+                <p data-term="X12">Node count change: how many more or fewer steps the copy's rule tree has than the original; fewer is simpler.</p>
+            </details>
             {# What is the same on every card is said once here; a card keeps only what differs (the incumbent,
                its overlay, its figures). Identity applies to frontrunner proposals; the approval line to all. #}
             <div class="fr-shared" data-testid="fr-shared-notes">
@@ -2931,7 +3136,7 @@
                 {% endif %}
                 <p class="fr-line fr-explainer-line" data-testid="fr-explainer-line"><span class="fr-shared-label">On approval</span>Approve creates a NEW undeployed Composer symphony &mdash; the incumbent is never modified.</p>
             </div>
-            <div class="proposal-cards" data-testid="frontrunner-proposal-cards">
+            <div class="proposal-cards proposal-cards--fill" data-testid="frontrunner-proposal-cards">
                 {% for p in frontrunner_proposals %}
                 {% set m = p.metrics_json or {} %}
                 {% set is_fr = p.proposal_source == 'frontrunner_builder' %}
@@ -2942,7 +3147,7 @@
                         {# Title: the incumbent's display name (resolved in ai_advisor_tab());
                            the Composer hash stays only in the title attribute. A hash no
                            longer held in the live state reads as the hash. #}
-                        <span class="card-name adv-card-name" data-testid="fr-incumbent-name" title="{{ p.symphony_id | e }}">{{ (p._incumbent_display_name or p.symphony_id) | e }}</span>
+                        <span class="card-name adv-card-name" data-testid="fr-incumbent-name" title="{{ p.symphony_id | e }}">{{ (p._incumbent_display_name or p.symphony_id) | e }} · proposal #{{ p.id }}</span>
                         {% if not is_fr %}<span class="fr-source" data-testid="proposal-source-badge">Strategy Builder (retrofit)</span>{% endif %}
                     </div>
                     <table class="stats-table" data-testid="stats-table">
@@ -2988,10 +3193,11 @@
                             {% endif %}
                         </tbody>
                     </table>
+                    <div class="fr-card-flow">
                     {% if is_fr %}
                     <div class="fr-line fr-overlay-summary-line" data-testid="fr-overlay-summary"><span class="fr-line-label">Overlay</span>{% if m.overlay_summary %}one new condition, below{% else %}{{ overlay_not_recorded_text | e }}{% endif %}</div>
                     {#- The overlay line says what the overlay is for; the overlay itself is read under its preview, directly below. -#}
-                    <details class="rules-collapsible" data-testid="fr-overlay-preview"><summary>View overlay delta</summary>{% if m.overlay_summary %}<p class="fr-overlay-raw">{{ m.overlay_summary | e }}</p>{% endif %}<pre>{{ p.overlay_tree_preview or '(unavailable)' }}</pre></details>
+                    <details class="rules-collapsible" data-testid="fr-overlay-preview"><summary>View the added overlay</summary>{% if m.overlay_summary %}<p class="fr-overlay-raw">{{ m.overlay_summary | e }}</p>{% endif %}<pre>{{ p.overlay_tree_preview or '(unavailable)' }}</pre></details>
                     {% else %}
                     <p class="fr-retrofit-identity-line">
                         From-scratch symphony proposed by Strategy Builder &mdash; does not contain the incumbent's logic.
@@ -3001,9 +3207,10 @@
                     <p class="backtest-error">Previous attempt failed: {{ p.error_message }}</p>
                     {% endif %}
                     <details class="rules-collapsible" data-testid="fr-raw-preview">
-                        <summary>{% if is_fr %}Full spliced symphony (preview){% else %}Proposed symphony (preview){% endif %}</summary>
+                        <summary>{% if is_fr %}Full symphony with the overlay added (preview){% else %}Proposed symphony (preview){% endif %}</summary>
                         <pre>{{ p.candidate_tree_preview or '(unavailable)' }}</pre>
                     </details>
+                    </div>{# /fr-card-flow #}
                     <div class="proposal-actions">
                         <button type="button"
                                 class="run-trigger-btn"
@@ -3069,10 +3276,7 @@
         {% if not chat_available %}
         <div data-testid="chat-unavailable" class="chat-unavailable">
             <div class="chat-unavailable-title">Chat unavailable</div>
-            <p class="chat-unavailable-body">
-                Anthropic API key not configured.<br>
-                Set <code>ANTHROPIC_API_KEY</code> to enable explanations.
-            </p>
+            <p class="chat-unavailable-body">Chat needs an Anthropic API key in the server's .env file; the daemon reads it when it starts.</p>
         </div>
         {% else %}
 
