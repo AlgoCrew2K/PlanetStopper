@@ -515,7 +515,7 @@
         .adv-explainer { margin: 0 0 8px; font-size: 12px; line-height: 1.4; color: var(--studio-ink-dim); }
         .adv-explainer:has(+ .hp-more) { margin-bottom: 2px; }
         .adv-explainer + .hp-more { margin: 0 0 12px; }
-        .retirement-subsection .adv-explainer + .hp-more { margin-bottom: 4px; }
+        .retirement-subsection[data-testid="retirement-recommender-section"] .adv-explainer + .hp-more { margin-bottom: 4px; }
         .hp-more p { margin: 0 0 6px; }
         /* A closed disclosure holds no box for its terms (not even a hidden one a script could measure). */
         details.hp-more:not([open]) > :not(summary) { display: none; }
@@ -962,19 +962,19 @@
         /* name and the decision state the shared status; these rules add only  */
         /* what the shared rules do not set.                                    */
         /* ------------------------------------------------------------------ */
-        .retirement-rec-card { margin-bottom: 12px; font-size: 13px; }
+        .retirement-rec-card { margin-bottom: 4px; font-size: 13px; }
         .retirement-rec-card:last-child { margin-bottom: 0; }
         /* The panel holds two sub-sections, each with its own heading and its own run button. */
         .retirement-subsection + .retirement-subsection {
-            margin-top: 24px;
-            padding-top: 16px;
+            margin-top: 12px;
+            padding-top: 8px;
             border-top: 1px solid var(--studio-rule);
         }
         .retirement-subsection > .section-header { margin-top: 0; }
         /* Two short subsections share one row; the script adds --side when both fit in 320px or less
            (it measures them stacked) and the 700px breakpoint always stacks them. */
         @media (min-width: 701px) {
-            .retirement-pair--side { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; align-items: stretch; }
+            .retirement-pair--side { display: grid; grid-template-columns: 4fr 3fr; gap: 0 24px; align-items: stretch; }
             .retirement-pair--side > .retirement-subsection + .retirement-subsection {
                 margin-top: 0;
                 padding-top: 0;
@@ -997,18 +997,9 @@
         /* Cycle 2b (AC-7): explanation, live status, approve/reject actions, deterministic checklist. */
         .retirement-rec-explanation { color: var(--studio-ink); font-size: 13px; margin: 8px 0; line-height: 1.5; }
         .retirement-rec-actions { display: flex; gap: 8px; margin-top: 12px; }
-        /* A card's short lines share a row instead of stacking down the left edge: the header and the
-           lifecycle blocks take a full row, the explanation shares one with the actions, which sit at
-           the right edge. */
-        .retirement-rec-card:not(.tenure-review-entry) { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
-        .retirement-rec-card:not(.tenure-review-entry) > * { min-width: 0; }
-        .retirement-rec-card:not(.tenure-review-entry) > :not(.retirement-rec-meta):not(.retirement-rec-gates):not(.retirement-rec-basis):not(.retirement-rec-explanation):not(.retirement-rec-actions) { flex: 1 1 100%; }
-        .retirement-rec-card:not(.tenure-review-entry) > .card-header-row { margin-bottom: 0; }
-        .retirement-rec-card:not(.tenure-review-entry) .retirement-rec-meta,
-        .retirement-rec-card:not(.tenure-review-entry) .retirement-rec-gates,
-        .retirement-rec-card:not(.tenure-review-entry) .retirement-rec-basis { margin-bottom: 0; }
-        .retirement-rec-card:not(.tenure-review-entry) > .retirement-rec-explanation { flex: 1 1 16rem; margin: 4px 0; }
-        .retirement-rec-card:not(.tenure-review-entry) > .retirement-rec-actions { margin: 0 0 0 auto; }
+        /* The recommendation cards sit in a grid of columns, so a card's short lines never leave a wide empty strip. */
+        .retirement-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 8px 12px; align-items: start; margin-bottom: 8px; }
+        .retirement-cards > .retirement-rec-card { margin-bottom: 0; }
         .retirement-checklist {
             margin-top: var(--studio-space-sm);
             padding-top: 12px;
@@ -1034,6 +1025,9 @@
         .retirement-last-run-state { color: var(--studio-ink); font-weight: 500; margin-bottom: 4px; }
         .retirement-last-run-state--internal_error { color: var(--studio-neg); }
         .retirement-last-run-excluded ul { margin: 2px 0 0; padding-left: 20px; }
+        /* The label and its list share a row. */
+        .retirement-last-run-excluded { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
+        .retirement-last-run-excluded ul { flex: 1 1 20rem; margin: 0; padding-left: 0; list-style-position: inside; }
         .retirement-run-now-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
         .retirement-run-now-status { font-size: 12px; color: var(--studio-ink-dim); }
         .retirement-cards-from-earlier-run { font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 12px; }
@@ -1041,11 +1035,29 @@
         /* The button, its status and the hint share a row; the status and hint wrap under it when narrow. */
         .retirement-run-now-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px; }
         .retirement-run-now-line > .retirement-run-now-hint { flex: 1 1 16rem; margin: 0 0 8px; }
+        /* The Run tenure review button shares a row with the line that follows it. */
+        .retirement-subsection[data-testid="tenure-review-section"] { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0 16px; }
+        .retirement-subsection[data-testid="tenure-review-section"] > * { flex: 1 1 100%; min-width: 0; }
+        .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { flex: 0 0 auto; margin: 8px 0; }
+        .sym-card.retirement-rec-card.adv-card { padding-top: 8px; padding-bottom: 8px; }
+        .retirement-pair--side > .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { margin: 30px 0 12px; }
+        .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-run,
+        .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-notice,
+        .retirement-subsection[data-testid="tenure-review-section"] > [data-testid="retirement-recommendations-empty"] { flex: 1 1 12rem; margin-bottom: 0; }
+        .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-run { justify-content: space-between; }
+        /* The Run recommender control shares the heading's row, so the section stays short. */
+        .retirement-subsection[data-testid="retirement-recommender-section"] { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0 16px; }
+        .retirement-subsection[data-testid="retirement-recommender-section"] > * { flex: 1 1 100%; order: 2; min-width: 0; }
+        .retirement-subsection[data-testid="retirement-recommender-section"] > .section-header { flex: 0 0 auto; order: 0; }
+        .retirement-subsection[data-testid="retirement-recommender-section"] > .retirement-run-now-line { flex: 1 1 20rem; order: 1; }
+        .retirement-subsection[data-testid="retirement-recommender-section"] > .retirement-last-run { padding-top: 2px; margin-bottom: 2px; }
+        .retirement-subsection[data-testid="retirement-recommender-section"] .retirement-tiles { margin: 0; }
+        .retirement-subsection[data-testid="retirement-recommender-section"] .retirement-last-run-excluded { margin-bottom: 0; }
         /* The run's time, basis and series date share a row above the tiles. */
         .retirement-last-run { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 20px; }
-        .retirement-last-run > .retirement-tiles,
-        .retirement-last-run > .retirement-last-run-excluded,
         .retirement-last-run > .retirement-last-run-state { flex: 1 1 100%; }
+        .retirement-last-run > .retirement-tiles { flex: 1 1 auto; }
+        .retirement-last-run > .retirement-last-run-excluded { flex: 1 1 14rem; min-width: 0; }
 
         /* Symphony tenure review */
         .tenure-review-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
@@ -1062,7 +1074,7 @@
         }
         .tenure-review-notice--failed { color: var(--studio-neg); border-color: var(--studio-neg); }
         .tenure-review-run { display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 12px; }
-        .tenure-review-entry { margin-bottom: 12px; font-size: 13px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; }
+        .tenure-review-entry { margin-bottom: 4px; font-size: 13px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; }
         .tenure-review-entry > .tenure-review-entry-head,
         .tenure-review-entry > .tenure-review-evidence-grid,
         .tenure-review-entry > .tenure-review-lifecycle { flex: 1 1 100%; min-width: 0; }
@@ -1072,21 +1084,19 @@
         /* The six evidence items read as compact lists side by side, each as tall as its own content. */
         .tenure-review-evidence-grid {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 12px 24px;
+            grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+            gap: 2px 24px;
             align-items: start;
             margin-top: 8px;
         }
-        /* The six items fill whole rows at every width: three, two or one to a row. */
-        @media (max-width: 1000px) { .tenure-review-evidence-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-        @media (max-width: 640px) { .tenure-review-evidence-grid { grid-template-columns: minmax(0, 1fr); } }
-        .tenure-review-evidence { border-top: 1px solid var(--studio-rule); padding: 8px 0 0; }
+
+        .tenure-review-evidence { border-top: 1px solid var(--studio-rule); padding: 0; }
         /* An item is a closed disclosure: the summary is its heading and one headline line; the rest of
            its lines sit inside it. */
         .tenure-review-evidence-summary { cursor: pointer; }
         .tenure-review-evidence-summary > .tenure-review-evidence-meta,
         .tenure-review-evidence-summary > .tenure-review-evidence-figure { display: block; margin: 0; }
-        .tenure-review-evidence-body { padding: 4px 0 0; }
+        .tenure-review-evidence-body { padding: 0; }
         .tenure-review-evidence-meta, .tenure-review-evidence-figure { color: var(--studio-ink-dim); font-size: 12px; }
         .tenure-review-evidence .retirement-rec-meta, .tenure-review-evidence .retirement-rec-gates,
         .tenure-review-evidence .retirement-rec-basis { margin-bottom: 2px; }
@@ -2105,6 +2115,7 @@
             {% endif %}
 
             {% if retirement_recommendations %}
+                <div class="retirement-cards" data-testid="retirement-cards">
                 {% for rec in retirement_recommendations %}
                 <div class="sym-card retirement-rec-card adv-card" data-testid="retirement-recommendation-card">
                     {# Resolved display name is primary; the raw Composer hash stays available but secondary (title tooltip). #}
@@ -2148,6 +2159,7 @@
                     {{ retirement_lifecycle(_cid if _cid_ok else '', rec.get('explanation'), rec.get('explanation_written_on'), rec.get('approval_status', 'pending'), rec.get('_checklist'), _cid_ok, true, false) }}
                 </div>
                 {% endfor %}
+                </div>{# /retirement-cards #}
             {% endif %}
             {# Cycle 2e (retirement-visibility AC-6): the "last run" block is #}
             {# ALWAYS present, above the cards, so a run that recommended     #}
