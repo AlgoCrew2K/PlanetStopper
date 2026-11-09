@@ -257,6 +257,100 @@ class TestAutotuneRunsAreRows:
         assert head[0].find_all(cls="autotune-run-score")[0].text == "Best CRRA-EU score"
 
 
+def _norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+class TestEveryValueOfARowStaysOnScreen:
+    """The plan's AC-8: a cell moved into the shared line is still on screen, in the line.
+
+    The rows are the real route's over runs written by ``database.save_autotune_run`` from the
+    captured fixtures (``tests/ui/_page_explainers_advisor.py``); the expected values come from
+    those rows, never from the markup under test.
+    """
+
+    @staticmethod
+    def _values(row: dict) -> dict[str, str]:
+        verdict = row.get("frozen_eval_verdict")
+        return {
+            "frozen": f"Frozen-eval {verdict}" if verdict else "Frozen-eval not evaluated",
+            "score": "N/A",
+            "tstat": "N/A",
+        }
+
+    def _render(self, rows: list[dict]) -> tuple[list[str], list[str], str]:
+        html = self._list_html(rows)
+        root = parse_html(html)
+        row_texts = [_norm(n.text) for n in root.find_all(testid="autotune-run-row")]
+        lines = [_norm(n.text) for n in root.find_all(testid="autotune-shared-line")]
+        return row_texts, lines, html
+
+    @staticmethod
+    def _list_html(rows) -> str:
+        return drive([{"op": "load"}], {"/api/autotune-runs": rows})[-1]["list"]
+
+    @pytest.mark.parametrize(
+        ("count", "adopted_at"),
+        [(11, None), (11, 4), (2, None), (1, None)],
+        ids=["all identical", "one differs", "two rows", "one row"],
+    )
+    def test_each_rows_values_are_in_the_row_or_in_the_line(self, isolated_db, count, adopted_at):
+        from tests.ui import _page_explainers_advisor as pe
+
+        pe.seed_autotune_runs(count, adopted_at=adopted_at)
+        rows = pe.route_rows()
+        row_texts, lines, _ = self._render(rows)
+        assert len(row_texts) == count
+        line = lines[0] if lines else ""
+        assert len(lines) <= 1
+        for data, text in zip(rows, row_texts, strict=True):
+            name = data.get("symphony_name") or data["symphony_id"]
+            assert name in text, f"the row lost its symphony {name!r}: {text!r}"
+            for cell, value in self._values(data).items():
+                assert value in text or value in line, (
+                    f"the {cell} value {value!r} of {name!r} is on screen nowhere: "
+                    f"row {text!r}, line {line!r}"
+                )
+
+    def test_a_value_moved_to_the_line_is_not_repeated_in_a_row(self, isolated_db):
+        from tests.ui import _page_explainers_advisor as pe
+
+        pe.seed_autotune_runs(11)
+        row_texts, lines, _ = self._render(pe.route_rows())
+        assert lines, "premise: identical cells make a line"
+        for text in row_texts:
+            for value in ("Frozen-eval not evaluated", "N/A"):
+                assert value not in text, f"{value!r} is in the line and in a row: {text!r}"
+
+    def test_the_older_runs_keep_every_cell_and_never_print_a_line(self, isolated_db):
+        from tests.ui import _page_explainers_advisor as pe
+
+        pe.seed_autotune_runs(11, older_for=3)
+        snapshots = drive([{"op": "load"}], {"/api/autotune-runs": pe.route_rows()})
+        older = parse_html(snapshots[-1]["older"]["html"])
+        rows = older.find_all(testid="autotune-run-row")
+        assert len(rows) == 3, "premise: three older runs, identical in every cell"
+        assert not older.find_all(testid="autotune-shared-line")
+        assert "Same for every run" not in snapshots[-1]["older"]["html"]
+        for row in rows:
+            text = _norm(row.text)
+            assert "Fallback" in text and "Frozen-eval not evaluated" in text, text
+            assert text.count("N/A") == 2, f"the older row dropped its score or t-stat: {text!r}"
+
+    def test_the_line_is_dim_ink_text_on_screen_never_visually_hidden(self):
+        selector = "autotune-shared-line"
+        assert _declared(selector, "color") == "var(--studio-ink-dim)"
+        for prop, value in (
+            ("display", "none"),
+            ("visibility", "hidden"),
+            ("clip", "rect(0 0 0 0)"),
+        ):
+            assert _declared(selector, prop) != value, prop
+        size = _declared(selector, "font-size")
+        if size and size.endswith("px"):
+            assert float(size[:-2]) >= 11, "below the page's 11 px text floor"
+
+
 # ---------------------------------------------------------------------------
 # Market Prism: sources collapsed, lenses in one row
 # ---------------------------------------------------------------------------

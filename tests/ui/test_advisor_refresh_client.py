@@ -9,6 +9,12 @@ CONTRACT PINNED
 * ``loadRecentRuns`` draws only an array. Any other answer (non-2xx, error object, HTML) keeps the
   cards on screen and shows ``Could not refresh runs`` in the page; a later good poll removes it. A 401
   navigates to ``/login``.
+* The runs table states a column whose cell text is the same in every row once, in one line above
+  the rows (``data-testid="autotune-shared-line"``, inside ``#autotune-runs-list``, text beginning
+  ``Same for every run: `` and listing each such column as its header followed by its cell text,
+  joined by ``; ``); the rows leave those cells out. A column that differs in any row stays in every
+  row, a single row and an empty list print no line, and the 15 s refresh moves a column between
+  the line and the rows as the runs change (the plan's AC-8).
 * ``frRunBuild`` keeps ``#fr-run-btn`` disabled from the click until the page shows that build's
   outcome or 30 minutes pass, polling ``GET /api/frontrunner-build/last-run`` every 15 s until a
   summary whose ``run_id`` is the 202's appears. Completed: ``#fr-run-status`` reads
@@ -23,6 +29,7 @@ from __future__ import annotations
 import pytest
 
 from tests.ui import _advisor_page_answers as adv
+from tests.ui import _page_explainers_advisor as pe
 from tests.ui._header_status_answers import et, header_answer, lapsed_session_answer, wall_of
 from tests.ui._history_answers import unavailable_answer
 from tests.ui._page_js_harness import render_page, route, run_page
@@ -166,13 +173,15 @@ class TestFrontrunnerBuildEnd:
     def test_a_build_with_no_proposals_is_a_completed_build_not_a_failure(self, runs):
         outcome, older = self.start_page(built=(0, 0))
         out = run(
-            "await H.click('#fr-run-btn'); await H.advance(60000); return {s: fr(), all: H.surfaced()};",
+            "await H.click('#fr-run-btn'); await H.advance(60000);"
+            " return {s: fr(), alerts: H.alerts.join(' | ')};",
             route(START, outcome["started"], method="POST"),
             route(LAST, older, outcome["last_run"], method="GET"),
         )
         assert out.result["s"]["status"].strip() == "Build finished: 0 new proposals"
         assert out.result["s"]["disabled"] is False
-        assert "failed" not in out.result["all"].lower()
+        # The build's own status and any alert; the page's definitions may use the word "failed".
+        assert "failed" not in (out.result["s"]["status"] + out.result["alerts"]).lower()
 
     def test_a_failed_build_shows_its_code_and_reenables(self, runs):
         outcome, older = self.start_page(built=(RuntimeError("a"), ValueError("b")))
@@ -269,3 +278,159 @@ class TestFrontrunnerBuildEnd:
         )
         assert out.result["s"]["disabled"] is False
         assert "ANTHROPIC_API_KEY not configured" in out.result["all"]
+
+
+SHARED_LINE = '[data-testid="autotune-shared-line"]'
+HEADERS = ".autotune-row--head [role='columnheader']"
+ROWS_STATE = f"""
+  const norm = (t) => String(t || '').replace(/\\s+/g, ' ').trim();
+  const rowTexts = () => H.$$('#autotune-runs-list {CARDS}').map((r) => norm(r.textContent));
+  const lineTexts = () => H.$$('{SHARED_LINE}').map((l) => norm(l.textContent));
+  const heads = () => H.$$("{HEADERS}").map((h) => norm(h.textContent));
+  const listHtml = () => H.$('#autotune-runs-list').innerHTML;
+"""
+OLD_CELL_WORDS = ("N/A", "Frozen-eval", "Fallback")
+
+
+def shared_run(scenario, *routes_):
+    return run_page(
+        render_page("/ai-advisor"),
+        "await H.boot();\n" + STATE + ROWS_STATE + scenario,
+        routes=list(routes_),
+        pathname="/ai-advisor",
+    )
+
+
+def _body_names(rows) -> list[str]:
+    return [r.get("symphony_name") or r["symphony_id"] for r in rows]
+
+
+class TestSharedLine:
+    """The plan's AC-8 on the real page: the real route's rows, the page's own script."""
+
+    def test_identical_columns_are_stated_once_in_the_line_and_left_out_of_every_row(self):
+        pe.seed_autotune_runs(11)
+        body = adv.autotune_runs_answer()
+        out = shared_run(
+            "return {rows: rowTexts(), lines: lineTexts(), heads: heads(), html: listHtml()};",
+            route(RUNS, body, method="GET"),
+        )
+        r = out.result
+        names = _body_names(body["json"])
+        score_head = r["heads"][4]
+        expected = (
+            pe.SHARED_LINE_PREFIX
+            + f"Outcome Fallback, Frozen-eval not evaluated; {score_head} N/A; Sel t-stat N/A"
+        )
+        assert r["heads"][2] == "Outcome" and r["heads"][5] == "Sel t-stat", r["heads"]
+        assert r["lines"] == [expected], f"the line reads {r['lines']!r}, not {expected!r}"
+        assert len(r["rows"]) == 11
+        for text in r["rows"]:
+            for word in OLD_CELL_WORDS:
+                assert word not in text, f"a row repeats {word!r}: {text!r}"
+        for name, text in zip(names, r["rows"], strict=True):
+            assert name in text, f"a row lost its symphony {name!r}: {text!r}"
+            assert "adoption streak: insufficient history" in text, (
+                f"a row lost its streak cell: {text!r}"
+            )
+        assert "adoption streak" not in r["lines"][0], "the streak column is never lifted"
+        assert r["html"].index("autotune-shared-line") < r["html"].index("autotune-run-row"), (
+            "the line is not above the rows"
+        )
+
+    def test_every_row_keeps_its_run_time_in_its_own_cell(self):
+        pe.seed_autotune_runs(11)
+        out = shared_run(
+            "return H.$$('.autotune-run-time').map((c) => norm(c.textContent));",
+            route(RUNS, adv.autotune_runs_answer(), method="GET"),
+        )
+        stamps = out.result
+        assert len(stamps) == 11 and all(stamps), "a row lost its run time"
+        assert len(set(stamps)) == 11, "premise: the seeded run times differ"
+
+    def test_a_column_that_differs_in_one_row_stays_in_every_row(self):
+        pe.seed_autotune_runs(11, adopted_at=3)
+        body = adv.autotune_runs_answer()
+        out = shared_run(
+            "return {rows: rowTexts(), lines: lineTexts(), heads: heads(),"
+            f" pills: H.$$('{CARDS} .decision-pill').length}};",
+            route(RUNS, body, method="GET"),
+        )
+        r = out.result
+        score_head = r["heads"][4]
+        assert r["lines"] == [pe.SHARED_LINE_PREFIX + f"{score_head} N/A; Sel t-stat N/A"], r[
+            "lines"
+        ]
+        assert r["pills"] == 11, "Outcome left a row although it differs in one"
+        for text in r["rows"]:
+            assert "Frozen-eval" in text, f"Outcome lost its frozen-eval text: {text!r}"
+            assert "N/A" not in text, f"a row repeats a shared cell: {text!r}"
+
+    def test_exactly_one_row_prints_no_line_and_shows_every_cell(self):
+        pe.seed_autotune_runs(1)
+        body = adv.autotune_runs_answer()
+        out = shared_run(
+            "return {rows: rowTexts(), lines: lineTexts(), html: listHtml()};",
+            route(RUNS, body, method="GET"),
+        )
+        r = out.result
+        assert r["lines"] == [] and "Same for every run" not in r["html"]
+        assert len(r["rows"]) == 1
+        text = r["rows"][0]
+        assert "Fallback" in text and "Frozen-eval not evaluated" in text
+        assert text.count("N/A") == 2, f"the score and the t-stat cells read N/A: {text!r}"
+
+    def test_no_runs_keep_the_empty_state_and_print_no_line(self):
+        out = shared_run(
+            "return {text: H.pageText(), lines: lineTexts(), rows: cards()};",
+            route(RUNS, {"json": []}, method="GET"),
+        )
+        assert out.result["lines"] == [] and out.result["rows"] == 0
+        assert "No tuning runs recorded yet" in out.result["text"]
+        assert "Same for every run" not in out.result["text"]
+
+    def test_a_refresh_that_brings_a_differing_run_returns_the_column_to_every_row(self):
+        keys = pe.seed_autotune_runs(11)
+        first = adv.autotune_runs_answer()
+        pe.save_run_like("adopted", keys[0], "2026-10-30T04:00:00")
+        second = adv.autotune_runs_answer()
+        out = shared_run(
+            """
+            const before = {lines: lineTexts(), rows: rowTexts()};
+            await H.advance(15000);
+            return {before, after: {lines: lineTexts(), rows: rowTexts()}};
+            """,
+            route(RUNS, first, second, method="GET"),
+        )
+        before, after = out.result["before"], out.result["after"]
+        assert len(before["lines"]) == 1 and "Outcome" in before["lines"][0]
+        assert len(after["lines"]) == 1
+        assert "Outcome" not in after["lines"][0], "Outcome stayed in the line after it differed"
+        assert len(after["rows"]) == 11
+        for text in after["rows"]:
+            assert "Frozen-eval" in text, f"Outcome did not return to every row: {text!r}"
+
+    def test_a_refresh_that_fails_keeps_the_last_table_and_line(self):
+        pe.seed_autotune_runs(11)
+        good = adv.autotune_runs_answer()
+        out = shared_run(
+            """
+            const before = {lines: lineTexts(), rows: rowTexts()};
+            await H.advance(15000);
+            return {before, after: {lines: lineTexts(), rows: rowTexts()}, shown: H.surfaced()};
+            """,
+            route(RUNS, good, {"reject": True}, method="GET"),
+        )
+        assert out.result["before"] == out.result["after"], "a failed refresh changed the table"
+        assert len(out.result["after"]["lines"]) == 1
+        assert "Could not refresh runs" in out.result["shown"]
+
+    def test_polls_that_bring_the_same_runs_never_repeat_the_line(self):
+        pe.seed_autotune_runs(11)
+        good = adv.autotune_runs_answer()
+        out = shared_run(
+            "await H.advance(45000); return {lines: lineTexts(), rows: rowTexts().length};",
+            route(RUNS, good, method="GET"),
+        )
+        assert len(out.result["lines"]) == 1, "a poll duplicated the line"
+        assert out.result["rows"] == 11

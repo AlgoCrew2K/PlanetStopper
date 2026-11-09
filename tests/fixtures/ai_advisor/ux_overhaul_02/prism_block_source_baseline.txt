@@ -24,11 +24,18 @@ lens_pipeline synthesizer; both sets must map. #}
 <span class="prism-sentiment-chip {{ _chip_class }}"
 data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
 {% endif %}
-<span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
+<span class="prism-model-badge" data-testid="prism-model-badge">{% if advisor_synthesis_model_known %}Synthesized by {{ advisor_synthesis_model | e }}{% else %}Synthesizing model not known{% endif %}</span>
 {% if market_prism_summary %}
 <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
 {% endif %}
 </div>
+<p class="adv-explainer" data-explainer="O15">An overnight read of the market through five lenses: technicals, sentiment, derivatives, macro and fundamentals. It is background for your decisions and changes nothing by itself.</p>
+<details class="hp-more" data-terms="O15">
+<summary>What the terms mean</summary>
+<p data-term="O16">risk-on: conditions favor taking risk. risk-off: they favor caution. neutral: no lean either way. limited-inputs: too few lenses had data for a read.</p>
+<p data-term="O19">Lenses: technicals reads price trends and breadth, sentiment reads news tone, derivatives reads volatility measures, macro reads rates, inflation and jobs data, and fundamentals reads company filings.</p>
+<p data-term="O24">Numeric verification: each number the read lists as a cited figure is checked against lens data fetched after the read; verified means it matched, and unverifiable means there was nothing to check it against, not that it is wrong. Numbers that appear only in the prose are not checked.</p>
+</details>
 {% if market_prism_summary %}
 {% if _rationale %}
 <p class="prism-rationale" data-testid="prism-rationale">{{ _rationale | e }}</p>

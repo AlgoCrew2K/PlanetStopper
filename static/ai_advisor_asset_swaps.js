@@ -332,7 +332,7 @@
             });
             provenanceHtml =
                 '<div class="run-controls-note" data-testid="as-live-generation-provenance">' +
-                'Model: ' + (prov.generation_model ? escHtml(prov.generation_model) : 'model unavailable') +
+                'Model: ' + (prov.generation_model ? escHtml(prov.generation_model) : 'not known') +
                 (evidenceParts.length ? ' · Context — ' + escHtml(evidenceParts.join(', ')) : '') +
                 (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
                 '</div>';

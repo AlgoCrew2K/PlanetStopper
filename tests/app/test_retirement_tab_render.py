@@ -32,7 +32,11 @@ from tests.advisors.test_retirement_recommender_composer_source import (
 )
 from tests.app import _retirement_tab_world as w
 from tests.app import _tenure_review_panel_builders as pb
+from tests.ui import _page_copy as copy_fixture
 
+_GATE_WORDS = tuple(
+    copy_fixture.row(key, "C")["new_text"].lower() for key in ("R09a", "R09b", "R09c", "R09d")
+)
 _RUN_AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 _NEVER_RUN_TEXT = "Not run yet \u2014 runs nightly at 03:45 UTC, or use Run recommender."
 
@@ -232,12 +236,30 @@ class TestRunTiles:
         assert _part(tile, "mini-stat-label").lower().startswith("blocked")
         assert _part(tile, "mini-stat-value") == str(sum(gates))
         detail = tile.text().lower()
-        for words, count in zip(
-            ("uncertainty", "too thin", "below threshold", "no candidate"), gates, strict=True
-        ):
-            match = re.search(rf"{words}\D*(\d+)", detail)
+        # The four gate words are the plan's Copy table C rows, read from the committed fixture.
+        for words, count in zip(_GATE_WORDS, gates, strict=True):
+            match = re.search(rf"{re.escape(words)}\D*(\d+)", detail)
             assert match, f"the Blocked detail does not name '{words}': {detail!r}"
             assert int(match.group(1)) == count, (words, detail)
+
+    def test_blocked_no_longer_uses_the_four_old_gate_words_or_the_old_stress_sentence(self, page):
+        html, s = page
+        detail = _tile(_block(html), "retirement-last-run-blocked").text().lower()
+        minimum = str(s["stress_gate_min_aligned_days"])
+        for row in ("R09a", "R09b", "R09c", "R09d", "R09e"):
+            old = copy_fixture.fill(copy_fixture.row(row, "C")["old_text"], n=minimum).lower()
+            assert old not in detail, f"{row}: the old words {old!r} still show: {detail!r}"
+
+    def test_blocked_states_the_stress_minimum_in_the_new_sentence_with_the_stored_minimum(
+        self, page
+    ):
+        html, s = page
+        assert s["blocked_stress_too_thin"] > 0
+        tile = _tile(_block(html), "retirement-last-run-blocked")
+        sentence = copy_fixture.fill(
+            copy_fixture.row("R09e", "C")["new_text"], n=str(s["stress_gate_min_aligned_days"])
+        )
+        assert " ".join(sentence.split()) in " ".join(tile.text().split())
 
     def test_blocked_states_the_stress_minimum_from_the_summary_when_a_pair_was_too_thin(
         self, page

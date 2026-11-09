@@ -241,6 +241,7 @@ def test_unresolved_model_run_still_evaluates_atlas_and_names_the_reason_not_a_f
     assert body["atlas_count"] == 1, "the Atlas candidate is still evaluated"
     notice = body["mode_notice"]
     assert isinstance(notice, str) and "model_unavailable" in notice
+    assert "model unavailable" not in notice.lower(), f"the placeholder words print: {notice!r}"
     assert not any(word in notice.lower() for word in _MODEL_FAMILY_WORDS), notice
     assert body["provenance"]["generation_model"] == ""
 
@@ -303,6 +304,7 @@ def test_the_notice_after_a_404_on_the_resolved_model_names_no_model(client, mon
     notice = body["mode_notice"]
     assert isinstance(notice, str) and "model_unavailable" in notice
     lowered = notice.lower()
+    assert "model unavailable" not in lowered, f"the placeholder words print: {notice!r}"
     assert rejected_model.lower() not in lowered, notice
     assert _display_name_of(rejected_model).lower() not in lowered, notice
 
