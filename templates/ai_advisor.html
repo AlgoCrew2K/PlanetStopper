@@ -966,8 +966,8 @@
         .retirement-rec-card:last-child { margin-bottom: 0; }
         /* The panel holds two sub-sections, each with its own heading and its own run button. */
         .retirement-subsection + .retirement-subsection {
-            margin-top: 12px;
-            padding-top: 8px;
+            margin-top: 4px;
+            padding-top: 4px;
             border-top: 1px solid var(--studio-rule);
         }
         .retirement-subsection > .section-header { margin-top: 0; }
@@ -1056,7 +1056,15 @@
         /* The run's time, basis and series date share a row above the tiles. */
         .retirement-last-run { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 20px; }
         .retirement-last-run > .retirement-last-run-state { flex: 1 1 100%; }
-        .retirement-last-run > .retirement-tiles { flex: 1 1 100%; justify-content: space-between; }
+        .retirement-last-run > .retirement-tiles { flex: 1 1 100%; }
+        /* Stacked, the tiles join the run's own row in equal parts; the Blocked tile and the excluded list then
+           share the next row, so no tile leaves a wide gap beside a taller one. */
+        @media (min-width: 701px) {
+            .retirement-pair:not(.retirement-pair--side) .retirement-last-run > .retirement-tiles { display: contents; }
+            .retirement-pair:not(.retirement-pair--side) .retirement-last-run .mini-stat { flex: 1 1 12rem; min-width: 0; }
+            .retirement-pair:not(.retirement-pair--side) .retirement-last-run .mini-stat:has(> .adv-note) { flex: 1 1 45%; order: 2; }
+            .retirement-pair:not(.retirement-pair--side) .retirement-last-run > .retirement-last-run-excluded { flex: 1 1 45%; order: 2; }
+        }
         .retirement-last-run > .retirement-last-run-excluded { flex: 1 1 14rem; min-width: 0; }
 
         /* Symphony tenure review */
@@ -1077,7 +1085,7 @@
         .tenure-review-entry { margin-bottom: 4px; font-size: 13px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; }
         .tenure-review-entry > .tenure-review-entry-head,
         /* The lifecycle's explanation, status and actions share a row. */
-        .tenure-review-lifecycle { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+        .tenure-review-lifecycle { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; }
         .tenure-review-entry > .tenure-review-evidence-grid,
         .tenure-review-entry > .tenure-review-lifecycle { flex: 1 1 100%; min-width: 0; }
         .tenure-review-entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
@@ -1085,14 +1093,12 @@
         .tenure-verdict-chip--none { --dot: var(--studio-ink-dim); }
         /* The six evidence items read as compact lists side by side, each as tall as its own content. */
         .tenure-review-evidence-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
-            gap: 2px 32px;
-            align-items: start;
+            columns: 8rem 6;
+            column-gap: 32px;
             margin-top: 8px;
         }
 
-        .tenure-review-evidence { border-top: 1px solid var(--studio-rule); padding: 0; }
+        .tenure-review-evidence { border-top: 1px solid var(--studio-rule); padding: 0; break-inside: avoid; margin-bottom: 2px; }
         /* An item is a closed disclosure: the summary is its heading and one headline line; the rest of
            its lines sit inside it. */
         .tenure-review-evidence-summary { cursor: pointer; }
