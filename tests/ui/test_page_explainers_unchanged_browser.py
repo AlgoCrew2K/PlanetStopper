@@ -87,6 +87,24 @@ def _is_relabelled(text: str, matchers: list[re.Pattern]) -> bool:
     return any(m.search(text) for m in matchers)
 
 
+# Figures the old-text matchers cannot recognise, keyed as the capture keys them, each with the copy
+# row that rewords it: a Copy table A row of kind "reworded" (the caption), a model sentence whose old
+# text only quotes the placeholder (MU1), and a title whose old text is the bare slot "{name}" (NM8).
+RELABELLED_FIGURE_KEYS = {
+    "testid:advisor-caption": ("A01", "A"),
+    "testid:prism-model-badge": ("MU1", "C"),
+    "testid:fr-incumbent-name": ("NM8", "C"),
+}
+
+
+def _relabelled_by_a_copy_row(key: str) -> bool:
+    row = RELABELLED_FIGURE_KEYS.get(key)
+    if row is None:
+        return False
+    assert copy.row(*row)["kind"] == "reworded", f"{row} no longer rewords {key}"
+    return True
+
+
 def _control_key(control: dict) -> tuple:
     return (
         control["tag"],
@@ -114,7 +132,7 @@ def figure_differences(reading: list, reference: list, matchers: list[re.Pattern
     for key, text in reference:
         index = seen[key]
         seen[key] += 1
-        if _is_relabelled(text, matchers):
+        if _is_relabelled(text, matchers) or _relabelled_by_a_copy_row(key):
             continue
         heads = got.get(key, [])
         if index >= len(heads):
