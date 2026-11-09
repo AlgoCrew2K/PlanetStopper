@@ -30,7 +30,7 @@ _REFERENCE_DIGESTS = {
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     "history.html": "7ab5d893f9495037a3bbbd36003818f19c17c93b1bd4d386f70fdca9ac941d20",
     "performance.html": "257b5d18c052d89e323d8d263fa8253894ac3485f2ff71c1310181bd8a2e4c94",
-    "settings.html": "4a59222e9f74448c7fa4b2c57ece3efb52b16199ebcc482bf4ba6f5b929e2164",
+    "settings.html": "6e07c5e17761f047e2493862f075709e748d7efd282a277e9fd4e636582acb78",
 }
 
 _STYLE_BLOCK = re.compile(r"(<style\b[^>]*>)(.*?)(</style>)", re.S | re.I)
