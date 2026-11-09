@@ -26,7 +26,7 @@ TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
 
 # sha256 of each template, LF line ends, whitespace-only lines inside <style> blocks removed.
 _REFERENCE_DIGESTS = {
-    "ai_advisor.html": "e84c5a744cdd3cd4fbca65ee7e02e03efd39d79be450b28803e332d5281be278",
+    "ai_advisor.html": "a2344674e87a8c9d3817f79844c62462bb0b0ce7399c49e81898ba088c67eec5",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     "history.html": "7ab5d893f9495037a3bbbd36003818f19c17c93b1bd4d386f70fdca9ac941d20",
     "performance.html": "257b5d18c052d89e323d8d263fa8253894ac3485f2ff71c1310181bd8a2e4c94",

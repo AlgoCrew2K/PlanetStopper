@@ -193,3 +193,7 @@ through `tests/_advisor_overview_prism.py`.
   time; the other keys follow the producer's `raw_response` schema (`run_ts`, `run_id`, counts, `sources`).
 - Derived: the captured row77 holds only the digest; the keys above were added around it. Signed off by the PM
   in the brief for this round (2026-10-30). Written through `database.insert_advisor_observation`.
+- Re-captured at the page-explainers-and-density cycle C4 (same script, nothing edited): the block changed on
+  purpose in two places only, the model badge (resolved and unresolved wording, plan Copy table C row MU1)
+  and the description with its term disclosure under the title (rows O15 and O16, O19, O24). The recorded
+  diff against the previous baseline was read line by line before the re-capture and holds nothing else.
