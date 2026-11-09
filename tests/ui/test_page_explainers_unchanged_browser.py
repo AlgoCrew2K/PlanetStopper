@@ -61,13 +61,18 @@ def ref() -> dict:
 
 
 def _relabel_matchers() -> list[re.Pattern]:
-    """One pattern per old text Copy table C gives, each ``{slot}`` standing for any run of text.
+    """One pattern per old text a reworded Copy row gives, each ``{slot}`` standing for any run of text.
+
+    A reworded row of table A (a page caption or subtitle given new wording in place) is relabelled
+    exactly as a row of table C is.
 
     A short old text must be a whole element's text; a long one may sit inside it. A row whose old
     text is a pointer to a source line gives no text to match and is skipped.
     """
     matchers = []
-    for record in copy.rows("C"):
+    for record in copy.rows():
+        if record["table"] != "C" and record["kind"] != "reworded":
+            continue
         old = record["old_text"]
         if " at `" in old or old.startswith("the ") or "with A05" in old:
             continue
