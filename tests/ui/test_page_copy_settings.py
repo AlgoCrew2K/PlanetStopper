@@ -658,7 +658,12 @@ await H.click('{TOGGLE}');
 const details = () => H.$('details[data-terms="M04"]');
 const present = !!details();
 const beforeOpen = {READ_MODAL};
-if (present) details().setAttribute('open', '');
+if (present) {{
+  // The click reaches every listener a re-render would hang on the summary; setting `open` is
+  // the browser's own default action, which the harness does not perform.
+  await H.click('details[data-terms="M04"] summary');
+  details().setAttribute('open', '');
+}}
 const whileOpen = {{open: present && details().hasAttribute('open'), modal: {READ_MODAL}}};
 if (present) details().removeAttribute('open');
 const afterClose = {READ_MODAL};
