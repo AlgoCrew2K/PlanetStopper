@@ -29,6 +29,7 @@ import pytest
 import app as app_module
 from tests._ux_truth_support import Node, parse_html
 from tests.ui import _dashboard_primitives_capture as cap
+from tests.ui import _page_copy as copy
 from tests.ui._shell_support import seed_pending_frontrunner_proposal
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -290,7 +291,7 @@ def test_settings_caption_is_a_legend_in_the_actions_row(client):
     assert caption is not None, "Settings has no data-testid=settings-caption"
     assert "legend-as-of" in caption.classes
     assert _inside(caption, _children(_wrap(root))[0])
-    assert ".env" in caption.text
+    assert " ".join(caption.text.split()) == " ".join(copy.text("S01").split())
 
 
 def test_the_advisor_tab_bar_is_in_the_first_panel_with_every_tab_attribute(client):
