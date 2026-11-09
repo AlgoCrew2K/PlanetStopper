@@ -1038,12 +1038,12 @@
         /* The Run tenure review button shares a row with the line that follows it. */
         .retirement-subsection[data-testid="tenure-review-section"] { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0 16px; }
         .retirement-subsection[data-testid="tenure-review-section"] > * { flex: 1 1 100%; min-width: 0; }
-        .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { flex: 0 0 auto; margin: 8px 0; }
+        .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { flex: 0 0 auto; margin: 2px 0; }
         .sym-card.retirement-rec-card.adv-card { padding-top: 8px; padding-bottom: 8px; }
         .retirement-pair--side > .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { margin: 30px 0 12px; }
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-run,
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-notice,
-        .retirement-subsection[data-testid="tenure-review-section"] > [data-testid="retirement-recommendations-empty"] { flex: 1 1 12rem; margin-bottom: 0; }
+        .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-empty-line { flex: 1 1 12rem; margin-bottom: 0; }
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-run { justify-content: space-between; }
         /* The Run recommender control shares the heading's row, so the section stays short. */
         .retirement-subsection[data-testid="retirement-recommender-section"] { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0 16px; }
@@ -1056,7 +1056,7 @@
         /* The run's time, basis and series date share a row above the tiles. */
         .retirement-last-run { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 20px; }
         .retirement-last-run > .retirement-last-run-state { flex: 1 1 100%; }
-        .retirement-last-run > .retirement-tiles { flex: 1 1 auto; }
+        .retirement-last-run > .retirement-tiles { flex: 1 1 100%; justify-content: space-between; }
         .retirement-last-run > .retirement-last-run-excluded { flex: 1 1 14rem; min-width: 0; }
 
         /* Symphony tenure review */
@@ -1076,6 +1076,8 @@
         .tenure-review-run { display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 12px; }
         .tenure-review-entry { margin-bottom: 4px; font-size: 13px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; }
         .tenure-review-entry > .tenure-review-entry-head,
+        /* The lifecycle's explanation, status and actions share a row. */
+        .tenure-review-lifecycle { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
         .tenure-review-entry > .tenure-review-evidence-grid,
         .tenure-review-entry > .tenure-review-lifecycle { flex: 1 1 100%; min-width: 0; }
         .tenure-review-entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
@@ -1084,8 +1086,8 @@
         /* The six evidence items read as compact lists side by side, each as tall as its own content. */
         .tenure-review-evidence-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
-            gap: 2px 24px;
+            grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
+            gap: 2px 32px;
             align-items: start;
             margin-top: 8px;
         }
@@ -2354,7 +2356,7 @@
             <p class="tenure-review-notice tenure-review-notice--failed" data-testid="tenure-review-read-failed">Review unavailable: the stored review could not be read.</p>
             {% else %}
             {% if not retirement_recommendations %}
-            <div data-testid="retirement-recommendations-empty">
+            <div class="tenure-review-empty-line" data-testid="retirement-recommendations-empty">
                 <p class="prism-empty" data-testid="tenure-review-empty">No review yet. Use the button above to run the first one.</p>
             </div>
             {% else %}
