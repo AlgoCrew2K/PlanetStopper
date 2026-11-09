@@ -29,10 +29,11 @@ _REFERENCE_DIGESTS = {
     "ai_advisor.html": "e84c5a744cdd3cd4fbca65ee7e02e03efd39d79be450b28803e332d5281be278",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     # Re-pinned after the Performance and History explainers, relabels and density layout were
-    # added (the diff from the previous pin is that change and nothing else).
+    # added, and settings.html after the Settings explainers and density change (each diff
+    # from the previous pin is that change and nothing else).
     "history.html": "209372a0869e67a5e614b7e3437c9e71e5b33d3c114ef5cde12ff28a0cb204cb",
     "performance.html": "3c3d00a0e96a3611c3721043ed1aaa635d62ac16945a66066522a9a7d37dd282",
-    "settings.html": "4a59222e9f74448c7fa4b2c57ece3efb52b16199ebcc482bf4ba6f5b929e2164",
+    "settings.html": "6e07c5e17761f047e2493862f075709e748d7efd282a277e9fd4e636582acb78",
 }
 
 _STYLE_BLOCK = re.compile(r"(<style\b[^>]*>)(.*?)(</style>)", re.S | re.I)

@@ -291,7 +291,7 @@ def test_settings_caption_is_a_legend_in_the_actions_row(client):
     assert caption is not None, "Settings has no data-testid=settings-caption"
     assert "legend-as-of" in caption.classes
     assert _inside(caption, _children(_wrap(root))[0])
-    assert ".env" in caption.text
+    assert " ".join(caption.text.split()) == " ".join(page_copy.text("S01").split())
 
 
 def test_the_advisor_tab_bar_is_in_the_first_panel_with_every_tab_attribute(client):

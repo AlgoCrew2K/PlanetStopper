@@ -32,6 +32,7 @@ import pytest
 
 import app as app_module
 import database
+from tests.ui import _page_copy as copy
 from tests.ui._browser_server import running_server
 from tests.ui._settings_reference import overrides_label, reference_override_count
 from tests.ui.test_dashboard_charts_browser import firefox  # noqa: F401  (module-scoped fixture)
@@ -1029,5 +1030,5 @@ def test_the_credential_rows_are_quiet_until_something_is_typed(probe):
         "() => document.querySelector('.cred-input[data-key=\"ALPACA_KEY\"]')"
         ".closest('.cred-field-wrap').querySelector('.cred-status').innerText.trim()"
     )
-    assert typed == "Ready to save"
+    assert typed == copy.text("S12s", "C")
     assert probe.writes == [], "typing is not saving"

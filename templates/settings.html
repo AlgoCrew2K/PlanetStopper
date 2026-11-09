@@ -185,7 +185,9 @@
     .ledger > .live-card[data-live="true"] { background: var(--studio-neg-tint); }
 
     .live-card-inner { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
-    .live-card-body { flex: 1; min-width: 0; max-width: 640px; }
+    .live-card-body { flex: 1; min-width: 0; }
+    /* The master section is as wide as its text needs, so no panel holds an empty block. */
+    #sec-master { max-width: 760px; }
 
     .live-heading-row { display: flex; align-items: center; gap: 12px; }
     .live-heading { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--studio-ink); }
@@ -960,7 +962,7 @@
 
   <!-- First panel: the page's caption with Save and Discard. No title card; the nav marks the page. -->
   <section class="hero-section settings-actions" data-testid="settings-actions">
-    <span class="legend-as-of settings-caption" data-testid="settings-caption">.env globals + SQLite-isolated symphony strategies &middot; live edits, no restart</span>
+    <span class="legend-as-of settings-caption" data-testid="settings-caption" data-explainer="S01">Global settings and per-symphony overrides · saved changes apply from the next minute, no restart</span>
     <div class="header-actions">
       <button type="button" id="btn-discard" class="btn-discard" disabled>Discard changes</button>
       <button type="button" id="btn-save" class="btn-save" disabled>Save changes</button>
@@ -984,8 +986,7 @@
       <button type="button" class="sn-btn" data-section="symphonies">Symphony overrides</button>
       <button type="button" class="sn-btn" data-section="maintenance">Maintenance</button>
       <div class="sn-footnote">
-        All changes are written to .env or alphabot_state.db immediately on save.
-        The minute scheduler picks them up on the next tick.
+        Saved changes go straight to the server's settings file or its database. The engine picks them up at its next minute.
       </div>
     </aside>
 
@@ -995,7 +996,7 @@
       <!-- ── Master controls ─────────────────────────────────────────────── -->
       <section id="sec-master" class="settings-section hero-section">
         <div class="section-header settings-sec-title">Master controls</div>
-        <div class="sec-subtitle">The mode and the start time that govern real-money execution. Treat both with care.</div>
+        <div class="sec-subtitle" data-explainer="S03">The mode and the start time that govern real-money execution. Treat both with care.</div>
 
         <div class="ledger">
         <div class="live-card sym-card" id="live-card" data-live="false">
@@ -1006,9 +1007,7 @@
                 <span class="live-pill" id="live-pill" data-live="false">&mdash;</span>
               </div>
               <div class="live-desc">
-                When <strong>Live</strong>, the bot fires real
-                <code>POST /go-to-cash</code>
-                requests to Composer the moment a stop is hit. <strong>Dry run</strong>
+                When <strong>Live</strong>, the bot sends Composer a real sell-to-cash order the moment a stop is hit. <strong>Dry run</strong>
                 tracks identical math but never sends an order — used to validate parameters before flipping the switch.
               </div>
               <div class="live-warning" id="live-banner" hidden>
@@ -1029,7 +1028,7 @@
             <input type="text" class="text-input" id="execution-start-time" value="" autocomplete="off" disabled>
             <span class="input-suffix">ET</span>
           </div>
-          <div class="field-hint">The minute the scheduler begins monitoring stops. Market opens 09:30; earlier values stage state pre-open.</div>
+          <div class="field-hint">The minute the scheduler begins monitoring stops. Market opens 09:30; an earlier time lets the engine prepare its state before the open.</div>
         </div>
         </div>
       </section>
@@ -1037,19 +1036,24 @@
       <!-- ── Algorithm parameters ────────────────────────────────────────── -->
       <section id="sec-algorithm" class="settings-section hero-section" hidden>
         <div class="section-header settings-sec-title">Algorithm parameters</div>
-        <div class="sec-subtitle">Global defaults applied to every symphony. Per-symphony overrides in the next section take precedence.</div>
+        <div class="sec-subtitle" data-explainer="S08">Global defaults applied to every symphony. Per-symphony overrides in the next section take precedence.</div>
         <div id="algo-grid"><!-- rendered by settings.js --></div>
       </section>
 
       <!-- ── Credentials ─────────────────────────────────────────────────── -->
       <section id="sec-credentials" class="settings-section hero-section" hidden>
         <div class="section-header settings-sec-title">Credentials</div>
-        <div class="sec-subtitle">Keys + account UUIDs + webhook URLs. Values are write-only — the server returns masked placeholders so secrets never round-trip through the browser.</div>
+        <div class="sec-subtitle" data-explainer="S11">The keys, account ids and webhook address the bot uses for Composer, Alpaca, Discord and Anthropic. The dashboard does not save credentials: they are set in the .env file on the host, and the server shows only masked placeholders here.</div>
+        <details class="hp-more" data-terms="S11">
+          <summary>What the terms mean</summary>
+          <p data-term="S13a">Composer: the key and secret the bot reads your symphonies and sends sell orders with, and your account ids.</p>
+          <p data-term="S13b">Alpaca · price data: the keys the bot reads market prices with.</p>
+          <p data-term="S13c">Discord + Anthropic: the webhook for alerts and the key the advisor uses.</p>
+        </details>
 
         <div class="cred-warn">
           <strong>Heads up.</strong>
-          Saving any of these fields writes the new value to <code>.env</code> immediately.
-          Blank fields are ignored (existing value preserved).
+          The dashboard cannot save these fields, and a save that includes one is refused with nothing written. To change a credential, edit the <code>.env</code> file on the host; some keys take effect only after the daemon restarts.
         </div>
 
         <!-- Composer -->
@@ -1125,7 +1129,7 @@
       <!-- ── Symphony overrides ──────────────────────────────────────────── -->
       <section id="sec-symphonies" class="settings-section hero-section" hidden>
         <div class="section-header settings-sec-title">Per-symphony overrides</div>
-        <div class="sec-subtitle">Override globals or lock parameters against autotuner changes. Stored in alphabot_state.db, keyed on normalized symphony name. A pinned value is stored for the symphony and equals the global today; it will not follow a later global change.</div>
+        <div class="sec-subtitle" data-explainer="S14">Override globals or lock parameters against autotuner changes. Stored in alphabot_state.db, keyed on normalized symphony name. A pinned value is stored for the symphony and equals the global today; it will not follow a later global change.</div>
 
         <div class="sym-split">
           <div id="sym-list"><!-- rendered by settings.js --></div>
@@ -1136,7 +1140,11 @@
       <!-- ── Maintenance ───────────────────────────────────────────────────── -->
       <section id="sec-maintenance" class="settings-section hero-section" hidden>
         <div class="section-header settings-sec-title">Maintenance</div>
-        <div class="sec-subtitle">Destructive data operations. Each action is irreversible — use with care.</div>
+        <div class="sec-subtitle" data-explainer="S17">Destructive data operations. Each action is irreversible — use with care.</div>
+        <details class="hp-more" data-terms="S17">
+          <summary>What the terms mean</summary>
+          <p data-term="S18">Synthetic post-mortem: a daily exit record that was generated or seeded rather than captured live. Re-syncs account totals: reads the account totals from Composer again.</p>
+        </details>
 
         <div class="maint-warn">
           <strong>Note.</strong>
