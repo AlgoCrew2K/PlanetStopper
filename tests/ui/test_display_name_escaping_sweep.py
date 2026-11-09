@@ -171,14 +171,14 @@ def markup_symphony(tmp_path, monkeypatch):
         raw_response={"note": "sweep row"},
         symphony_id=normalized,
     )
-    database.insert_frontrunner_proposal(
+    proposal_id = database.insert_frontrunner_proposal(
         symphony_id=key,
         proposal_source="frontrunner_builder",
         candidate_tree={"step": "root", "children": []},
         metrics_json={},
     )
     _seed_shadow_series(key)
-    return SimpleNamespace(key=key, name=name, normalized=normalized)
+    return SimpleNamespace(key=key, name=name, normalized=normalized, proposal_id=proposal_id)
 
 
 # ---------------------------------------------------------------------------
@@ -267,8 +267,11 @@ def element_facts(probe, selector: str) -> dict:
     return facts
 
 
-def assert_name_is_literal(probe, symphony, selector: str, *, title_expected: str | None):
-    """The element reads the name verbatim, holds no child element, and keeps the id in its title."""
+def assert_name_is_literal(
+    probe, symphony, selector: str, *, title_expected: str | None, text_after: str = ""
+):
+    """The element reads the name verbatim (then ``text_after``), holds no child element, and keeps
+    the id in its title."""
     wait_until(
         probe,
         "(s) => { const e = document.querySelector(s); return !!e && e.textContent.trim().length > 0; }",
@@ -276,8 +279,8 @@ def assert_name_is_literal(probe, symphony, selector: str, *, title_expected: st
         arg=selector,
     )
     facts = element_facts(probe, selector)
-    assert facts["text"] == symphony.name, (
-        f"{selector!r} shows {facts['text']!r}, not the name {symphony.name!r}"
+    assert facts["text"] == symphony.name + text_after, (
+        f"{selector!r} shows {facts['text']!r}, not the name {symphony.name!r}{text_after!r}"
     )
     assert facts["childElements"] == 0, (
         f"{selector!r} turned the name's markup into {facts['childElements']} element(s)"
@@ -379,6 +382,13 @@ def test_performance_exit_turnover_row_shows_the_name_literally(probe, markup_sy
     )
 
 
+def _card_title_after_the_name(proposal_id: int) -> str:
+    """What the card title adds after the name: the plan's Copy table C row NM8 with no name."""
+    from tests.ui import _page_copy as copy_fixture
+
+    return copy_fixture.fill(copy_fixture.row("NM8", "C")["new_text"], name="", id=str(proposal_id))
+
+
 def test_frontrunner_card_title_shows_the_name_literally(probe, markup_symphony):
     probe.page.goto(probe.server.base_url + "/ai-advisor")
     assert_name_is_literal(
@@ -386,6 +396,7 @@ def test_frontrunner_card_title_shows_the_name_literally(probe, markup_symphony)
         markup_symphony,
         '[data-testid="frontrunner-proposal-card"] .card-name',
         title_expected=markup_symphony.key,
+        text_after=_card_title_after_the_name(markup_symphony.proposal_id),
     )
 
 

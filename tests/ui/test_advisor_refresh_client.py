@@ -173,13 +173,15 @@ class TestFrontrunnerBuildEnd:
     def test_a_build_with_no_proposals_is_a_completed_build_not_a_failure(self, runs):
         outcome, older = self.start_page(built=(0, 0))
         out = run(
-            "await H.click('#fr-run-btn'); await H.advance(60000); return {s: fr(), all: H.surfaced()};",
+            "await H.click('#fr-run-btn'); await H.advance(60000);"
+            " return {s: fr(), alerts: H.alerts.join(' | ')};",
             route(START, outcome["started"], method="POST"),
             route(LAST, older, outcome["last_run"], method="GET"),
         )
         assert out.result["s"]["status"].strip() == "Build finished: 0 new proposals"
         assert out.result["s"]["disabled"] is False
-        assert "failed" not in out.result["all"].lower()
+        # The build's own status and any alert; the page's definitions may use the word "failed".
+        assert "failed" not in (out.result["s"]["status"] + out.result["alerts"]).lower()
 
     def test_a_failed_build_shows_its_code_and_reenables(self, runs):
         outcome, older = self.start_page(built=(RuntimeError("a"), ValueError("b")))
@@ -282,7 +284,7 @@ SHARED_LINE = '[data-testid="autotune-shared-line"]'
 HEADERS = ".autotune-row--head [role='columnheader']"
 ROWS_STATE = f"""
   const norm = (t) => String(t || '').replace(/\\s+/g, ' ').trim();
-  const rowTexts = () => H.$$('{CARDS}').map((r) => norm(r.textContent));
+  const rowTexts = () => H.$$('#autotune-runs-list {CARDS}').map((r) => norm(r.textContent));
   const lineTexts = () => H.$$('{SHARED_LINE}').map((l) => norm(l.textContent));
   const heads = () => H.$$("{HEADERS}").map((h) => norm(h.textContent));
   const listHtml = () => H.$('#autotune-runs-list').innerHTML;
@@ -328,6 +330,10 @@ class TestSharedLine:
                 assert word not in text, f"a row repeats {word!r}: {text!r}"
         for name, text in zip(names, r["rows"], strict=True):
             assert name in text, f"a row lost its symphony {name!r}: {text!r}"
+            assert "adoption streak: insufficient history" in text, (
+                f"a row lost its streak cell: {text!r}"
+            )
+        assert "adoption streak" not in r["lines"][0], "the streak column is never lifted"
         assert r["html"].index("autotune-shared-line") < r["html"].index("autotune-run-row"), (
             "the line is not above the rows"
         )
