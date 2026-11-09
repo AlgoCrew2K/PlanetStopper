@@ -427,7 +427,8 @@ for (let i = 0; i < 3; i += 1) {
   await H.set('#execution-start-time', '09:3' + (i + 1));
   await H.click('#btn-discard');
 }
-await H.click('.sym-list-btn:last-child');
+const last = H.$$('.sym-list-btn').pop();
+await H.click('.sym-list-btn[data-sym-id="' + last.dataset.symId + '"]');
 const after = H.$$('[data-explainer]').map((e) => e.textContent);
 return {before, after, content: H.$('.settings-content').innerHTML,
         open: !!H.$('details[data-terms="S14"]') && H.$('details[data-terms="S14"]').hasAttribute('open')};
@@ -566,7 +567,7 @@ def _modal_soup(out) -> BeautifulSoup:
     return _soup(out.result["modal"])
 
 
-def _assert_modal_copy(soup: BeautifulSoup) -> None:
+def _assert_modal_copy(soup: BeautifulSoup, *, a_disclosure_may_be_open: bool = False) -> None:
     for row in MODAL_A:
         found = soup.select(f'[data-explainer="{row["key"]}"]')
         assert len(found) == 1, f"{row['key']}: {len(found)} elements in the modal"
@@ -575,7 +576,8 @@ def _assert_modal_copy(soup: BeautifulSoup) -> None:
         details = soup.select(f'details[data-terms="{target}"]')
         assert len(details) == 1, f"{len(details)} modal disclosures for {target}"
         d = details[0]
-        assert "hp-more" in d.get("class", []) and not d.has_attr("open")
+        assert "hp-more" in d.get("class", [])
+        assert a_disclosure_may_be_open or not d.has_attr("open"), f"{target} is not closed"
         summary = d.find("summary", recursive=False)
         assert summary is not None and _text(summary) == SUMMARY_TEXT
         got = [(p.get("data-term"), _text(p)) for p in d.find_all("p", recursive=False)]
@@ -655,14 +657,16 @@ OPEN_AND_CLOSE_THE_DISCLOSURE_WITH_A_PENDING_TOGGLE = f"""
 await H.click('{TOGGLE}');
 const details = () => H.$('details[data-terms="M04"]');
 const present = !!details();
+const beforeOpen = {READ_MODAL};
 if (present) details().setAttribute('open', '');
 const whileOpen = {{open: present && details().hasAttribute('open'), modal: {READ_MODAL}}};
 if (present) details().removeAttribute('open');
+const afterClose = {READ_MODAL};
 await H.click('{SAVE}');
 const confirmEl = H.$('#sym-settings-confirm');
 const postsBeforeConfirm = H.posts('/api/symphony-settings').length;
 await H.click('#sym-confirm-go-live');
-return {{present, whileOpen, dialog: confirmEl ? confirmEl.getAttribute('aria-label') : null,
+return {{present, beforeOpen, whileOpen, dialog: confirmEl ? confirmEl.getAttribute('aria-label') : null,
         postsBeforeConfirm, posts: H.posts('/api/symphony-settings').map((p) => p.body)}};
 """
 
@@ -677,8 +681,9 @@ def test_opening_and_closing_a_modal_disclosure_leaves_a_pending_live_toggle_and
     )
     result = out.result
     assert result["present"] is True, "the modal has no closed-by-default disclosure to open"
+    _assert_modal_copy(_soup(result["beforeOpen"]))
     assert result["whileOpen"]["open"] is True
-    _assert_modal_copy(_soup(result["whileOpen"]["modal"]))
+    _assert_modal_copy(_soup(result["whileOpen"]["modal"]), a_disclosure_may_be_open=True)
     assert result["dialog"] == "Confirm live trading"
     assert result["postsBeforeConfirm"] == 0, "nothing may be sent before the confirmation"
     (body,) = result["posts"]
