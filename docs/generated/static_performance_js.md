@@ -147,6 +147,12 @@ Build cells/rows via **DOM APIs only** (`createElement`/`textContent`) -- sympho
 
 Each panel renders independently (`drawPanel(name, render, payload)`), so a failed panel does not blank the others, and the page writes a data stamp with its age (`writeDataStamp`). The window buttons send `30d`, `60d`, `90d`, `125d`, `ytd`, `1y` or `5y`; the page opens on 60d. The headline reads "Guard effect on portfolio" (or "Guard effect on symphony" in symphony scope), the same compounded figure the dashboard shows for the window. A failed `GET /api/exit-turnover` draws a dash row, never zeros. The note beside the table says "connection lost: showing the last rows received" only when the network never answered (`listing.kind === 'network'`); a server error shows `EXIT_TURNOVER_SERVER_ERROR_TEXT`; a partial failure says `they keep their earlier values` only when every failed row has an entry in `_lastGoodTurnover`, else `rows without a value show dashes`. See [ux_overhaul.md](ux_overhaul.md).
 
+## Page copy and layout
+
+The chart series are labelled "If held" and "Bot (shadow)", and the `win_rate` metric row reads "Up days". The exit-turnover cells (`turnoverWindowCell`, the drag cell) no longer set an inline right alignment; the stylesheet aligns them.
+
+See [page_explainers.md](page_explainers.md).
+
 ## Types
 
 - **`METRIC_LABELS`** -- array of `[key, label, kind, isPrimary, invert?]` tuples driving `renderMetrics()`'s row order and formatting; order defines rendering order, with risk-adjusted metrics leading per `ux-design-deliverable.md` §2.1 (capital preservation ranks above return).

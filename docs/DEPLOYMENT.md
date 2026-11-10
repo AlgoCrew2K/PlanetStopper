@@ -89,7 +89,7 @@ Edit `.env` with your actual values. The critical deployment settings are:
 LIVE_EXECUTION='False'          # NEVER set True on the droplet — advisory only
 SESSION_COOKIE_SECURE=true      # required for TLS deployment
 TRUST_PROXY=1                   # Caddy terminates TLS and forwards via X-Forwarded-For
-# DASHBOARD_SESSION_LIFETIME_HOURS=12   # optional: whole hours 1..720, default 12
+# DASHBOARD_SESSION_LIFETIME_HOURS=720  # optional: whole hours 1..720, default 720 (30 days)
 DISABLE_DAEMON_LENS_PIPELINE=1  # silence daemon 03:00 slot; council is the sole nightly producer
 ```
 
@@ -228,7 +228,7 @@ DASHBOARD_PASSWORD_HASH=pbkdf2:sha256:<your-generated-hash>
 SECRET_KEY=<a-long-random-string>
 ```
 
-Optionally set `DASHBOARD_SESSION_LIFETIME_HOURS` (whole hours from 1 to 720; default 12). A session ends that many hours after its login, and activity never extends it. A value that is not a whole number in that range is ignored with one warning in the daemon log, and 12 is used.
+Optionally set `DASHBOARD_SESSION_LIFETIME_HOURS` (whole hours from 1 to 720; default 720, which is 30 days). A session ends that many hours after its login, and activity never extends it. A value that is not a whole number in that range is ignored with one warning in the daemon log, and 720 is used. The sign-in cookie carries an expiry equal to the lifetime, so it survives a browser restart, and later requests never push that expiry forward.
 
 Signing out (`/logout`, a confirm page, then a POST) ends every dashboard session, including after a restart, through the `dashboard_session_revocation` row (migrations 040 and 041, applied at start). The first start of a build that carries these session checks refuses every existing session once, so the operator must log in again after that deploy.
 

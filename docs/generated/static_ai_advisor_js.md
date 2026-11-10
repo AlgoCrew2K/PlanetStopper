@@ -313,6 +313,12 @@ function refreshIncubationChips() {
 
 See [ux_overhaul.md](ux_overhaul.md) and [advisors_tenure_review.md](advisors_tenure_review.md).
 
+## Page copy and layout
+
+`autotuneRunCells(r, sharedObjective)` returns the six cells of one autotune run; `autotuneRunRowHtml(cells, lifted)` leaves out a lifted column; `autotuneTableHtml(rows, withSharedLine)` states a column whose text is the same and non-empty in every one of two or more rows once, in a "Same for every run" line (the streak column, index `AUTOTUNE_STREAK_COLUMN`, is never lifted). `updateTabCues()` shows the cue at each edge of the tab strip while a tab lies more than `TAB_CUE_EDGE_PX` past it. `refreshRetirementPair()` puts the Retirement tab's two subsections in one row while each is at most `RETIREMENT_PAIR_MAX_HEIGHT_PX` (320) tall, and always stacks them at or below `RETIREMENT_PAIR_STACK_MAX_WIDTH_PX` (700). The provenance line reads "Model: not known" when no model is named.
+
+See [page_explainers.md](page_explainers.md).
+
 ## Internal Dependencies
 
 - `GET /api/csrf-token` — CSRF token fetch

@@ -91,6 +91,12 @@ This file implements its own PER-FILE-LOCAL abs+no-sign+word logic inline across
 
 History opens on a 30 day window (`currentWindow = '30'`) and `GET /api/history/<days>` also accepts `ytd`. The day drilldown (`renderDayDrilldown`) names each symphony, lists exits in time order and keeps the drilled day through polls. While the market is closed `renderTriggers` headings use the session date the server states (`todays_exits_day`, `todays_exits_market_closed`) from the first paint. The total reads "Sum of exit alpha" in points (not a portfolio return), and the exits table fits a 375 px screen with every column whole. See [ux_overhaul.md](ux_overhaul.md).
 
+## Page copy and layout
+
+`REASON_DISPLAY` and `reasonDisplayName(reason)` map the four canonical reason keys to the names shown ("Take-profit", "Trailing stop", "VWAP breakdown", "VWAP bleed"); the keys stay as the API and stored exits spell them, and an unmapped raw reason is shown as it is. `REASON_DESCRIPTIONS` now holds sentences that follow the reason name in the closed "What the exit reasons mean" list. The reason-card count column is labelled "Exits".
+
+See [page_explainers.md](page_explainers.md).
+
 ## Internal Dependencies
 
 - `GET /api/history/<days>` -- primary data fetch; response fields consumed: `total_alpha`, `total_saved`, `trigger_count`, `win_rate`, `by_reason`, `daily_alpha`, `daily_dates` (F-020, new), `daily_exits` (F-020, new), `todays_exits` -- see `docs/generated/analytics.md`'s `get_history_summary` section.

@@ -80,6 +80,12 @@ Renders `[data-testid="et-clock"]` as `HH:MM:SS` in `America/New_York`. Ticks ev
 
 The pages other than `/` read `GET /api/header-status` for this data; `/` reads `/api/state`. POSTs from this file (panic liquidation, candidate-alert mark-viewed, and others) go through `PSRequest.postAction` ([static_request_guard_js.md](static_request_guard_js.md)). See [refresh_timing.md](refresh_timing.md) and [ux_overhaul.md](ux_overhaul.md).
 
+## Page copy and layout
+
+`ENGINE_STATE_DESCRIPTION` maps each engine label to a one-sentence meaning; `renderEngineLabel()` writes it to the `#engine-status` `aria-description` beside the existing title, and the server renders the same text on first paint (`templates/_chrome.html`). `MODE_INDICATORS` entries gain a `title` that `updateModeIndicators(meta)` writes to the mode pill, equal to the server-rendered pill title.
+
+See [page_explainers.md](page_explainers.md).
+
 ## Constants
 
 | Constant | Value | Description |

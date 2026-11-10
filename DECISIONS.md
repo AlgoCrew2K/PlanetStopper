@@ -11701,3 +11701,91 @@ The effect of the `get_symphony_strategy(create_if_missing=False)` change on the
 ### Reference
 
 `feature-plans/hygiene-waves-3-4.md`.
+
+## page-explainers-and-density: descriptions, term definitions and denser layouts on every page (2026-11-10)
+
+Source: `feature-plans/page-explainers-and-density.md` and `feature-plans/approach/page-explainers-and-density.md` (Items Raised 1 to 13). Base `38fef8f7` (production), slice head `2c3d6d5c`. Copy and layout only. `git diff 38fef8f7 2c3d6d5c` shows no change to `alpha_bot_execution.py`, `math_engine.py` or `database.py`, and no migration. The rulings below are [PM-ASSUMED] as the approach document records them.
+
+### Defect
+
+The operator found the restyled pages still held large empty regions and said the pages needed descriptions, for example for "Symphony Tenure". A pre-spec audit of every page at 1440 and 375 px found 18 empty regions and 203 on-screen items that needed an explanation (27 sections with no purpose line, 99 undefined terms, 81 explanations in jargon).
+
+### Fix
+
+- Every section heading on the dashboard, History, Performance, Settings (page and per-symphony modal) and the eight AI Advisor tabs has a visible description (`data-explainer`) and, where terms need defining, a closed "What the terms mean" disclosure (`data-terms`, `data-term`). The `.hp-more` rules moved to `static/layout.css`. The expected text of every row is in `tests/fixtures/page_explainers/copy.json`.
+- Copy that names a configured value reads it through `app._page_copy_values`, one authority per slot and `None` when that authority fails, so a template shows a whole fallback phrase instead of a broken sentence (ruling 3). The nightly prune keeps its own inline read of the retention value.
+- Labels reworded with one copy in the server render and one in the refreshing script: the card verdict now reads "Exit beat holding by {m} pts", "Exit trailed holding by {m} pts" or "Exit matched holding" (ruling 11: a gap between two percentages is printed in points); retirement last-run gate labels; History reason names; Performance series and "Up days"; "Model: not known" where "model unavailable" was shown.
+- Layouts without empty regions at 1440 px: Retirement and tenure panels, Frontrunner cards, the autotune table (a column identical in every row is stated once in a "Same for every run" line, except the streak column, which stays in every row, ruling 12), the dashboard hero, dollar-saved, CVaR and sleeves panels, the Performance risk table and the History tables. The AI Advisor tab strip shows a cue at an edge while tabs lie past it.
+- The empty-region measurement was narrowed three times by ruling (items 9, 10, 13): space under a shorter column inside a multi-column list belongs to the list; nested cards are measured on their own; a painted text-free element counts as content.
+- Y06 renames "Triggers" to "Exits" in History's `data-label` cells only (ruling 1).
+
+### Tests
+
+New copy and layout tests under `tests/ui/test_page_copy_*.py`, `tests/ui/test_page_explainers_*.py` and `tests/app/test_page_copy_values.py`; refactor-equivalence baselines recaptured at this head with provenance in each record (ruling 5).
+
+### Review
+
+Reviewer verdict files for this slice are recorded under `.claude/review/`; see the docs-done message for which heads carry which verdicts.
+
+### Files changed
+
+`app.py`, `static/ai_advisor.js`, `static/ai_advisor_asset_swaps.js`, `static/ai_advisor_logic_changes.js`, `static/chrome.js`, `static/history.js`, `static/index.js`, `static/layout.css`, `static/performance.js`, `static/settings-modal.js`, `static/settings.js`, `templates/_chrome.html`, `templates/ai_advisor.html`, `templates/history.html`, `templates/index.html`, `templates/performance.html`, `templates/settings.html`, tests and fixtures; docs: new `docs/generated/page_explainers.md`, `app.md`, `static_chrome_js.md`, `static_history_js.md`, `static_index_js.md`, `static_performance_js.md`, `static_ai_advisor_js.md`, `ux_overhaul.md`, `INDEX.md`, `.claude/CLAUDE.md` (Key Files rows `app.py`, `templates/ai_advisor.html`, `templates/index.html`, `static/ai_advisor.js`, `static/index.js`, `static/history.js`, `tests/conftest.py`).
+
+### Not verified here
+
+How the pages read on the operator's own browsers and devices is not confirmable from code; the slice's browser tests ran against a production database copy of 2026-10-31.
+
+### Reference
+
+`feature-plans/page-explainers-and-density.md`.
+
+## dashboard-session-30-day: sessions last 30 days with a persistent login cookie (2026-11-10)
+
+Source: branch `fix/dashboard-session-30-day`, merged into the slice as `cf5f1496` (green head `65185aaa`). Supersedes the 12 hour default of DE-SECURITY-CONTROLS-001 and the plan text that says a malformed value falls back to a shorter lifetime (`feature-plans/security-and-controls.md`, "never to a longer lifetime", and its approach document); those files are not edited. Logout, revocation, CSRF and the cookie flags are unchanged.
+
+### Defect
+
+The operator was signed out every 12 hours and requires signing in at most once a month. The session cookie was also a browser-session cookie, so it was dropped when the browser closed whatever the server lifetime was.
+
+### Fix
+
+- `_SESSION_LIFETIME_HOURS_DEFAULT` is 720 (30 days). The valid range stays 1 to 720, and a missing, malformed or out-of-range `DASHBOARD_SESSION_LIFETIME_HOURS` now falls back to 720 with the same one warning that never prints the value.
+- `login()` sets `session.permanent = True` after `session.clear()` (clear drops the flag), so the cookie carries `Expires` and `Max-Age` equal to the lifetime and survives a browser restart.
+- `SESSION_REFRESH_EACH_REQUEST` is False, so a later request never pushes the cookie expiry forward. This matches the server rule that use never extends a session; the server still ends the session `DASHBOARD_SESSION_LIFETIME_HOURS` after its login.
+- The droplet `.env` already sets the value to 720 explicitly, which is now the default and so optional.
+
+### Tests
+
+`tests/app/test_session_lifetime_and_revocation.py` gained cases for the new default and the persistent cookie.
+
+### Review
+
+The code reviewer's verdict at `65185aaa` is PASS (`.claude/review/65185aaa9bb9/code-reviewer.json` in the `sess` worktree).
+
+### Files changed
+
+`app.py`, `tests/app/test_session_lifetime_and_revocation.py`; docs: `README.md`, `docs/DEPLOYMENT.md`, `docs/generated/app.md`, `.claude/CLAUDE.md` (Key Files row `app.py`).
+
+### Reference
+
+`feature-plans/security-and-controls.md` (superseded on the fallback value only).
+
+## test-infra: the real advisor modules are bound before any test fakes correlation_diagnostic (2026-11-10)
+
+Merged into the page-explainers slice as `2c3d6d5c` (change `d74379b8`). Tests only.
+
+### Defect
+
+Many tests fake `advisors.correlation_diagnostic` with `patch.dict("sys.modules", ...)` while a page renders, and a page render lazily imports `advisors.tenure_review` and `advisors.retirement_recommender`. When the fake was in place at the first import, those modules bound fakes for `MIN_OBS_FLOOR` and the other copied constants. `patch.dict` removes the module from `sys.modules` on exit but not from the `advisors` package attribute, so every later `from advisors import tenure_review` kept the poisoned module and the next test that rendered a retirement or tenure panel raised an `int < MagicMock` TypeError, depending on test order.
+
+### Fix
+
+`tests/conftest.py` gains the session-autouse fixture `_advisor_modules_bind_the_real_correlation_diagnostic`, which imports both modules first, so file order no longer matters. No production file changed.
+
+### Files changed
+
+`tests/conftest.py`; docs: `.claude/CLAUDE.md` (Key Files row `tests/conftest.py`).
+
+### Reference
+
+Commit `d74379b8`.
