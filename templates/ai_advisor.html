@@ -1046,7 +1046,6 @@
         .retirement-subsection[data-testid="tenure-review-section"] { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0 16px; }
         .retirement-subsection[data-testid="tenure-review-section"] > * { flex: 1 1 100%; min-width: 0; }
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { flex: 0 0 auto; margin: 2px 0; }
-        .sym-card.retirement-rec-card.adv-card { padding-top: 8px; padding-bottom: 8px; }
         .retirement-pair--side > .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { margin: 30px 0 12px; }
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-run,
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-notice,
@@ -1265,6 +1264,12 @@
         /* Before any run both columns hold short stacks; the wider column goes to the tenure side, whose
            explainer then wraps to fewer lines. */
         .retirement-pair--side:has(.retirement-last-run > .retirement-last-run-line:only-child) { grid-template-columns: 3fr 4fr; }
+
+        /* From 1240 px the missing-items line takes its own line and reads from the right, under the end of
+           the long basis line, so the short lines do not leave an empty band beside the evidence columns. */
+        @media (min-width: 1240px) {
+            .tenure-review-entry > .tenure-review-line[data-testid="tenure-review-missing"] { flex: 1 1 100%; text-align: right; }
+        }
 
         /* From 1440 px the tab bar takes the left and the description the right, so the description's
            one line does not leave the right of the panel empty. */
