@@ -175,6 +175,8 @@ app.add_template_filter(retirement_basis, name="retirement_basis")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = env_flags.is_true(os.environ.get("SESSION_COOKIE_SECURE", ""))
+# A session ends a fixed time after login: later requests must not re-send the cookie.
+app.config["SESSION_REFRESH_EACH_REQUEST"] = False
 
 # ---------------------------------------------------------------------------
 # Dashboard auth gate — must be declared before CSRF so its @before_request
@@ -194,12 +196,12 @@ _auth_check_enabled: bool = True
 _AUTH_EXEMPT_ENDPOINTS: frozenset[str] = frozenset({"login", "static", "get_csrf_token", "health"})
 
 # Session lifetime: a session ends this many hours after its login, and requests never extend it.
-_SESSION_LIFETIME_HOURS_DEFAULT: int = 12  # hours
+_SESSION_LIFETIME_HOURS_DEFAULT: int = 720  # hours (30 days)
 _SESSION_LIFETIME_HOURS_MAX: int = 720  # hours (30 days)
 
 
 def _session_lifetime_hours(raw: str | None) -> int:
-    """Parse DASHBOARD_SESSION_LIFETIME_HOURS: whole hours 1..720, else the 12 h default.
+    """Parse DASHBOARD_SESSION_LIFETIME_HOURS: whole hours 1..720, else the 720 h default.
 
     A malformed value logs one warning that never prints the value.
     """
@@ -534,6 +536,8 @@ def login():
     # to prevent session-fixation attacks.
     _clear_failed_attempts(client_ip)
     session.clear()
+    # clear() drops the permanent flag, which is what makes the cookie carry the lifetime.
+    session.permanent = True
     session["authenticated"] = True
     # max(): a login in the same clock tick as a logout must still outrank the floor.
     login_ns = _session_now_ns()
