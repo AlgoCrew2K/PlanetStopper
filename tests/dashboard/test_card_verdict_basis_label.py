@@ -156,9 +156,7 @@ class TestLabelWhileTheMarketIsOpen:
         current = live_entry(TRIGGERED_ID)["current_return"]
         assert body["bot_state"][TRIGGERED_ID]["guard_alpha"] == round(exit_return - current, 6)
 
-    def test_a_figure_of_exactly_zero_reads_as_a_match_with_the_label(
-        self, monkeypatch, tmp_path
-    ):
+    def test_a_figure_of_exactly_zero_reads_as_a_match_with_the_label(self, monkeypatch, tmp_path):
         world = open_cards_world(monkeypatch, tmp_path)
         exit_return = seed_exit_row(at_return=live_entry(TRIGGERED_ID)["current_return"])
         assert exit_return - live_entry(TRIGGERED_ID)["current_return"] == 0, "fixture"
