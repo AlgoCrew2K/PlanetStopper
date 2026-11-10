@@ -846,9 +846,13 @@ def test_the_mode_pill_reads_live_or_dry_run_on_every_page(client, route, live, 
         patch.object(app_module, "dotenv_values", lambda *_a, **_k: dict(env)),
     ):
         page = client.get(route).get_data(as_text=True)
-    pill = re.search(r'data-testid="mode-pill" data-live="(\w+)"[^>]*>\s*([A-Z ]+?)\s*<', page)
+    # The pill carries a definition `title`, so the attributes are matched in any order.
+    pill = re.search(
+        r'data-testid="mode-pill"([^>]*?)data-live="(\w+)"[^>]*>\s*([A-Z ]+?)\s*<', page
+    )
     assert pill, f"{route} renders no mode pill"
-    assert pill.group(1) == ("true" if live else "false")
-    assert pill.group(2) == text
+    assert pill.group(2) == ("true" if live else "false")
+    assert pill.group(3) == text
     if live:
-        assert "var(--studio-neg)" in page[page.index('data-testid="mode-pill"') :][:400]
+        opening_tag = page[page.index('data-testid="mode-pill"') :].split(">", 1)[0]
+        assert "var(--studio-neg)" in opening_tag

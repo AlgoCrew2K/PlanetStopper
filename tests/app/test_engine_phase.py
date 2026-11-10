@@ -46,6 +46,7 @@ import app as app_module
 import database as database_module
 import market_calendar
 from tests.app.test_held_basis_route_convergence import _frozen_datetime_class
+from tests.ui import _page_copy as page_copy
 
 _ET = ZoneInfo("America/New_York")
 _REPO = Path(__file__).resolve().parents[2]
@@ -458,7 +459,12 @@ def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
     var __out = {{}};
     Object.keys(__sequences).forEach(function (name) {{
         var els = {{}};
-        function el(extra) {{ return Object.assign({{ style: {{}}, textContent: '', title: '' }}, extra || {{}}); }}
+        function el(extra) {{
+            return Object.assign({{
+                style: {{}}, textContent: '', title: '', attrs: {{}},
+                setAttribute: function (name, value) {{ this.attrs[name] = value; }}
+            }}, extra || {{}});
+        }}
         var label = el();
         Object.defineProperty(label, 'innerHTML', {{
             set: function () {{ throw new Error('innerHTML must not be used'); }}
@@ -506,6 +512,7 @@ def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
             sandbox.window.updateChromeTicker(data, timing);
             __out[name].push({{
                 text: label.textContent, title: wrap.title,
+                description: wrap.attrs['aria-description'],
                 dot: dot.style.background, color: label.style.color,
                 longLabel: rootClasses['engine-label-long'] === true
             }});
@@ -519,6 +526,21 @@ def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
         result = subprocess.run(["node", str(script)], capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, f"static/chrome.js harness crashed:\n{result.stderr}"
     return json.loads(result.stdout.strip())
+
+
+# The engine state element carries the header definition of the state it shows (the page-copy
+# table's own text for that state word), as its accessible description.
+_ENGINE_STATE_DEFINITIONS: dict[str, str] = page_copy.row("H02", "B")["states"]
+
+
+def _wrong_descriptions(name: str, steps: list[dict]) -> list[str]:
+    """One line per step whose description is not the definition of the state word it shows."""
+    return [
+        f"{name}, step {i}: {step['text']!r} described as {step['description']!r}, "
+        f"expected {_ENGINE_STATE_DEFINITIONS.get(step['text'])!r}"
+        for i, step in enumerate(steps)
+        if step["description"] != _ENGINE_STATE_DEFINITIONS.get(step["text"])
+    ]
 
 
 _FOUR_MIN = 4 * 60 * 1000
@@ -592,6 +614,7 @@ class TestUpdateEngineStatusScheduledPauses:
             got = out[name][-1]
             if (got["text"], got["title"], got["dot"], got["color"]) != (text, title, dot, color):
                 wrong.append(f"{name}: expected {(text, title, dot, color)}, got {got}")
+            wrong.extend(_wrong_descriptions(name, out[name]))
         assert not wrong, "\n".join(wrong)
 
     def test_a_poll_sequence_replaces_the_previous_label_tooltip_and_colours(self):
@@ -620,6 +643,8 @@ class TestUpdateEngineStatusScheduledPauses:
             got = out[name][-1]
             if (got["text"], got["title"], got["color"], got["dot"]) != (text, title, color, color):
                 wrong.append(f"{name}: expected {(text, title, color)}, got {got}")
+        for name, steps in out.items():
+            wrong.extend(_wrong_descriptions(name, steps))
         assert not wrong, "\n".join(wrong)
 
     def test_the_long_label_class_is_set_exactly_while_the_label_reads_rebalance_pause(self):
@@ -628,6 +653,7 @@ class TestUpdateEngineStatusScheduledPauses:
         fresh = {**_OPEN, "engine_phase": "running", "__ageMs": _TEN_S}
         out = _run_header({"poll sequence": [fresh, blackout, blackout, opening, blackout, fresh]})
         steps = out["poll sequence"]
+        assert not _wrong_descriptions("poll sequence", steps)
         assert [s["text"] for s in steps] == [
             "Live",
             "Rebalance pause",

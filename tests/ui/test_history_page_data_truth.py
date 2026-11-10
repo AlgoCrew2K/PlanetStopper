@@ -159,8 +159,16 @@ def test_alpha_win_rate_and_reason_cards_render_from_the_payload(client, pm_dir_
     assert result["alpha"] == f"{payload['total_alpha']:+.2f} pts"
     assert result["win"] == f"{payload['win_rate']:.1f}%"
     assert len(result["cards"]) == len(payload["by_reason"])
+    # The payload keys keep their stored spelling; the page shows the sentence-case display names.
+    shown_as = {
+        "Take-Profit": "Take-profit",
+        "Trailing Stop": "Trailing stop",
+        "VWAP Breakdown": "VWAP breakdown",
+        "VWAP Bleed Cut": "VWAP bleed",
+    }
     for reason, stats in payload["by_reason"].items():
-        card = next(c for c in result["cards"] if reason in c)
+        shown = shown_as.get(reason, reason)
+        card = next(c for c in result["cards"] if shown in c)
         assert analytics.format_dollar_saved(stats["dollars"]) in card
         assert f"{stats['alpha']:+.2f} pts" in card
 

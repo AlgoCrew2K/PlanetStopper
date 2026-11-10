@@ -629,7 +629,9 @@ def test_pc3_old_row_stats_table_has_no_live_baseline_column(client):
     html = resp.get_data(as_text=True)
 
     # The 'Live Baseline' header must not appear in an old-row render.
-    assert "Live Baseline" not in html, (
+    # The page's definition row also says "Live Baseline" on every render, so the column header
+    # is told apart by its own marker.
+    assert 'data-testid="baseline-col-header"' not in html, (
         "Old-row (pre-3.5) rendered HTML contains 'Live Baseline' column header. "
         "HR-1: the baseline column must ONLY render when live_baseline is present "
         "in raw_response. Old rows must render single-column (Candidate only)."
@@ -2124,7 +2126,7 @@ class TestIndependentCycle2Phase35:
             "IC2-6a: HTML contains Traceback for pre-3.5 golden fixture row. "
             "HR-1: pre-3.5 rows must not cause any server-side exception."
         )
-        assert "Live Baseline" not in html, (
+        assert 'data-testid="baseline-col-header"' not in html, (
             "IC2-6a: HTML contains 'Live Baseline' column for pre-3.5 row "
             "(no live_baseline in raw_response). "
             "HR-1 / PA-3: the baseline column must be absent when live_baseline "
