@@ -362,6 +362,8 @@
       min-width: 72px;
       text-align: right;
     }
+    /* A gap that is not shown keeps its column, so the figures of a row without one stay under the others. */
+    .vs-delta[hidden] { display: block; visibility: hidden; }
     .vs-delta.pos { color: var(--studio-pos); }
     .vs-delta.neg { color: var(--studio-neg); }
 
@@ -497,7 +499,7 @@
     /* ---- Dollar-saved panel: the lead figure, then the other three bases as a short list. ---- */
     .dollar-panel {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
       gap: 4px 32px;
       align-items: start;
     }
@@ -505,7 +507,6 @@
     /* The lead figure and the three other bases share one row of equal columns, so a short lead
        leaves no wide empty block beside it. */
     .dollar-lines { display: contents; }
-    .dollar-lead { grid-column: span 2; }
     .dollar-lead { font-size: 14px; color: var(--studio-ink); }
     .dollar-figure { font-size: 24px; font-weight: 500; letter-spacing: -0.01em; }
     .dollar-count { font-weight: 500; }
@@ -1138,6 +1139,13 @@
     }
     .dash-panel-head .dash-panel-title { margin-bottom: 0; }
     .dash-panel-note { color: var(--studio-ink-dim); font-size: 12px; margin-top: 4px; }
+    /* The figures and the two notes share rows, so the short lines leave no tall block beside them. */
+    /* The terms disclosure and the no-sleeves line share a row, so the short lines leave no block beside them. */
+    .dash-panel[data-testid="sleeves-panel"] { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 24px; align-items: baseline; }
+    .dash-panel[data-testid="sleeves-panel"] > * { grid-column: 1 / -1; }
+    .dash-panel[data-testid="sleeves-panel"] > details.hp-more { grid-column: 1; }
+    .dash-panel[data-testid="sleeves-panel"] > [data-testid="sleeves-empty"] { grid-column: 2; }
+    .cvar-body { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 32px; }
     .cvar-figures { display: flex; gap: 8px 32px; flex-wrap: wrap; align-items: baseline; }
     .cvar-figures [data-field="cvar-stderr"] { color: var(--studio-ink-dim); }
 
@@ -1578,10 +1586,6 @@
              key, matching the mdd_d.get(...) pattern already used for the
              per-card lifetime fields a few lines below. #}
           {% set mdd_lifetime = (meta.portfolio.get('mdd_if_held_lifetime') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none) %}
-          <div data-testid="mdd-lifetime-scalar" class="mdd-lifetime">
-            Lifetime Max DD &middot; since inception: <strong>{% if mdd_lifetime is not none %}{{ "%.2f"|format(mdd_lifetime|abs) }}%{% else %}&mdash;{% endif %}</strong>
-          </div>
-
           <!-- BL-4 (account-basis honesty render, DE-AUDIT-BL4-001): dedicated
                account-fetch freshness stamp, distinct from #hero-data-as-of
                (whose engine-cycle contract in the chart legend above is
@@ -1592,6 +1596,9 @@
           <div id="account-basis-as-of" class="account-basis-asof" hidden></div>
 
           <div class="row-note" data-explainer="D20">Tracked counts every symphony the bot watches. Armed counts those with a stop set and waiting, and Triggered counts those the bot has exited.</div>
+          <div data-testid="mdd-lifetime-scalar" class="mdd-lifetime">
+            Lifetime Max DD &middot; since inception: <strong>{% if mdd_lifetime is not none %}{{ "%.2f"|format(mdd_lifetime|abs) }}%{% else %}&mdash;{% endif %}</strong>
+          </div>
           <!-- Mini-stats -->
           <div data-testid="mini-stats" class="mini-stats">
             <div data-testid="mini-stat" class="mini-stat ms-tracked">
@@ -1994,6 +2001,7 @@
       <p data-term="D44">Tail obs: how many outcomes fell in that tail; a small count means a rough figure.</p>
       <p data-term="D46">Lower bound: the method tends to understate how bad the tail is, so the real figure is likely worse.</p>
     </details>
+    <div class="cvar-body">
     <div class="cvar-figures">
       {# S-3 element (a): stderr / uncertainty band #}
       <span>
@@ -2025,6 +2033,7 @@
     <div class="dash-panel-note">
       known-low-biased LOWER BOUND on tail severity, not a point estimate
     </div>
+    </div>{# /cvar-body #}
   </section>
 
   {# Managed Sleeves panel (AC-16): sleeve / rule status, per-rule fire counts, arm-to-paper and

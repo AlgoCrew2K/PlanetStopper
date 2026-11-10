@@ -741,12 +741,11 @@
         /* A card at least 44 rem wide lays its figures on the left and its overlay line and actions on
            the right; a narrower one stacks them. */
         @container (min-width: 44rem) {
-            /* The figures take the left; the overlay lines and the actions share the right column and
-               fill its height, so no tall block lies above, under or between them. */
-            .proposal-card-body { display: grid; grid-template-columns: minmax(0, 1fr) 32rem; grid-template-rows: 1fr 1fr; gap: 0 24px; align-items: stretch; }
-            .proposal-card-body > .stats-table { grid-column: 1; grid-row: 1 / -1; }
-            .proposal-card-body > .fr-card-flow { grid-column: 2; grid-row: 1; flex-wrap: nowrap; align-items: center; justify-content: space-between; }
-            .sym-card.proposal-card .proposal-card-body > .proposal-actions { grid-column: 2; grid-row: 2; margin-top: 0; justify-content: flex-start; align-items: center; }
+            /* Three columns: the figures, the overlay lines and the actions. The two narrow ones sit level
+               with the middle of the figures, so no block wider than its text lies beside them. */
+            .proposal-card-body { display: grid; grid-template-columns: minmax(0, 1fr) 18rem 18rem; gap: 0 24px; align-items: center; }
+            .proposal-card-body > .fr-card-flow { flex-direction: column; align-items: flex-start; }
+            .sym-card.proposal-card .proposal-card-body > .proposal-actions { margin-top: 0; flex-direction: column; align-items: flex-start; gap: 12px; }
         }
         /* A stretched card keeps its short lines in rows that fill its width instead of down its left edge. */
         .fr-card-flow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
@@ -847,11 +846,9 @@
         }
         .prism-block-header .prism-as-of { margin-left: auto; }
 
-        /* The rationale runs in columns about 110 characters wide, so a long one fills the width of
-           the block instead of leaving the space beside a single capped column empty. */
+        /* The rationale takes the width of the block (a long one is a row of its own), so no space
+           beside a capped column is left empty. */
         .prism-rationale {
-            columns: 40rem;
-            column-gap: 24px;
             font-size: 13px;
             color: var(--studio-ink);
             line-height: 1.6;
@@ -1274,6 +1271,12 @@
 
         @media (min-width: 1240px) {
             .prism-lenses { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+            /* A short rationale sits beside the description and its terms; a long one is as wide as its
+               text, so it takes a row of its own, in columns, under them. */
+            .prism-block:has(> .prism-rationale) { display: flex; flex-wrap: wrap; align-items: flex-start; column-gap: 24px; }
+            .prism-block:has(> .prism-rationale) > * { flex: 1 1 100%; min-width: 0; }
+            .prism-block:has(> .prism-rationale) > .prism-intro { flex: 2 1 28rem; }
+            .prism-block:has(> .prism-rationale) > .prism-rationale { flex: 1 1 auto; }
         }
 
         /* From 1240 px the history table's columns share its width, so no column leaves a wide empty
@@ -1560,6 +1563,7 @@
                     <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
                 {% endif %}
             </div>
+            <div class="prism-intro">
             <p class="adv-explainer" data-explainer="O15">An overnight read of the market through five lenses: technicals, sentiment, derivatives, macro and fundamentals. It is background for your decisions and changes nothing by itself.</p>
             <details class="hp-more" data-terms="O15">
                 <summary>What the terms mean</summary>
@@ -1567,6 +1571,7 @@
                 <p data-term="O19">Lenses: technicals reads price trends and breadth, sentiment reads news tone, derivatives reads volatility measures, macro reads rates, inflation and jobs data, and fundamentals reads company filings.</p>
                 <p data-term="O24">Numeric verification: each number the read lists as a cited figure is checked against lens data fetched after the read; verified means it matched, and unverifiable means there was nothing to check it against, not that it is wrong. Numbers that appear only in the prose are not checked.</p>
             </details>
+            </div>{# /prism-intro #}
 
             {% if market_prism_summary %}
 
