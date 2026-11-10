@@ -981,7 +981,7 @@
         /* Two short subsections share one row; the script adds --side when both fit in 320px or less
            (it measures them stacked) and the 700px breakpoint always stacks them. */
         @media (min-width: 701px) {
-            .retirement-pair--side { display: grid; grid-template-columns: 3fr 4fr; gap: 0 24px; align-items: stretch; }
+            .retirement-pair--side { display: grid; grid-template-columns: 4fr 3fr; gap: 0 24px; align-items: stretch; }
             .retirement-pair--side > .retirement-subsection + .retirement-subsection {
                 margin-top: 0;
                 padding-top: 0;
@@ -1261,7 +1261,10 @@
 
         /* Side by side, the tenure column's terms disclosure shares the row of its Run button and the line
            after it, so no wide empty band forms beside the short lines of its stack. */
-        .retirement-pair--side > .retirement-subsection[data-testid="tenure-review-section"] > details.hp-more { flex: 0 0 auto; }
+        .retirement-pair--side:has(.retirement-last-run > .retirement-last-run-line:only-child) > .retirement-subsection[data-testid="tenure-review-section"] > details.hp-more { flex: 0 0 auto; }
+        /* Before any run both columns hold short stacks; the wider column goes to the tenure side, whose
+           explainer then wraps to fewer lines. */
+        .retirement-pair--side:has(.retirement-last-run > .retirement-last-run-line:only-child) { grid-template-columns: 3fr 4fr; }
 
         /* From 1440 px the tab bar takes the left and the description the right, so the description's
            one line does not leave the right of the panel empty. */
