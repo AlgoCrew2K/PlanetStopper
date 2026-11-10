@@ -26,7 +26,10 @@ TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
 
 # sha256 of each template, LF line ends, whitespace-only lines inside <style> blocks removed.
 _REFERENCE_DIGESTS = {
-    "ai_advisor.html": "a65a9df288c0fe8c458c148e0c7a623c0ac2c0fa0dc2b54d8a79b379b22716ab",
+    # Re-pinned after the padding override on the retirement recommendation card was dropped and the
+    # tenure missing-items note was ordered after the evidence columns from 1240 px; the diff from the
+    # previous pin is those two style changes and nothing else.
+    "ai_advisor.html": "1b91e6658328529d876c83ce34d8876d0e81a4eab4ad281b625d7abb426fe36d",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     # Re-pinned after the Performance and History explainers, relabels and density layout were
     # added, and settings.html after the Settings explainers and density change (each diff
