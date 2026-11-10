@@ -174,6 +174,7 @@
            preserveAspectRatio="none" on the SVG scales bars horizontally
            without distorting bar height at any viewport width. */
         .daily-chart-wrap {
+            margin-top: var(--studio-space-xs);
             width: 100%;
             height: 120px;
             position: relative;
@@ -298,8 +299,6 @@
         .triggers-tbl:has(.hp-empty-cell) thead { display: none; }
         .triggers-tbl td.hp-time { color: var(--studio-ink-dim); }
 
-        /* A closed disclosure draws none of its rows (the browser keeps their boxes otherwise). */
-        details[data-terms]:not([open]) > [data-term] { display: none; }
 
         /* From 1240 px the first panel pairs the description with the controls so the band beside
            the description is not empty; the exits and by-reason tables use column widths that leave

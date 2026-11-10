@@ -135,12 +135,26 @@
     }
 
     .hero-top > :first-child { display: contents; }
-    .hero-top > :first-child > * { grid-column: 1 / -1; }
-    .hero-top .guard-alpha-label { grid-column: 1 / 3; grid-row: 1; }
-    .hero-top .window-selector { grid-column: 3; grid-row: 1; }
-    /* The headline figure and its descriptor sit side by side. */
-    .hero-top .guard-alpha-headline { grid-column: 1; }
-    .hero-top .guard-alpha-descriptor { grid-column: 2; align-self: center; margin: 0 0 0 24px; }
+    /* The window picker sits at the end of the headline's row, so a short figure leaves no wide
+       empty block beside it; the descriptor is a full-width line under the headline. */
+    .hero-top {
+      grid-template-areas:
+        "label label label"
+        "note note note"
+        "terms terms terms"
+        "notice notice notice"
+        "headline headline picker"
+        "descriptor descriptor descriptor"
+        "account account account";
+    }
+    .hero-top .guard-alpha-label { grid-area: label; }
+    .hero-top [data-explainer] { grid-area: note; }
+    .hero-top .hp-more { grid-area: terms; }
+    .hero-top #guard-alpha-window-notice { grid-area: notice; }
+    .hero-top .guard-alpha-headline { grid-area: headline; }
+    .hero-top .window-selector { grid-area: picker; align-self: center; }
+    .hero-top .guard-alpha-descriptor { grid-area: descriptor; margin: 4px 0 0; }
+    .hero-top .account-all-time-stat { grid-area: account; }
 
     .guard-alpha-label {
       font-size: 13px;
@@ -168,7 +182,6 @@
       color: var(--studio-ink-dim);
       line-height: 1.5;
       margin-top: 8px;
-      max-width: 52ch;
     }
 
     .account-all-time-stat {
@@ -484,11 +497,15 @@
     /* ---- Dollar-saved panel: the lead figure, then the other three bases as a short list. ---- */
     .dollar-panel {
       display: grid;
-      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
       gap: 4px 32px;
       align-items: start;
     }
 
+    /* The lead figure and the three other bases share one row of equal columns, so a short lead
+       leaves no wide empty block beside it. */
+    .dollar-lines { display: contents; }
+    .dollar-lead { grid-column: span 2; }
     .dollar-lead { font-size: 14px; color: var(--studio-ink); }
     .dollar-figure { font-size: 24px; font-weight: 500; letter-spacing: -0.01em; }
     .dollar-count { font-weight: 500; }
@@ -741,6 +758,7 @@
       .vs-row-top [data-testid$="-bot-text"] { margin-left: 0; }
       .vs-val, .vs-delta { min-width: 0; text-align: left; flex: 1 1 auto; }
       .dollar-panel { grid-template-columns: 1fr; gap: 8px; }
+      .dollar-lead { grid-column: auto; }
       .page-dashboard .sym-card { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; }
       .card-footer-grid { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr); column-gap: 8px; }
       /* The ledger's headings (Today's session day, Cum, Max DD) take a line of their own over the
@@ -875,23 +893,6 @@
 
     .detail-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 
-    .detail-btn {
-      height: 28px;
-      padding: 0 12px;
-      border: 1px solid var(--studio-rule);
-      border-radius: 8px;
-      background: transparent;
-      color: var(--studio-ink-dim);
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      font-family: var(--studio-sans);
-      transition: color 120ms ease, background-color 120ms ease;
-    }
-    .detail-btn:hover { color: var(--studio-ink); }
-    .detail-btn.danger { border-color: var(--studio-neg); color: var(--studio-neg); }
-    .detail-btn.danger:hover { background: var(--studio-neg); color: var(--studio-white); }
-
     .detail-close {
       width: 28px;
       height: 28px;
@@ -911,6 +912,8 @@
     .detail-loading { padding: 12px 24px 0; }
     .detail-section { padding: 16px 24px; border-bottom: 1px solid var(--studio-rule); }
     .detail-section-open { border-bottom: 0; }
+    /* The opening description and its disclosure start where the section text starts. */
+    .detail-body > [data-explainer], .detail-body > details.hp-more { margin-inline: 24px; }
     .detail-section-head {
       display: flex;
       align-items: baseline;
@@ -982,6 +985,7 @@
       .detail-panel-header { flex-wrap: wrap; padding: 12px 16px; }
       .detail-panel-title { flex: 1 1 100%; }
       .detail-section { padding: 16px; }
+      .detail-body > [data-explainer], .detail-body > details.hp-more { margin-inline: 16px; }
       .detail-section-head { flex-wrap: wrap; }
     }
 
@@ -1117,7 +1121,6 @@
     /* The CVaR diagnostic and Managed Sleeves share one row; a lone panel takes the full width. */
     .dash-panels { display: flex; flex-wrap: wrap; gap: 0 16px; align-items: flex-start; }
     .dash-panels > .dash-panel { flex: 1 1 360px; min-width: 0; }
-    .dash-panels > .dash-panel[hidden] { display: none; }
     /* A description reads as one short paragraph above what it describes. */
     [data-explainer] { display: block; line-height: 1.45; margin: 0 0 4px; }
     [data-explainer] + .hp-more { margin: 0 0 8px; }

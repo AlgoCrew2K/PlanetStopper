@@ -1038,8 +1038,8 @@
         var magnitude = Math.abs(ga).toFixed(1);
         if (magnitude === '0.0') return 'Exit matched holding';
         return ga > 0
-            ? 'Exit beat holding by ' + magnitude + '%'
-            : 'Exit trailed holding by ' + magnitude + '%';
+            ? 'Exit beat holding by ' + magnitude + ' pts'
+            : 'Exit trailed holding by ' + magnitude + ' pts';
     }
 
     // The figure is the exit return minus the card's current return: it moves with the card

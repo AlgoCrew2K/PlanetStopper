@@ -2662,24 +2662,22 @@ def _tenure_review_settings() -> dict:
 def _plain_number(value: object, *, decimals: int) -> str | None:
     """value rounded to decimals places with trailing zeros after the point stripped, or None
     when it is not a finite real number (a bool is not a number)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if not _is_finite_number(value):
         return None
-    if not math.isfinite(value):
-        return None
+    if isinstance(value, int):
+        return str(value)  # an int needs no rounding, and a huge one does not fit a float
     text = f"{round(value, decimals):.{decimals}f}"
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
 def _whole_number_or_none(value: object) -> int | None:
     """value as an int when it is an int or a finite float with no fraction (never a bool)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if isinstance(value, float) and not (math.isfinite(value) and value == int(value)):
-        return None
-    return int(value)
+    return int(value) if _is_whole_number(value) else None
 
 
 def _copy_tenure_threshold(tenure_review: dict | None) -> str:
+    """The tenure threshold in trading days: the stored value in effect when it is a whole
+    number, else the configured one parsed as the review parses it. Never None."""
     stored = (
         _whole_number_or_none(tenure_review.get("threshold_in_effect"))
         if isinstance(tenure_review, dict)
@@ -2694,13 +2692,11 @@ def _copy_tenure_threshold(tenure_review: dict | None) -> str:
 
 
 def _copy_screen_threshold(retirement_last_run: dict | None) -> str | None:
+    """The correlation screen threshold the last ok run used, else the module constant.
+    None when the constant is not a finite number (the phrase then reads its fallback)."""
     if isinstance(retirement_last_run, dict) and retirement_last_run.get("status") == "ok":
         run_threshold = retirement_last_run.get("screen_threshold")
-        if (
-            isinstance(run_threshold, (int, float))
-            and not isinstance(run_threshold, bool)
-            and math.isfinite(run_threshold)
-        ):
+        if _is_finite_number(run_threshold):
             return f"{run_threshold}"
     from advisors.retirement_recommender import CORRELATION_SCREEN_THRESHOLD
 
@@ -2709,6 +2705,8 @@ def _copy_screen_threshold(retirement_last_run: dict | None) -> str | None:
 
 
 def _copy_stress_fraction_pct() -> str | None:
+    """The stress window as a percentage of aligned days, or None when the constant is
+    not a finite number."""
     from advisors.retirement_recommender import STRESS_WINDOW_FRACTION
 
     # The fraction is shown as a percentage of aligned days.
@@ -2718,23 +2716,28 @@ def _copy_stress_fraction_pct() -> str | None:
 
 
 def _copy_watch_trail_pp() -> str | None:
+    """The backtest-trail watch threshold in points, or None when it is not a finite number."""
     from advisors.tenure_review import BACKTEST_TRAIL_WATCH_PP
 
     return _plain_number(BACKTEST_TRAIL_WATCH_PP, decimals=6)
 
 
 def _copy_friction_pct() -> str | None:
+    """The simulated exit friction in percent, or None when it is not a finite number."""
     from autotuner import SIM_EXIT_FRICTION_PCT
 
     return _plain_number(SIM_EXIT_FRICTION_PCT, decimals=6)
 
 
 def _copy_min_history_days() -> str | None:
+    """The minimum history days the performance rule needs, or None when the constant is
+    not a finite number."""
     # Read at call time: the page prints the constant the insufficient-history rule uses.
     return _plain_number(_PERFORMANCE_MIN_HISTORY_DAYS, decimals=0)
 
 
 def _copy_shadow_retention_days() -> str:
+    """The shadow history retention in days as the nightly prune reads it. Never None."""
     # Read as the nightly prune reads it: the settings file only, default 180 days.
     raw = dotenv_values(ENV_FILE_PATH).get("SHADOW_HISTORY_RETENTION_DAYS", "180")
     return str(int(raw))
@@ -3495,9 +3498,9 @@ def _first_paint_verdict(sym: dict) -> dict:
     if magnitude == "0.0":
         text = "Exit matched holding"
     elif ga > 0:
-        text = f"Exit beat holding by {magnitude}%"
+        text = f"Exit beat holding by {magnitude} pts"
     else:
-        text = f"Exit trailed holding by {magnitude}%"
+        text = f"Exit trailed holding by {magnitude} pts"
     return {"_verdict_text": text, "_verdict_has_value": True}
 
 
@@ -11099,15 +11102,13 @@ def ai_advisor_tab():
 
     # Badges read the cached resolution only; the render never lists models,
     # so it can never wait on the Models API (the startup warm-up fills it).
-    advisor_suggestion_model = model_config.peek(model_config.Knob.SUGGESTION).badge_text
-    advisor_synthesis_model = model_config.peek(model_config.Knob.SYNTHESIS).badge_text
+    _suggestion_choice = model_config.peek(model_config.Knob.SUGGESTION)
+    _synthesis_choice = model_config.peek(model_config.Knob.SYNTHESIS)
+    advisor_suggestion_model = _suggestion_choice.badge_text
+    advisor_synthesis_model = _synthesis_choice.badge_text
     # A model name is known when it resolved or an operator override names it.
-    advisor_suggestion_model_known = (
-        model_config.peek(model_config.Knob.SUGGESTION).source != "unavailable"
-    )
-    advisor_synthesis_model_known = (
-        model_config.peek(model_config.Knob.SYNTHESIS).source != "unavailable"
-    )
+    advisor_suggestion_model_known = _suggestion_choice.source != "unavailable"
+    advisor_synthesis_model_known = _synthesis_choice.source != "unavailable"
     page_copy = _page_copy_values(
         ("tenure_threshold", "screen_threshold", "stress_fraction_pct", "watch_trail_pp"),
         tenure_review=tenure_review_run,
