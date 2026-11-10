@@ -337,6 +337,32 @@ def test_the_same_content_in_an_open_details_is_content_and_no_region_is_reporte
     assert _in_details(firefox, content, open_=True)["largest_empty"] is None
 
 
+# A bar's rail (a track whose only child is its fill) is a drawn bar: content. A wrapper with no
+# background, or a card whose own text sits inside it, is not counted whole.
+_RAIL = (
+    "<div style='width:100%;height:100%;background:#eee'>"
+    "<div style='width:2px;height:100%;background:#369'></div></div>"
+)
+_NO_RAIL = "<div style='width:100%;height:100%'><div style='width:2px;height:100%;background:#369'></div></div>"
+_CARD_WITH_TEXT = "<div style='width:100%;height:100%;background:#eee'><p>hi</p></div>"
+_RAIL_WITH_A_CONTROL = "<div style='width:100%;height:100%;background:#eee'><button style='width:20px'>b</button></div>"
+
+
+def test_a_bar_rail_holding_only_its_fill_is_content_so_no_region_is_reported(firefox):  # noqa: F811
+    assert _empty(firefox, f'<div class="hp-panel">{_RAIL}</div>')[0]["largest_empty"] is None
+
+
+@pytest.mark.parametrize(
+    "markup", [_NO_RAIL, _CARD_WITH_TEXT, _RAIL_WITH_A_CONTROL], ids=["no-rail", "card", "control"]
+)
+def test_a_wrapper_that_is_not_a_bare_rail_does_not_fill_the_panel_for_its_content(
+    firefox,  # noqa: F811
+    markup,
+):
+    empty = _empty(firefox, f'<div class="hp-panel">{markup}</div>')[0]["largest_empty"]
+    assert empty is not None and empty["w"] >= MIN_W and empty["h"] >= MIN_H
+
+
 def test_a_summary_is_content_of_a_closed_details(firefox):  # noqa: F811
     """The closed details still shows its summary line: only what sits beneath it is dropped."""
     found = _in_details(

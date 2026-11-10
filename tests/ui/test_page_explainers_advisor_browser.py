@@ -72,7 +72,16 @@ A_KEYS_OF_TAB["overview"] = [
 TERM_KEYS = [k for k in adv.OWNED_A_KEYS if adv.b_rows_for(k)]
 
 _TEXT_JS = """(selector) => [...document.querySelectorAll(selector)].map((el) => ({
-  shown: el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden',
+  // Whatever a closed <details> holds besides its summary is not visible, whatever boxes the
+  // browser keeps for it (no page rule removes them).
+  shown: el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'
+         && !(() => {
+           for (let n = el; n; n = n.parentElement) {
+             const holder = n.parentElement;
+             if (holder && holder.tagName === 'DETAILS' && !holder.open && n.tagName !== 'SUMMARY') return true;
+           }
+           return false;
+         })(),
   text: el.innerText,
   cut: el.scrollWidth > el.clientWidth + 1 && getComputedStyle(el).overflowX !== 'visible',
 }))"""
@@ -377,8 +386,10 @@ def test_two_tall_retirement_subsections_stack_and_leave_no_empty_region(
 
 
 _EVIDENCE_GRID_FAULT_CSS = (
-    ".tenure-review-evidence-grid { columns: 4rem 24; column-gap: 4px; column-fill: auto; "
-    "height: 300px; }"
+    # Whatever layout the grid has, the fault turns it into a multi-column list with far more
+    # columns than items, so the measurement is shown a list whose columns are mostly empty.
+    ".tenure-review-evidence-grid { display: block !important; columns: 4rem 24 !important; "
+    "column-gap: 4px !important; column-fill: auto !important; height: 300px !important; }"
 )
 _GRID_RECT_JS = """() => {
   const g = document.querySelector('.tenure-review-evidence-grid');
