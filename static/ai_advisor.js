@@ -820,11 +820,11 @@
     }
 
     // The markup of one run: one table row. A column in `lifted` is stated once in the shared line, so
-    // its cell stays in the row as an empty cell that keeps the grid's columns in place.
+    // its cell is left out of the row and the grid has no track for it.
     function autotuneRunRowHtml(cells, lifted) {
         return '<div class="autotune-row" role="row" data-testid="autotune-run-row">' +
             cells.map(function (cell, i) {
-                return cell.open + (lifted[i] ? '' : cell.inner) + '</span>';
+                return lifted[i] ? '' : cell.open + cell.inner + '</span>';
             }).join('') + '</div>';
     }
 
@@ -852,14 +852,6 @@
         var headers = [
             'Symphony', 'Run time (ET)', 'Outcome', 'Runs without adopting a tuned config', scoreHead, 'Sel t-stat',
         ];
-        var head = '<div class="autotune-row autotune-row--head" role="row">' +
-            '<span role="columnheader">' + headers[0] + '</span>' +
-            '<span role="columnheader">' + headers[1] + '</span>' +
-            '<span role="columnheader">' + headers[2] + '</span>' +
-            '<span role="columnheader" class="autotune-run-streak">' + headers[3] + '</span>' +
-            '<span role="columnheader" class="autotune-run-score"' + scoreHeadTitle + '>' + escHtml(scoreHead) + '</span>' +
-            '<span role="columnheader" class="autotune-run-tstat">' + headers[5] + '</span>' +
-            '</div>';
         var cellRows = rows.map(function (r) { return autotuneRunCells(r, sharedObjective); });
         var lifted = headers.map(function () { return false; });
         var shared = [];
@@ -878,7 +870,21 @@
             ? '<div class="autotune-shared-line" data-testid="autotune-shared-line">Same for every run: ' +
               escHtml(shared.join('; ')) + '</div>'
             : '';
-        return line + '<div class="autotune-table' + (sharedObjective ? '' : ' autotune-table--row-objectives') +
+        var headCells = [
+            '<span role="columnheader">' + headers[0] + '</span>',
+            '<span role="columnheader">' + headers[1] + '</span>',
+            '<span role="columnheader">' + headers[2] + '</span>',
+            '<span role="columnheader" class="autotune-run-streak">' + headers[3] + '</span>',
+            '<span role="columnheader" class="autotune-run-score"' + scoreHeadTitle + '>' + escHtml(scoreHead) + '</span>',
+            '<span role="columnheader" class="autotune-run-tstat">' + headers[5] + '</span>',
+        ];
+        var head = '<div class="autotune-row autotune-row--head" role="row">' +
+            headCells.filter(function (c, i) { return !lifted[i]; }).join('') + '</div>';
+        // A modifier per lifted column: the stylesheet gives that column no grid track.
+        var liftedClasses = lifted.map(function (isLifted, i) {
+            return isLifted ? ' autotune-table--lift-' + i : '';
+        }).join('');
+        return line + '<div class="autotune-table' + (sharedObjective ? '' : ' autotune-table--row-objectives') + liftedClasses +
             '" role="table" aria-label="Autotune runs">' + head +
             cellRows.map(function (cells) { return autotuneRunRowHtml(cells, lifted); }).join('') + '</div>';
     }
