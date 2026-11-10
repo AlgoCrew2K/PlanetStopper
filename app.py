@@ -2729,6 +2729,11 @@ def _copy_friction_pct() -> str | None:
     return _plain_number(SIM_EXIT_FRICTION_PCT, decimals=6)
 
 
+def _copy_min_history_days() -> str | None:
+    # Read at call time: the page prints the constant the insufficient-history rule uses.
+    return _plain_number(_PERFORMANCE_MIN_HISTORY_DAYS, decimals=0)
+
+
 def _copy_shadow_retention_days() -> str:
     # Read as the nightly prune reads it: the settings file only, default 180 days.
     raw = dotenv_values(ENV_FILE_PATH).get("SHADOW_HISTORY_RETENTION_DAYS", "180")
@@ -2750,6 +2755,7 @@ def _page_copy_values(
         "stress_fraction_pct": _copy_stress_fraction_pct,
         "watch_trail_pp": _copy_watch_trail_pp,
         "friction_pct": _copy_friction_pct,
+        "min_history_days": _copy_min_history_days,
         "shadow_retention_days": _copy_shadow_retention_days,
     }
     values: dict = {}
@@ -8761,7 +8767,7 @@ def performance_page():
     return render_template(
         "performance.html",
         min_history_days=_PERFORMANCE_MIN_HISTORY_DAYS,
-        copy_values=_page_copy_values(("friction_pct",)),
+        copy_values=_page_copy_values(("friction_pct", "min_history_days")),
         active_route="performance",
         meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
     )

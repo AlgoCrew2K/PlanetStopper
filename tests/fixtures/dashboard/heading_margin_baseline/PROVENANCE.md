@@ -85,6 +85,26 @@ new record's.
 - Sign-off: PM sign-off: session 8055360f, 2026-11-04, producer owner, captured at 758f7f95 by
   `tests/fixtures/dashboard/heading_margin_baseline/produce_heading_margin_baseline.py`.
 
+## Revision: re-recorded at the page-explainers-and-density head (AC-1 and AC-6)
+
+The page descriptions, term disclosures and shared-line text (AC-1, AC-2, AC-8) and the denser layout
+(AC-6) add and re-arrange elements on every page, so the element set of 21 comparison cases changed on
+purpose and `baseline.json` was written again.
+
+- `base_sha` in the file, `BASE_SHA` in the producer and the producer's refusal now name
+  `ff188e270efab9b4e1a39103c27fc20e2eb5dcf5`, the last production commit of the Advisor cycle; the producer
+  refuses unless `git diff --quiet` against it over `static templates app.py` exits 0 and those paths are
+  clean (it ran at head `e3c82774c28bb80edcf69714494d3b0b27e48a6e`, whose `static`, `templates` and `app.py` equal
+  that commit; the later commits are test files).
+- Producer call and Firefox (`148.0.2`) as above; 76 views, 686 elements (was 536).
+- Compared with the previous record, view by view: the 76 view keys are the same; 72 views differ, all in
+  their element set or an element's text or computed style (Advisor 36, Settings 24, Dashboard 4, History 4,
+  Performance 4); in every one of the 76 views the section headings (`.section-header`) are equal in tag,
+  classes, margins and text to the previous record, and the margins of the elements the shared rule matches
+  are equal. So the shared first-heading rule moved nothing; only the added and re-arranged elements differ.
+- sha256 of `baseline.json` (LF line ends): `cde6821ffa2a6c12b535bbb77e3f8387aaf02889fe71ddf9ba4b274e3e8009dc`.
+- PM sign-off: not needed (producer output; the only differences are the plan's own added and re-arranged elements).
+
 ## Regenerating
 
 A different Firefox version, or a deliberate change of a page that moves the elements, needs a new capture,

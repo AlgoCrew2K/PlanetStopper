@@ -367,7 +367,7 @@
             .metrics-tbl--fit tbody { display: block; }
             .metrics-tbl--fit thead tr {
                 display: grid;
-                grid-template-columns: 1.1fr 1fr 1fr 1fr 48px 1.1fr 1fr 1fr 1fr;
+                grid-template-columns: 165px 105px 1fr 1fr 48px 165px 105px 1fr 1fr;
             }
             .metrics-tbl--fit .metrics-th-repeat { display: block; }
             .metrics-tbl--fit th:nth-child(5) { grid-column: 6; }
@@ -386,7 +386,7 @@
             }
             .metrics-tbl--fit tbody tr {
                 display: grid;
-                grid-template-columns: 1.1fr 1fr 1fr 1fr;
+                grid-template-columns: 165px 105px 1fr 1fr;
             }
             .metrics-tbl--fit tbody tr:nth-child(5) td { border-bottom: 0; }
             .metrics-tbl--ledger-turn th:first-child,
@@ -613,7 +613,7 @@
             <!-- Insufficient-history banner -->
             <div id="insufficient-banner" data-testid="insufficient-banner"
                 class="insufficient-banner" style="display:none">
-                <strong>Insufficient history.</strong> At least {{ min_history_days }} trading days of portfolio history are needed for stable
+                <strong>Insufficient history.</strong> {% if copy_values.min_history_days is not none %}At least {{ copy_values.min_history_days }} trading days of portfolio history are needed{% else %}More trading days of portfolio history are needed{% endif %} for stable
                 risk metrics. Showing what's available so far.
             </div>
 

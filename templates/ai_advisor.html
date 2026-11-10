@@ -334,10 +334,17 @@
            text for a reader of one row (shown on a phone, which has no header). */
         .autotune-panel { min-width: 0; }
         .autotune-panel > .autotune-header { margin-top: 0; }
-        .autotune-table { font-size: 12px; }
+        .autotune-table { font-size: 12px; --t0: minmax(10rem, 4.2fr); --t1: minmax(9rem, 1.6fr); --t2: minmax(14rem, 0.8fr); --t3: minmax(5rem, 1.7fr); --t4: minmax(7.5rem, 2.55fr); --t5: minmax(4rem, 2.55fr); }
+        /* A column the shared line states once is not in the table: its track is empty. */
+        .autotune-table--lift-0 { --t0: ; }
+        .autotune-table--lift-1 { --t1: ; }
+        .autotune-table--lift-2 { --t2: ; }
+        .autotune-table--lift-3 { --t3: ; }
+        .autotune-table--lift-4 { --t4: ; }
+        .autotune-table--lift-5 { --t5: ; }
         .autotune-row {
             display: grid;
-            grid-template-columns: minmax(10rem, 2fr) 9rem minmax(14rem, 0.8fr) minmax(5rem, 1fr) 7.5rem 4rem;
+            grid-template-columns: var(--t0) var(--t1) var(--t2) var(--t3) var(--t4) var(--t5);
             column-gap: 16px;
             align-items: baseline;
             padding: 8px 0;
@@ -721,7 +728,7 @@
         .proposal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 12px; }
         /* Cards that wrap onto a last row stretch across it, so the grid holds no empty cell. */
         .proposal-cards--fill { display: flex; flex-wrap: wrap; }
-        .proposal-cards--fill > .proposal-card { flex: 1 1 min(100%, 22rem); min-width: 0; }
+        .proposal-cards--fill > .proposal-card { flex: 1 1 min(100%, 22rem); min-width: 0; max-width: 44rem; }
         /* A stretched card keeps its short lines in rows that fill its width instead of down its left edge. */
         .fr-card-flow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
         .fr-card-flow > * { min-width: 0; }
@@ -1039,7 +1046,6 @@
         .retirement-subsection[data-testid="tenure-review-section"] { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0 16px; }
         .retirement-subsection[data-testid="tenure-review-section"] > * { flex: 1 1 100%; min-width: 0; }
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { flex: 0 0 auto; margin: 2px 0; }
-        .sym-card.retirement-rec-card.adv-card { padding-top: 8px; padding-bottom: 8px; }
         .retirement-pair--side > .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { margin: 30px 0 12px; }
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-run,
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-notice,
@@ -1187,6 +1193,97 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+
+        /* An empty panel puts its one message beside its description, so the band under a short
+           last line is not an empty rectangle. */
+        @media (min-width: 1240px) {
+            .autotune-panel:has(.autotune-empty),
+            .prism-block:has(.prism-empty),
+            .obs-section:has(.obs-empty) {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                column-gap: 24px;
+                align-content: start;
+            }
+            .prism-block:has(.prism-empty) > *,
+            .obs-section:has(.obs-empty) > *,
+            .autotune-panel:has(.autotune-empty) > * { grid-column: 1; }
+            .prism-block > .prism-empty { grid-column: 2; grid-row: 1 / span 12; align-self: center; }
+            .obs-section:has(.obs-empty) { grid-template-columns: minmax(0, 4fr) minmax(0, 1fr); }
+            .obs-section > .obs-empty { grid-column: 2; grid-row: 1 / span 12; align-self: center; text-align: center; }
+            .autotune-panel:has(.autotune-empty) > .autotune-header,
+            .autotune-panel:has(.autotune-empty) > .adv-explainer,
+            .autotune-panel:has(.autotune-empty) > .autotune-spark { grid-column: 1 / -1; }
+            .autotune-panel > #autotune-runs-list:has(.autotune-empty) { grid-column: 2; align-self: start; }
+        }
+
+        /* Narrower, the empty autotune message shares the row of the terms disclosure, so an empty panel
+           takes one line less. */
+        @media (max-width: 1239px) {
+            .autotune-panel:has(.autotune-empty) {
+                display: grid;
+                grid-template-columns: auto minmax(0, 1fr);
+                column-gap: 16px;
+                align-items: center;
+            }
+            .autotune-panel:has(.autotune-empty) > * { grid-column: 1 / -1; }
+            .autotune-panel:has(.autotune-empty) > details.hp-more { grid-column: 1; }
+            .autotune-panel > #autotune-runs-list:has(.autotune-empty) { grid-column: 2; }
+        }
+
+        /* From 1240 px the rationale sits beside the description and its terms, so their short last
+           lines do not leave an empty band beside the lens row. */
+        @media (min-width: 1240px) {
+            .prism-block:has(> .prism-rationale) {
+                display: grid;
+                grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+                column-gap: 24px;
+                align-items: start;
+            }
+            .prism-lenses { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+            .prism-block:has(> .prism-rationale) > * { grid-column: 1 / -1; }
+            .prism-block:has(> .prism-rationale) > .adv-explainer { grid-column: 1; grid-row: 2; }
+            .prism-block:has(> .prism-rationale) > details.hp-more { grid-column: 1; grid-row: 3; }
+            .prism-block:has(> .prism-rationale) > .prism-rationale { grid-column: 2; grid-row: 2 / span 2; }
+        }
+
+        /* From 1240 px the history table's columns share its width, so no column leaves a wide empty
+           band beside the next one's text. */
+        @media (min-width: 1240px) {
+            .obs-table { table-layout: fixed; }
+            .obs-table th:nth-child(1), .obs-table td:nth-child(1) { width: 19%; }
+            .obs-table th:nth-child(2), .obs-table td:nth-child(2) { width: 22%; }
+            .obs-table th:nth-child(3), .obs-table td:nth-child(3) { width: 20%; }
+            .obs-table th:nth-child(4), .obs-table td:nth-child(4) { width: 20%; }
+        }
+
+        /* Side by side, the tenure column's terms disclosure shares the row of its Run button and the line
+           after it, so no wide empty band forms beside the short lines of its stack. */
+        .retirement-pair--side:has(.retirement-last-run > .retirement-last-run-line:only-child) > .retirement-subsection[data-testid="tenure-review-section"] > details.hp-more { flex: 0 0 auto; }
+        /* Before any run both columns hold short stacks; the wider column goes to the tenure side, whose
+           explainer then wraps to fewer lines. */
+        .retirement-pair--side:has(.retirement-last-run > .retirement-last-run-line:only-child) { grid-template-columns: 3fr 4fr; }
+
+        /* From 1240 px the missing-items note follows the evidence columns it explains, so the head's facts
+           share one line and leave no empty band beside a second, short line. */
+        @media (min-width: 1240px) {
+            .tenure-review-entry > .tenure-review-line[data-testid="tenure-review-missing"] { order: 1; }
+            .tenure-review-entry > .tenure-review-lifecycle { order: 2; }
+        }
+
+        /* From 1440 px the tab bar takes the left and the description the right, so the description's
+           one line does not leave the right of the panel empty. */
+        @media (min-width: 1440px) {
+            .adv-panel--nav {
+                display: grid;
+                grid-template-columns: 880px minmax(0, 1fr);
+                column-gap: 24px;
+                align-items: start;
+            }
+            .adv-panel--nav > .adv-note { grid-column: 2; grid-row: 1; }
+            .adv-panel--nav > .hp-more { grid-column: 2; grid-row: 2; }
+            .adv-panel--nav > .cap-nav-wrap { grid-column: 1; grid-row: 1 / span 2; }
         }
 
         /* A narrower page: the panels give up some padding. */

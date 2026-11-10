@@ -159,7 +159,8 @@ EMPTY_REGION_JS = r"""
     const p = m[1].split(',').map((s) => s.trim());
     return p.length > 3 ? parseFloat(p[3]) : 1;
   };
-  for (const [index, el] of [...document.querySelectorAll(selector)].entries()) {
+  const measured = [...document.querySelectorAll(selector)];
+  for (const [index, el] of measured.entries()) {
     if (!shown(el)) continue;
     const r = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
@@ -170,9 +171,9 @@ EMPTY_REGION_JS = r"""
       b: r.bottom - num(cs.borderBottomWidth) - num(cs.paddingBottom),
     };
     const rects = [];
-    const add = (x) => {
+    const add = (x, owner) => {
       const c = { l: Math.max(x.left, box.l), t: Math.max(x.top, box.t),
-                  r: Math.min(x.right, box.r), b: Math.min(x.bottom, box.b) };
+                  r: Math.min(x.right, box.r), b: Math.min(x.bottom, box.b), owner };
       if (c.r > c.l && c.b > c.t) rects.push(c);
     };
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
@@ -180,20 +181,73 @@ EMPTY_REGION_JS = r"""
       if (!n.nodeValue.trim()) continue;
       const range = document.createRange();
       range.selectNodeContents(n);
-      for (const g of range.getClientRects()) if (g.width > 0 && g.height > 0) add(g);
+      for (const g of range.getClientRects()) if (g.width > 0 && g.height > 0) add(g, n.parentElement);
     }
     for (const c of el.querySelectorAll('input,select,textarea,button,canvas,svg,img')) {
       if (!shown(c)) continue;
       const g = c.getBoundingClientRect();
-      if (g.width > 0 && g.height > 0) add(g);
+      if (g.width > 0 && g.height > 0) add(g, c);
     }
     for (const c of el.querySelectorAll('*')) {
       if (c.children.length || (c.textContent || '').trim() || !shown(c)) continue;
       const s = getComputedStyle(c);
       if (alphaOf(s.backgroundColor) > 0 || s.backgroundImage !== 'none') {
         const g = c.getBoundingClientRect();
-        if (g.width > 0 && g.height > 0) add(g);
+        if (g.width > 0 && g.height > 0) add(g, c);
       }
+    }
+    // A measured container inside this one is judged by its own measurement: its whole border box
+    // counts as content here, so a region bridging the edges of two stacked cards (their padding
+    // and the gutter between them) is not read as one empty area of this container. Blank space
+    // beside or around the child cards is still reported, and borders and rules inside a single
+    // container are still not content.
+    for (const inner of measured) {
+      if (inner === el || !el.contains(inner) || !shown(inner)) continue;
+      const g = inner.getBoundingClientRect();
+      if (g.width > 0 && g.height > 0) add(g, inner);
+    }
+    // Inside a multi-column list the space under each content-holding column's last line, down
+    // to the list's bottom edge, belongs to the list (column-fill imbalance of variable-length
+    // items): it counts as content. Only a list that really lays out in 2 or more columns
+    // qualifies, only columns that hold content get the rectangle (an empty column stays empty),
+    // and nothing outside the list's own content box is added. Regions beside short lines,
+    // bands outside the list and a grid's shared-row bands are never covered.
+    const columnBottoms = [];
+    for (const list of [el, ...el.querySelectorAll('*')]) {
+      const ls = getComputedStyle(list);
+      const hasCount = ls.columnCount !== 'auto' && num(ls.columnCount) > 1;
+      const hasWidth = ls.columnWidth !== 'auto';
+      if (!(hasCount || hasWidth) || !shown(list)) continue;
+      const lr = list.getBoundingClientRect();
+      const lb = {
+        l: lr.left + num(ls.borderLeftWidth) + num(ls.paddingLeft),
+        t: lr.top + num(ls.borderTopWidth) + num(ls.paddingTop),
+        r: lr.right - num(ls.borderRightWidth) - num(ls.paddingRight),
+        b: lr.bottom - num(ls.borderBottomWidth) - num(ls.paddingBottom),
+      };
+      const gap = ls.columnGap === 'normal' ? num(ls.fontSize) : num(ls.columnGap);
+      const width = lb.r - lb.l;
+      let used = hasCount ? num(ls.columnCount) : Infinity;
+      if (hasWidth) used = Math.min(used, Math.floor((width + gap) / (num(ls.columnWidth) + gap)));
+      used = Math.max(1, used);
+      if (used < 2) continue;
+      const colW = (width - (used - 1) * gap) / used;
+      const lowest = new Array(used).fill(null);
+      for (const q of rects) {
+        if (!(q.owner === list || list.contains(q.owner))) continue;
+        const k = Math.min(used - 1, Math.max(0, Math.floor(((q.l + q.r) / 2 - lb.l) / (colW + gap))));
+        lowest[k] = lowest[k] === null ? q.b : Math.max(lowest[k], q.b);
+      }
+      lowest.forEach((bottom, k) => {
+        if (bottom === null) return;
+        columnBottoms.push({ l: lb.l + k * (colW + gap), r: lb.l + k * (colW + gap) + colW,
+                             t: bottom, b: lb.b, owner: list });
+      });
+    }
+    for (const q of columnBottoms) {
+      const c = { l: Math.max(q.l, box.l), t: Math.max(q.t, box.t),
+                  r: Math.min(q.r, box.r), b: Math.min(q.b, box.b), owner: q.owner };
+      if (c.r > c.l && c.b > c.t) rects.push(c);
     }
     const xs = [...new Set([box.l, box.r, ...rects.flatMap((q) => [q.l, q.r])])].sort((a, b) => a - b);
     const ys = [...new Set([box.t, box.b, ...rects.flatMap((q) => [q.t, q.b])])].sort((a, b) => a - b);

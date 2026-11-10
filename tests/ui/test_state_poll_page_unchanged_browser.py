@@ -44,7 +44,7 @@ BASELINE_PATH = (
     / "state_poll_page_baseline"
     / "baseline.json"
 )
-REFERENCE_COMMIT = "5b0ea52ac3011fd370f3c71b2221849cec7387f8"
+REFERENCE_COMMIT = "ff188e270efab9b4e1a39103c27fc20e2eb5dcf5"
 FOOTER = re.compile(r"^id: (?P<id>\S+) · normalized: (?P<normalized>.+)$")
 
 

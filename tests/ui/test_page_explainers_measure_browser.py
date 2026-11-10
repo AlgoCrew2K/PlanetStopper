@@ -145,3 +145,149 @@ def test_height_facts_sum_the_explainers_and_the_term_summaries_and_the_relabell
     assert facts["relabelled"]["/"][1] == []
     assert facts["document_height"] >= 80 + 24 + 40
     assert facts["scroll_width"] <= facts["viewport_width"]
+
+
+# ---------------------------------------------------------------------------
+# Multi-column lists: the space under a content-holding column's last line is part of the list.
+# The narrowing is only that: empty columns, grid bands, bands beside short lines and a list that
+# lays out in one column are still reported.
+# ---------------------------------------------------------------------------
+
+_BAR = '<div class="bar" style="height:20px"></div>'
+
+
+def _stack(count: int) -> str:
+    return '<div style="break-inside:avoid">' + _BAR * count + "</div>"
+
+
+def _unequal(container_style: str) -> str:
+    """One tall item (8 bars) and one short item (1 bar) in a two-track container."""
+    return (
+        f'<div class="hp-panel" style="height:auto"><div style="column-gap:14px;{container_style}">'
+        f"{_stack(8)}{_stack(1)}</div></div>"
+    )
+
+
+def test_unequal_columns_of_a_multicolumn_list_leave_no_reported_region(firefox):  # noqa: F811
+    assert _empty(firefox, _unequal("columns:2"))[0]["largest_empty"] is None
+
+
+def test_the_same_unequal_tracks_in_a_grid_are_still_reported(firefox):  # noqa: F811
+    body = _unequal("display:grid;grid-template-columns:1fr 1fr")
+    empty = _empty(firefox, body)[0]["largest_empty"]
+    assert empty is not None and empty["w"] >= MIN_W and empty["h"] >= MIN_H
+
+
+def test_an_empty_column_of_a_multicolumn_list_is_still_reported(firefox):  # noqa: F811
+    """Four columns, content in the first two, the last two empty: the narrowing adds nothing there."""
+    filled = '<div class="hp-panel" style="height:auto"><div style="{style}">{items}</div></div>'
+    style = "columns:4;column-gap:14px;column-fill:auto;height:160px"
+    empty_tail = _empty(firefox, filled.format(style=style, items=_stack(8) + _stack(8)))
+    region = empty_tail[0]["largest_empty"]
+    assert region is not None and region["w"] >= MIN_W and region["h"] >= 150
+    all_filled = _empty(firefox, filled.format(style=style, items=_stack(8) * 4))
+    assert all_filled[0]["largest_empty"] is None
+
+
+def test_a_list_that_lays_out_in_one_column_gets_no_exemption(firefox):  # noqa: F811
+    """Two columns are asked for, only one fits: there is no column-fill imbalance to excuse."""
+    body = (
+        '<div class="hp-panel" style="height:auto"><div style="columns:2 200px;column-gap:14px;'
+        f'width:300px;height:160px">{_stack(1)}</div></div>'
+    )
+    region = _empty(firefox, body)[0]["largest_empty"]
+    assert region is not None and region["w"] >= 280 and region["h"] >= 130
+
+
+def test_a_band_beside_short_lines_above_a_multicolumn_list_is_still_reported(firefox):  # noqa: F811
+    short = "".join("<div>hi</div>" for _ in range(5))
+    body = (
+        f'<div class="hp-panel" style="height:auto">{short}'
+        f'<div style="columns:2;column-gap:14px">{_stack(8)}{_stack(1)}</div></div>'
+    )
+    region = _empty(firefox, body)[0]["largest_empty"]
+    assert region is not None and region["w"] >= MIN_W and region["h"] >= MIN_H
+    assert region["y"] + region["h"] <= 10 + 4 + 20 + 100 + 1, (
+        "the region must lie beside the short lines"
+    )
+
+
+def test_the_added_space_stops_at_the_lists_own_bottom_edge(firefox):  # noqa: F811
+    """Blank panel space below the list is a region of its own and is reported."""
+    body = (
+        '<div class="hp-panel" style="height:300px"><div style="columns:2;column-gap:14px">'
+        f"{_stack(8)}{_stack(1)}</div></div>"
+    )
+    region = _empty(firefox, body)[0]["largest_empty"]
+    list_bottom = 10 + 4 + 20 + 160
+    assert region is not None and region["w"] >= MIN_W and region["h"] >= MIN_H
+    assert region["y"] >= list_bottom - 1
+
+
+# ---------------------------------------------------------------------------
+# Nested measured containers are judged by their own measurement: a child card's border box
+# counts as content in its parent, so a region bridging the edges of two stacked cards is not
+# one empty area of the parent. Blank space in the parent around the cards, a band inside one
+# card, and blank beside short lines of an element that is not itself measured still count.
+# ---------------------------------------------------------------------------
+
+CARD_CSS = ".card { border: 1px solid #888; padding: 8px; margin: 0 0 20px; }"
+
+
+def _measured(firefox, body: str) -> list[dict]:  # noqa: F811
+    return _measure(
+        firefox,
+        body,
+        CARD_CSS,
+        expression=harness.EMPTY_REGION_JS,
+        arg=[".hp-panel, .card", MIN_W, MIN_H],
+    )
+
+
+def _card(lines: int) -> str:
+    return '<div class="card">' + "<div>hi</div>" * lines + "</div>"
+
+
+def test_two_stacked_cards_with_short_lines_produce_no_cross_card_region(firefox):  # noqa: F811
+    """Each card is 2 short lines (under 80 px); the band across both, beside their lines, is not one."""
+    body = f'<div class="hp-panel" style="height:auto">{_card(2)}{_card(2)}</div>'
+    found = _measured(firefox, body)
+    assert [f["cls"] for f in found] == ["hp-panel", "card", "card"]
+    assert [f["largest_empty"] for f in found] == [None, None, None]
+
+
+def test_the_same_two_stacked_cards_cross_a_region_when_they_are_not_measured(firefox):  # noqa: F811
+    """The border box is content only of a measured container: plain wrappers hide nothing."""
+    plain = '<div class="wrap" style="margin:0 0 20px"><div>hi</div><div>hi</div></div>'
+    body = f'<div class="hp-panel" style="height:auto">{plain}{plain}</div>'
+    found = _measured(firefox, body)
+    assert len(found) == 1
+    region = found[0]["largest_empty"]
+    assert region is not None and region["w"] >= MIN_W and region["h"] >= MIN_H
+
+
+def test_a_band_inside_one_card_is_still_reported_by_that_card(firefox):  # noqa: F811
+    body = f'<div class="hp-panel" style="height:auto">{_card(5)}</div>'
+    found = {f["cls"]: f["largest_empty"] for f in _measured(firefox, body)}
+    card = found["card"]
+    assert card is not None and card["w"] >= MIN_W and card["h"] >= MIN_H
+    assert found["hp-panel"] is None, "the panel does not repeat what its card already reports"
+
+
+def test_blank_space_below_a_child_card_is_still_reported_by_the_panel(firefox):  # noqa: F811
+    body = f'<div class="hp-panel" style="height:420px">{_card(2)}</div>'
+    found = {f["cls"]: f["largest_empty"] for f in _measured(firefox, body)}
+    region = found["hp-panel"]
+    assert region is not None and region["h"] >= 200 and region["w"] >= 500
+    assert found["card"] is None
+
+
+def test_blank_space_beside_a_child_card_is_still_reported_by_the_panel(firefox):  # noqa: F811
+    card = (
+        '<div class="card" style="float:left;width:100px;height:100px;box-sizing:border-box"></div>'
+    )
+    body = f'<div class="hp-panel" style="height:auto;display:flow-root">{card}</div>'
+    found = {f["cls"]: f["largest_empty"] for f in _measured(firefox, body)}
+    region = found["hp-panel"]
+    assert region is not None and region["w"] >= 400 and region["h"] >= MIN_H
+    assert region["x"] >= 10 + 4 + 20 + 100 - 1, "the region lies beside the card, not under it"

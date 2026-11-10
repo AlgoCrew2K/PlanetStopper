@@ -375,6 +375,49 @@ def test_two_tall_retirement_subsections_stack_and_leave_no_empty_region(
         assert not offenders, "empty regions in the Retirement tab:\n" + "\n".join(offenders)
 
 
+_EVIDENCE_GRID_FAULT_CSS = (
+    ".tenure-review-evidence-grid { columns: 4rem 24; column-gap: 4px; column-fill: auto; "
+    "height: 300px; }"
+)
+_GRID_RECT_JS = """() => {
+  const g = document.querySelector('.tenure-review-evidence-grid');
+  const r = g.getBoundingClientRect();
+  return { l: r.left, t: r.top, r: r.right, b: r.bottom };
+}"""
+
+
+@pytest.mark.parametrize("size", DESKTOPS)
+def test_empty_columns_in_the_evidence_grid_are_still_reported(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    size,  # noqa: F811
+):
+    """The column-bottom allowance never hides a column that holds nothing.
+
+    A fault gives the evidence grid far more columns than items, filled in order, so most
+    columns are empty: the measurement must report a region that lies inside the grid.
+    """
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_cards_and_long_review)
+    with _open(firefox, advisor_server, size, "retirement") as opened:
+        opened.page.add_style_tag(content=_EVIDENCE_GRID_FAULT_CSS)
+        opened.page.wait_for_timeout(150)
+        grid = opened.evaluate(_GRID_RECT_JS)
+        found = opened.evaluate(
+            harness.EMPTY_REGION_JS,
+            [_scoped('[data-testid="tab-panel-retirement"]'), MIN_W, MIN_H],
+        )
+        inside = [
+            f["largest_empty"]
+            for f in found
+            if f["largest_empty"] is not None
+            and grid["l"] <= f["largest_empty"]["x"] + f["largest_empty"]["w"] / 2 <= grid["r"]
+            and grid["t"] <= f["largest_empty"]["y"] + f["largest_empty"]["h"] / 2 <= grid["b"]
+        ]
+        assert inside, f"empty columns of the evidence grid were not reported: {found}"
+
+
 @pytest.mark.parametrize("size", [PHONE, VERY_NARROW])
 def test_the_retirement_subsections_always_stack_on_a_phone_even_when_short(
     firefox,
@@ -619,3 +662,92 @@ def test_twelve_identical_runs_print_one_shared_line_and_no_row_repeats_it(
                 assert word not in row["text"], f"a row repeats {word!r}: {row['text']!r}"
             assert row["name"] and row["time"], f"a row lost its symphony or run time: {row}"
         assert read["pageScroll"] == read["pageClient"], "the page scrolls sideways"
+
+
+_NAV_JS = """() => {
+  const panel = document.querySelector('.adv-panel--nav');
+  const strip = panel.querySelector('[role="tablist"]');
+  const note = panel.querySelector(':scope > .adv-note');
+  const rect = (el) => { const b = el.getBoundingClientRect();
+    return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }; };
+  return { strip: rect(strip), note: rect(note), scroll: strip.scrollWidth, client: strip.clientWidth };
+}"""
+
+
+@pytest.mark.parametrize("size", DESKTOPS)
+def test_the_tab_strip_shows_every_tab_whole_and_the_description_never_covers_it(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    size,  # noqa: F811
+):
+    """At 1440 the description sits right of the strip; at 1240 it sits under it; never on it."""
+    _prepare(tmp_path, monkeypatch, world="empty")
+    with _open(firefox, advisor_server, size, "overview") as opened:
+        read = opened.evaluate(_NAV_JS)
+        strip, note = read["strip"], read["note"]
+        overlap = (
+            note["left"] < strip["right"]
+            and note["right"] > strip["left"]
+            and note["top"] < strip["bottom"]
+            and note["bottom"] > strip["top"]
+        )
+        assert not overlap, f"the description covers the tab strip: {read}"
+        assert read["scroll"] <= read["client"] + 1, f"a tab is out of view at {size[0]}: {read}"
+        if size[0] >= 1440:
+            assert note["left"] >= strip["right"], (
+                f"the description is not beside the strip: {read}"
+            )
+            assert note["top"] < strip["bottom"], f"the description is not level with it: {read}"
+
+
+_LONG_SUMMARY = "a summary of many short words that keeps going " * 8
+_OPEN_HISTORY_JS = """() => {
+  document.querySelectorAll('details.obs-history').forEach((d) => { d.open = true; });
+  return [...document.querySelectorAll('.obs-scroll')]
+    .filter((s) => s.getClientRects().length)
+    .map((s) => {
+      const t = s.querySelector('.obs-table');
+      return { box: s.clientWidth, table: t.getBoundingClientRect().width, scroll: s.scrollWidth,
+               rows: t.querySelectorAll('tbody tr').length };
+    });
+}"""
+
+
+def _observations_with_a_long_summary():
+    import database
+
+    for index, verdict in enumerate(("flag", "ok", "flag")):
+        database.insert_advisor_observation(
+            advisor_role="OVERFITTING_CONSCIENCE",
+            subject_type="autotune_run",
+            subject_id=f"history-run-{index}",
+            verdict=verdict,
+            raw_response={"note": _LONG_SUMMARY if index != 1 else "short"},
+            symphony_id="",
+        )
+
+
+@pytest.mark.parametrize("size", DESKTOPS)
+def test_an_open_history_table_with_a_long_summary_shares_its_box_without_scrolling_sideways(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    size,  # noqa: F811
+):
+    """From 1240 px the history columns share the table's width, so a long summary wraps.
+
+    Without that, the summary column takes the whole width of its text and the other columns
+    shrink to a sliver beside it, so the table scrolls inside its box.
+    """
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_observations_with_a_long_summary)
+    with _open(firefox, advisor_server, size, "overview") as opened:
+        read = opened.evaluate(_OPEN_HISTORY_JS)
+        opened.page.wait_for_timeout(150)
+        read = opened.evaluate(_OPEN_HISTORY_JS)
+        assert read and read[0]["rows"] == 3, f"premise: the history shows its three rows: {read}"
+        for box in read:
+            assert box["table"] <= box["box"] + 1, f"the history table is wider than its box: {box}"
+            assert box["scroll"] <= box["box"] + 1, f"the history box scrolls sideways: {box}"

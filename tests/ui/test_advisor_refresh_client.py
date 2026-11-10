@@ -290,6 +290,9 @@ ROWS_STATE = f"""
   const listHtml = () => H.$('#autotune-runs-list').innerHTML;
 """
 OLD_CELL_WORDS = ("N/A", "Frozen-eval", "Fallback")
+# The score column's header when the seeded runs carry no objective; a lifted column has no header.
+SCORE_HEAD = "Best objective score"
+STREAK_HEAD = "Runs without adopting a tuned config"
 
 
 def shared_run(scenario, *routes_):
@@ -317,12 +320,13 @@ class TestSharedLine:
         )
         r = out.result
         names = _body_names(body["json"])
-        score_head = r["heads"][4]
         expected = (
             pe.SHARED_LINE_PREFIX
-            + f"Outcome Fallback, Frozen-eval not evaluated; {score_head} N/A; Sel t-stat N/A"
+            + f"Outcome Fallback, Frozen-eval not evaluated; {SCORE_HEAD} N/A; Sel t-stat N/A"
         )
-        assert r["heads"][2] == "Outcome" and r["heads"][5] == "Sel t-stat", r["heads"]
+        assert r["heads"] == ["Symphony", "Run time (ET)", STREAK_HEAD], (
+            f"a stated column keeps its header: {r['heads']!r}"
+        )
         assert r["lines"] == [expected], f"the line reads {r['lines']!r}, not {expected!r}"
         assert len(r["rows"]) == 11
         for text in r["rows"]:
@@ -348,6 +352,26 @@ class TestSharedLine:
         assert len(stamps) == 11 and all(stamps), "a row lost its run time"
         assert len(set(stamps)) == 11, "premise: the seeded run times differ"
 
+    def test_a_lifted_column_leaves_the_row_with_no_cell_left_behind(self):
+        pe.seed_autotune_runs(11)
+        out = shared_run(
+            f"const rows = H.$$('#autotune-runs-list {CARDS}');"
+            f' return {{head: H.$$("{HEADERS}").length,'
+            " perRow: rows.map((r) => r.children.length),"
+            " cells: rows.map((r) => Array.from(r.children).map((c) => norm(c.textContent))),"
+            " leftover: rows.map((r) => r.querySelectorAll("
+            "'.autotune-run-outcome, .autotune-run-score, .autotune-run-tstat').length)};",
+            route(RUNS, adv.autotune_runs_answer(), method="GET"),
+        )
+        r = out.result
+        assert r["head"] > 0 and len(r["perRow"]) == 11, "premise: the rows rendered"
+        assert r["perRow"] == [r["head"]] * 11, (
+            f"a row holds {r['perRow']!r} cells against {r['head']} header cells"
+        )
+        assert r["leftover"] == [0] * 11, f"a lifted column left a cell in a row: {r['leftover']!r}"
+        for cells in r["cells"]:
+            assert all(cells), f"a row holds an empty cell: {cells!r}"
+
     def test_a_column_that_differs_in_one_row_stays_in_every_row(self):
         pe.seed_autotune_runs(11, adopted_at=3)
         body = adv.autotune_runs_answer()
@@ -357,8 +381,10 @@ class TestSharedLine:
             route(RUNS, body, method="GET"),
         )
         r = out.result
-        score_head = r["heads"][4]
-        assert r["lines"] == [pe.SHARED_LINE_PREFIX + f"{score_head} N/A; Sel t-stat N/A"], r[
+        assert r["heads"] == ["Symphony", "Run time (ET)", "Outcome", STREAK_HEAD], (
+            f"only the two stated columns leave the header: {r['heads']!r}"
+        )
+        assert r["lines"] == [pe.SHARED_LINE_PREFIX + f"{SCORE_HEAD} N/A; Sel t-stat N/A"], r[
             "lines"
         ]
         assert r["pills"] == 11, "Outcome left a row although it differs in one"

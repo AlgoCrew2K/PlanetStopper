@@ -26,13 +26,19 @@ TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
 
 # sha256 of each template, LF line ends, whitespace-only lines inside <style> blocks removed.
 _REFERENCE_DIGESTS = {
-    "ai_advisor.html": "a2344674e87a8c9d3817f79844c62462bb0b0ce7399c49e81898ba088c67eec5",
+    # Re-pinned after the padding override on the retirement recommendation card was dropped and the
+    # tenure missing-items note was ordered after the evidence columns from 1240 px; the diff from the
+    # previous pin is those two style changes and nothing else.
+    "ai_advisor.html": "1b91e6658328529d876c83ce34d8876d0e81a4eab4ad281b625d7abb426fe36d",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     # Re-pinned after the Performance and History explainers, relabels and density layout were
     # added, and settings.html after the Settings explainers and density change (each diff
     # from the previous pin is that change and nothing else).
-    "history.html": "209372a0869e67a5e614b7e3437c9e71e5b33d3c114ef5cde12ff28a0cb204cb",
-    "performance.html": "3c3d00a0e96a3611c3721043ed1aaa635d62ac16945a66066522a9a7d37dd282",
+    # Re-pinned again after the merged-head layout pass (the empty-state panel arrangements, the
+    # Performance metric-table columns, the History empty table header rule and the lifted autotune
+    # column tracks) and the Performance insufficient-history banner phrase; each diff is those rules.
+    "history.html": "522862dfdcaf8c87856ffce4d10e5feb3e0856a205b2ac4a1f6c6a90b52c2578",
+    "performance.html": "6e8c64ba02f26366b266e9b143c2c3310e80834752a31edc480a6eac4ef6157c",
     "settings.html": "6e07c5e17761f047e2493862f075709e748d7efd282a277e9fd4e636582acb78",
 }
 

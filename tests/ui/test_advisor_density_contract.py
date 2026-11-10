@@ -183,7 +183,9 @@ class TestAutotuneRunsAreRows:
             assert _declared("autotune-run-frozen", prop) != value, prop
 
     def test_the_score_column_header_names_the_objective_the_rows_share(self):
-        rows = [_run_row(1, "alpha"), _run_row(2, "beta")]
+        # Different scores, so the column stays in the table; an identical score is stated once in
+        # the shared line instead and the column leaves the table.
+        rows = [_run_row(1, "alpha", naive_sharpe=1.2), _run_row(2, "beta", naive_sharpe=1.4)]
         root = parse_html(self._list_html(rows))
         head = root.find_all(cls="autotune-row--head")[0]
         score = head.find_all(cls="autotune-run-score")[0]
