@@ -32,6 +32,7 @@ import os
 import re
 import sqlite3
 from contextlib import ExitStack
+from decimal import ROUND_HALF_UP, Decimal
 from unittest.mock import patch
 
 import pytest
@@ -66,6 +67,31 @@ def world(monkeypatch):
     for year in (NOW_ET.year - 1, NOW_ET.year, NOW_ET.year + 1):
         market_calendar._get_schedule_for_year(year)
     return perf.seed_world()
+
+
+def _js_to_fixed_2(value: float) -> str:
+    """``Number(value).toFixed(2)`` as the page computes it: the exact binary value of the float
+    rounded to two places, a tie going up (Python's own ``:.2f`` sends a tie to the even digit, so
+    a drag that lands on one reads 9.12 in Python and 9.13 on the page)."""
+    magnitude = Decimal(abs(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"{'-' if value < 0 else ''}{magnitude}"
+
+
+class TestTheExpectedDragTextRoundsLikeThePage:
+    def test_a_half_way_tie_rounds_up_as_the_page_does(self):
+        assert f"{9.125:.2f}" == "9.12"  # the Python reading the page does not share
+        assert _js_to_fixed_2(9.125) == "9.13"
+        assert _js_to_fixed_2(0.125) == "0.13"
+
+    def test_a_value_off_the_tie_rounds_to_the_nearest_place(self):
+        assert _js_to_fixed_2(9.124999) == "9.12"
+        assert _js_to_fixed_2(9.126) == "9.13"
+        assert _js_to_fixed_2(9.1) == "9.10"
+        assert _js_to_fixed_2(0.0) == "0.00"
+
+    def test_a_wrong_value_does_not_match_the_page_text(self):
+        assert _js_to_fixed_2(9.125) != "9.12"
+        assert _js_to_fixed_2(9.13) != _js_to_fixed_2(9.12)
 
 
 def _read(symphony_id: str, *, patches=()) -> dict:
@@ -190,7 +216,9 @@ class TestPageShowsDashesForAFailedRead:
                 for w in WINDOWS
             ]
             assert row[1:4] == expected, f"{sid}: {row}"
-            assert row[4] == f"{body['est_annual_friction_drag_pct']:.2f}%", f"{sid}: {row}"
+            assert row[4] == f"{_js_to_fixed_2(body['est_annual_friction_drag_pct'])}%", (
+                f"{sid}: {row}"
+            )
 
 
 NOTE = """

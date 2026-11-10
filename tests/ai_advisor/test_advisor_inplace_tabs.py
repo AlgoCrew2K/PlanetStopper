@@ -690,7 +690,10 @@ def test_the_explain_only_notice_and_panel_are_unchanged(advisor_page_html):
         in " ".join(html.split())
     )
     assert 'data-testid="chat-panel"' in html
-    assert "Click &ldquo;Discuss this&rdquo;" in html
+    # The chat body is the page-copy definition T02: it still names both buttons that open a
+    # discussion from a card.
+    assert 'data-explainer="T02"' in html
+    assert "Use Discuss this proposal or Chat about this" in " ".join(html.split())
 
 
 def test_without_a_key_the_examples_still_render_and_chat_says_it_is_unavailable(
@@ -704,4 +707,6 @@ def test_without_a_key_the_examples_still_render_and_chat_says_it_is_unavailable
         html = advisor_client.get("/ai-advisor").data.decode("utf-8", errors="replace")
     assert _chat_examples(html)
     assert 'data-testid="chat-unavailable"' in html
-    assert "Anthropic API key not configured." in html
+    # Page-copy definition T05: the unavailable panel still tells the operator the missing key is
+    # the cause (the apostrophe that follows is autoescaped, so the phrase stops before it).
+    assert "Chat needs an Anthropic API key in the server" in html

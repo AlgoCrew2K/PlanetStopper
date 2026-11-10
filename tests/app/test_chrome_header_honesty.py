@@ -739,6 +739,30 @@ PANIC_TEST_FILE_SHA256 = {
 }
 
 
+# The three controls each carry exactly one definition `title` (their header definitions). It is the
+# one admitted markup change besides the Force run colour; the pin above is of the markup without it.
+_ADMITTED_TITLE_CONTROLS = (
+    '<div data-testid="mode-pill"',
+    '<button data-testid="force-run-btn"',
+    '<button id="emergency-liquidate"',
+)
+_TITLE_ATTRIBUTE = re.compile(r'\s+title="[^"]*"')
+
+
+def _without_the_admitted_titles(segment: str) -> str:
+    """The segment with the one `title` attribute of each of the three controls removed, and nothing
+    else: a control with no title, or with two, fails here instead of passing by accident."""
+    for opening in _ADMITTED_TITLE_CONTROLS:
+        start = segment.index(opening)
+        tag_end = segment.index(">", start)
+        tag = segment[start:tag_end]
+        assert len(_TITLE_ATTRIBUTE.findall(tag)) == 1, (
+            f"{opening} must carry exactly one title attribute (its header definition)"
+        )
+        segment = segment[:start] + _TITLE_ATTRIBUTE.sub("", tag) + segment[tag_end:]
+    return segment
+
+
 class TestProtectedSurfacesAreByteIdentical:
     def test_the_sell_account_route_is_unchanged(self):
         """the route and every server-side check stay as they were."""
@@ -757,8 +781,8 @@ class TestProtectedSurfacesAreByteIdentical:
         text = _chrome_text()
         start = text.index("<!-- Right-rail: mode pill -->")
         end = text.index("</nav></div>")
-        segment = text[start:end]
-        # The Force run label colour is the one admitted change (white to paper, for contrast).
+        segment = _without_the_admitted_titles(text[start:end])
+        # The Force run label colour is the one other admitted change (white to paper, for contrast).
         # It is put back to the pinned colour inside the Force run button alone, so the mode pill
         # and Emergency Liquidate stay byte for byte and any other Force run change still fails.
         button = segment.index('<button data-testid="force-run-btn"')
@@ -773,6 +797,45 @@ class TestProtectedSurfacesAreByteIdentical:
             "the mode pill / Force run / Emergency Liquidate markup changed. STOP and ask before "
             "re-pinning."
         )
+
+    def test_the_title_allowance_admits_those_three_titles_and_no_other_change(self):
+        """Putting the titles back in is the only difference the pin forgives: a changed title text
+        is forgiven (it is the definition, pinned by the header definition tests), but a changed
+        style, a missing or doubled title, or any extra byte on any of the three controls is not."""
+        text = _chrome_text()
+        start = text.index("<!-- Right-rail: mode pill -->")
+        segment = text[start : text.index("</nav></div>")]
+        assert _without_the_admitted_titles(segment) != segment
+
+        def digest_without_titles(changed: str) -> str:
+            return _sha256_lf(_without_the_admitted_titles(changed))
+
+        baseline = digest_without_titles(segment)
+        for original, changed in (
+            ("font-size:12px", "font-size:13px"),
+            ('data-testid="force-run-btn"', 'data-testid="force-run-btn" disabled'),
+            ('id="emergency-liquidate"', 'id="emergency-liquidate" class="x"'),
+            ("Force run now\n", "Force run now!\n"),
+            ('onclick="openPanicModal()"', 'onclick="openPanicModal(1)"'),
+        ):
+            assert original in segment, f"{original!r} is no longer in the pinned segment"
+            assert digest_without_titles(segment.replace(original, changed, 1)) != baseline, (
+                f"{original!r} -> {changed!r} was forgiven"
+            )
+        # A title on an element that is not one of the three is not forgiven either.
+        marker = "<!-- Right-rail: force run"
+        assert marker in segment
+        with_extra = segment.replace(marker, '<i title="x"></i>' + marker, 1)
+        assert digest_without_titles(with_extra) != baseline
+        # A control that lost its title, or gained a second one, is refused outright.
+        no_title = segment.replace('type="button" title=', 'type="button" data-t=', 1)
+        with pytest.raises(AssertionError):
+            _without_the_admitted_titles(no_title)
+        two_titles = segment.replace(
+            '<button id="emergency-liquidate"', '<button id="emergency-liquidate" title="a"', 1
+        )
+        with pytest.raises(AssertionError):
+            _without_the_admitted_titles(two_titles)
 
     def test_the_panic_modal_markup_is_unchanged(self):
         """the account list, the phrase gate and the Confirm button keep their markup."""
