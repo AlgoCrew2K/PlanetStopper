@@ -340,6 +340,25 @@ def _no_live_mongo_atlas_connections():
         yield
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _advisor_modules_bind_the_real_correlation_diagnostic():
+    """Session-autouse: import the two advisor modules that copy constants from
+    ``advisors.correlation_diagnostic`` before any test can fake that module.
+
+    Many tests fake it with ``patch.dict("sys.modules", ...)`` while a page renders, and a page
+    render imports ``tenure_review`` and ``retirement_recommender`` lazily. When the fake is in
+    place at the first import, the module binds fakes for ``MIN_OBS_FLOOR`` and the rest, and
+    ``patch.dict`` drops the module from ``sys.modules`` on exit but not from the ``advisors``
+    package attribute, so every later ``from advisors import tenure_review`` keeps getting the
+    poisoned module (an ``int < MagicMock`` TypeError in whichever test renders a retirement or
+    tenure panel next). Importing them first makes the order of the test files irrelevant.
+    """
+    import advisors.retirement_recommender  # noqa: F401
+    import advisors.tenure_review  # noqa: F401
+
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _disable_csrf_for_tests(monkeypatch):
     """Disable the CSRF check for the entire test suite (A-3).
