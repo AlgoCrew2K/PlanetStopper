@@ -159,7 +159,8 @@ EMPTY_REGION_JS = r"""
     const p = m[1].split(',').map((s) => s.trim());
     return p.length > 3 ? parseFloat(p[3]) : 1;
   };
-  for (const [index, el] of [...document.querySelectorAll(selector)].entries()) {
+  const measured = [...document.querySelectorAll(selector)];
+  for (const [index, el] of measured.entries()) {
     if (!shown(el)) continue;
     const r = el.getBoundingClientRect();
     const cs = getComputedStyle(el);
@@ -194,6 +195,16 @@ EMPTY_REGION_JS = r"""
         const g = c.getBoundingClientRect();
         if (g.width > 0 && g.height > 0) add(g, c);
       }
+    }
+    // A measured container inside this one is judged by its own measurement: its whole border box
+    // counts as content here, so a region bridging the edges of two stacked cards (their padding
+    // and the gutter between them) is not read as one empty area of this container. Blank space
+    // beside or around the child cards is still reported, and borders and rules inside a single
+    // container are still not content.
+    for (const inner of measured) {
+      if (inner === el || !el.contains(inner) || !shown(inner)) continue;
+      const g = inner.getBoundingClientRect();
+      if (g.width > 0 && g.height > 0) add(g, inner);
     }
     // Inside a multi-column list the space under each content-holding column's last line, down
     // to the list's bottom edge, belongs to the list (column-fill imbalance of variable-length
