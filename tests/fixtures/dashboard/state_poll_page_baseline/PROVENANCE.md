@@ -32,3 +32,24 @@ The dashboard page now carries its description, term disclosures and denser card
 - What differs from the previous record, compared field by field: the fields `page_text`, `detail_text`, `cards` and (in `open_detail_panel_poll`) `before_poll` of eight scenarios. `open_poll_answered_401` is identical. In every scenario the `/api/state` requests of one poll, the final path, the footer, the Risk Math velocity and the header label are equal to the previous record. `reference_commit` and `captured_at_utc` changed.
 - sha256 of `baseline.json` (LF line ends): `0293feaec5b3ec88b42ce66449664c051a96f69bb79dd3ea4b0e9d0793395418`
 - PM sign-off: not needed (producer output; the only differences are the plan's own added text and layout).
+
+## Revision: re-recorded at the page-explainers-and-density fix head (the Lifetime Max DD line moved)
+
+The fix round moved the dashboard's "Lifetime Max DD · since inception" line from after the comparison
+rows to under the cards' description, so the page text of eight scenarios changed on purpose.
+
+- Reference commit is now `6b63f53e0d718e230878df900a4aabc72c5b67ed` (the last production commit of the fix
+  round); it moved in `tests/ui/test_state_poll_page_unchanged_browser.py` and
+  `tests/ui/produce_state_poll_page_baseline.py` only. The producer refuses unless `git diff --quiet` against it
+  over `app.py templates static analytics.py database.py market_calendar.py` exits 0 and those paths are clean;
+  it ran in a detached worktree with no `.env` at head `64dec7c95d19481686a6ac76cf47d94239833d0d`, whose
+  production paths equal the reference (the later commits are test files).
+- Command: `BASELINE_OUT=<existing directory> python -m pytest -m browser -n0 tests/ui/produce_state_poll_page_baseline.py`,
+  Firefox 148.0.2 headless, all nine scenarios in one run; the file was then copied into place.
+- What differs from the previous record, compared field by field: only `page_text` of eight scenarios (and
+  `before_poll` of `open_detail_panel_poll`), and in each the only change is the position of the words "Lifetime
+  Max DD · since inception: <figure>" in the text. `open_poll_answered_401` is identical; the `/api/state`
+  requests of one poll, the final path, the footer, the Risk Math velocity, the header label, the detail text
+  and the cards are equal. `reference_commit` and `captured_at_utc` changed.
+- sha256 of `baseline.json` (LF line ends): `1c97024b8dc55e5b28448c56868fc11c19bcad434bb03b55492dd46d1cdfadc7`
+- PM sign-off: not needed (producer output; the only difference is the moved line's position).

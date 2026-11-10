@@ -1,6 +1,6 @@
 {
- "base_sha": "ff188e270efab9b4e1a39103c27fc20e2eb5dcf5",
- "captured_at_utc": "2026-11-10T05:25:47Z",
+ "base_sha": "6b63f53e0d718e230878df900a4aabc72c5b67ed",
+ "captured_at_utc": "2026-11-10T09:29:19Z",
  "capture_instant": "2026-10-21T11:00:00-04:00",
  "browser_version": "148.0.2",
  "views": {
@@ -79,25 +79,6 @@
      "margin-left": "0px"
     },
     "style_digest": "ac79d97e46732f6b35d83f89eeda92d0f133efa2e20409c8918673280089dce8"
-   },
-   {
-    "tag": "div",
-    "classes": [
-     "dollar-lines"
-    ],
-    "parent_classes": [
-     "dollar-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "$41.95 lost net of trading costs no real",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "f72ead9d7b1b5e48ff182ea570299eba9626357be39c0251dc6e53f458a4c646"
    },
    {
     "tag": "div",
@@ -211,25 +192,6 @@
    {
     "tag": "div",
     "classes": [
-     "dollar-lines"
-    ],
-    "parent_classes": [
-     "dollar-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "$41.95 lost net of trading costs no real",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "fd40306fdb61714f29acf2ea3733f891fa2add6c5f3878fa5e6c38e3e6be94cd"
-   },
-   {
-    "tag": "div",
-    "classes": [
      "section-header"
     ],
     "parent_classes": [],
@@ -339,25 +301,6 @@
    {
     "tag": "div",
     "classes": [
-     "dollar-lines"
-    ],
-    "parent_classes": [
-     "dollar-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "$41.95 lost net of trading costs no real",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6cf48e0e8135d7c77b9510aff01fa8e31b36b34b2475779f2cb21a0a6c47b5c8"
-   },
-   {
-    "tag": "div",
-    "classes": [
      "section-header"
     ],
     "parent_classes": [],
@@ -463,25 +406,6 @@
      "margin-left": "0px"
     },
     "style_digest": "e0993c0784d58914d886f27d6932f76cfe30e5dc29d0aad0f25e8c8aa05d5220"
-   },
-   {
-    "tag": "div",
-    "classes": [
-     "dollar-lines"
-    ],
-    "parent_classes": [
-     "dollar-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "$41.95 lost net of trading costs no real",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "39634bc70cad077f9b0ace42b017d07571dae68873f0c5c24d73363f328a2652"
    },
    {
     "tag": "div",
@@ -660,12 +584,12 @@
     "shared_rule_matches": false,
     "text": "<date>: +17.21 pts<date>: +0.87 pts<date",
     "margins": {
-     "margin-top": "0px",
+     "margin-top": "6px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "8728f414cfdbcf7129745467c636f1225fa18fa044178c4a8b8d02ed870bfd29"
+    "style_digest": "c8b088855b2fca688dbc50c126bd784c1662a06ff639ef35fc9ea137cea1fab9"
    },
    {
     "tag": "div",
@@ -984,12 +908,12 @@
     "shared_rule_matches": false,
     "text": "<date>: +17.21 pts<date>: +0.87 pts<date",
     "margins": {
-     "margin-top": "0px",
+     "margin-top": "6px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "a2f67921de35c07632de0ed2557c2011246ea92144f16269e73722689e7688f4"
+    "style_digest": "170293ea7acf427d185418805ce8dac4b3533d0b7ab4869d3c259cd3326d73b5"
    },
    {
     "tag": "div",
@@ -1308,12 +1232,12 @@
     "shared_rule_matches": false,
     "text": "<date>: +17.21 pts<date>: +0.87 pts<date",
     "margins": {
-     "margin-top": "0px",
+     "margin-top": "6px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5f8fbc0a323b11749c2d7d5b0987224d1992d6fbe6000a26de8d3d02c767f8da"
+    "style_digest": "0cb1a4f79dd51f5d9a22ef8e3bb9779ce76a80aa4f5f8091abb97f949dfdf75b"
    },
    {
     "tag": "div",
@@ -1651,12 +1575,12 @@
     "shared_rule_matches": false,
     "text": "<date>: +17.21 pts<date>: +0.87 pts<date",
     "margins": {
-     "margin-top": "0px",
+     "margin-top": "6px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "657d9c894e8cd6a6f96af295e6ff68359103948d9f4cdbeebe173cd5f830bb3e"
+    "style_digest": "1d438d6505cceb0ed1d53ef64fbf2caeaf870e6f370eac68cef329b894a58b09"
    },
    {
     "tag": "div",
@@ -4514,9 +4438,9 @@
     "style_digest": "10c3a11abadf1242578170303fd62af751b6a5f72920b3264ce9bb7731adc3cb"
    },
    {
-    "tag": "p",
+    "tag": "div",
     "classes": [
-     "adv-explainer"
+     "prism-intro"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4528,30 +4452,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "e725df81593d61a612116890f411f84e7a648e897c933bbe55dfe3b33deb41ab"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "prism-block"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean risk-on: conditions ",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "1b94524b2eec4346eaff9ab748e62f7a57f3ff6164ceebf997ef371a7d2828a7"
+    "style_digest": "4d08acf020754287bd7b99645210229d57dab68df7ce5a74a1a5bb9630c513a1"
    },
    {
     "tag": "p",
@@ -4884,9 +4788,9 @@
     "style_digest": "10c3a11abadf1242578170303fd62af751b6a5f72920b3264ce9bb7731adc3cb"
    },
    {
-    "tag": "p",
+    "tag": "div",
     "classes": [
-     "adv-explainer"
+     "prism-intro"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4898,30 +4802,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "e725df81593d61a612116890f411f84e7a648e897c933bbe55dfe3b33deb41ab"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "prism-block"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean risk-on: conditions ",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "1b94524b2eec4346eaff9ab748e62f7a57f3ff6164ceebf997ef371a7d2828a7"
+    "style_digest": "4d08acf020754287bd7b99645210229d57dab68df7ce5a74a1a5bb9630c513a1"
    },
    {
     "tag": "p",
@@ -5279,6 +5163,7 @@
     "tag": "div",
     "classes": [
      "retirement-pair",
+     "retirement-pair--never-run",
      "retirement-pair--side"
     ],
     "parent_classes": [
@@ -6083,9 +5968,9 @@
     "style_digest": "5ebeab16de2a169473278fc75545d61b8fc9b33079ad8ad5d041af3ee1913d70"
    },
    {
-    "tag": "p",
+    "tag": "div",
     "classes": [
-     "adv-explainer"
+     "prism-intro"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6097,30 +5982,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "12a5b1198b8d18ac17d74713f22990b82c3f59404394109163acf0bb426d27c1"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "prism-block"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean risk-on: conditions ",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4a8fb29144071122784079c349becbe83b850bf838c342790c3adf7952ba40c1"
+    "style_digest": "1663a76b9a4dc12a4f7f206295cd2e58bef5c6fe2fe373f938e5fddf5204c541"
    },
    {
     "tag": "p",
@@ -6453,9 +6318,9 @@
     "style_digest": "5ebeab16de2a169473278fc75545d61b8fc9b33079ad8ad5d041af3ee1913d70"
    },
    {
-    "tag": "p",
+    "tag": "div",
     "classes": [
-     "adv-explainer"
+     "prism-intro"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6467,30 +6332,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "12a5b1198b8d18ac17d74713f22990b82c3f59404394109163acf0bb426d27c1"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "prism-block"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean risk-on: conditions ",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4a8fb29144071122784079c349becbe83b850bf838c342790c3adf7952ba40c1"
+    "style_digest": "1663a76b9a4dc12a4f7f206295cd2e58bef5c6fe2fe373f938e5fddf5204c541"
    },
    {
     "tag": "p",
@@ -6848,6 +6693,7 @@
     "tag": "div",
     "classes": [
      "retirement-pair",
+     "retirement-pair--never-run",
      "retirement-pair--side"
     ],
     "parent_classes": [
@@ -7652,9 +7498,9 @@
     "style_digest": "1d084a24d7af4dde13c918146cb41671fb14064de16abc92214f6905db3a47a9"
    },
    {
-    "tag": "p",
+    "tag": "div",
     "classes": [
-     "adv-explainer"
+     "prism-intro"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7666,30 +7512,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "6371001822245c2a348c1a3c3b54dda164109f730c7673d911a1193bd8b4215c"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "prism-block"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean risk-on: conditions ",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b2c6749bac8dbb26bf3dea5d85cccb66a88fba63d541d6ef1f44f9412640d483"
+    "style_digest": "c8ae4522cf8a31fb03eade2e5b02b7407fc5ecd2d335c7fd2a78d1d97374e36a"
    },
    {
     "tag": "p",
@@ -8022,9 +7848,9 @@
     "style_digest": "1d084a24d7af4dde13c918146cb41671fb14064de16abc92214f6905db3a47a9"
    },
    {
-    "tag": "p",
+    "tag": "div",
     "classes": [
-     "adv-explainer"
+     "prism-intro"
     ],
     "parent_classes": [
      "adv-panel",
@@ -8036,30 +7862,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "6371001822245c2a348c1a3c3b54dda164109f730c7673d911a1193bd8b4215c"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "prism-block"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean risk-on: conditions ",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b2c6749bac8dbb26bf3dea5d85cccb66a88fba63d541d6ef1f44f9412640d483"
+    "style_digest": "c8ae4522cf8a31fb03eade2e5b02b7407fc5ecd2d335c7fd2a78d1d97374e36a"
    },
    {
     "tag": "p",
@@ -8416,7 +8222,8 @@
    {
     "tag": "div",
     "classes": [
-     "retirement-pair"
+     "retirement-pair",
+     "retirement-pair--never-run"
     ],
     "parent_classes": [
      "adv-panel",
@@ -9220,9 +9027,9 @@
     "style_digest": "2106766f56a3ecd658e177e5299fbc8a3f84299ad60cd3e9903dd3c71ee57904"
    },
    {
-    "tag": "p",
+    "tag": "div",
     "classes": [
-     "adv-explainer"
+     "prism-intro"
     ],
     "parent_classes": [
      "adv-panel",
@@ -9234,30 +9041,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "8fdd375e9c35be9c53652d44471230c53323e40d6d792f6e8f074a240343fddc"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "prism-block"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean risk-on: conditions ",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "392b74972b5ba34f362bad19cd12fddd7befc1a6b51f82b7c5c1578e9498a3b9"
+    "style_digest": "a24e401e52d37ed8f8b114d73e098d01023c963eaa7df9e7995f3d45fd3807a1"
    },
    {
     "tag": "p",
@@ -9590,9 +9377,9 @@
     "style_digest": "2106766f56a3ecd658e177e5299fbc8a3f84299ad60cd3e9903dd3c71ee57904"
    },
    {
-    "tag": "p",
+    "tag": "div",
     "classes": [
-     "adv-explainer"
+     "prism-intro"
     ],
     "parent_classes": [
      "adv-panel",
@@ -9604,30 +9391,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "8fdd375e9c35be9c53652d44471230c53323e40d6d792f6e8f074a240343fddc"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "prism-block"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean risk-on: conditions ",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "392b74972b5ba34f362bad19cd12fddd7befc1a6b51f82b7c5c1578e9498a3b9"
+    "style_digest": "a24e401e52d37ed8f8b114d73e098d01023c963eaa7df9e7995f3d45fd3807a1"
    },
    {
     "tag": "p",
@@ -9984,7 +9751,8 @@
    {
     "tag": "div",
     "classes": [
-     "retirement-pair"
+     "retirement-pair",
+     "retirement-pair--never-run"
     ],
     "parent_classes": [
      "adv-panel",
