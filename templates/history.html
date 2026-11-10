@@ -294,6 +294,8 @@
         .triggers-tbl th:first-child, .triggers-tbl td:first-child { width: 80px; }
         .triggers-tbl th:nth-child(3), .triggers-tbl td:nth-child(3) { width: 200px; }
         .triggers-tbl th:nth-child(4), .triggers-tbl td:nth-child(4) { width: 96px; }
+        /* An empty table shows its one message without a header row over it. */
+        .triggers-tbl:has(.hp-empty-cell) thead { display: none; }
         .triggers-tbl td.hp-time { color: var(--studio-ink-dim); }
 
         /* A closed disclosure draws none of its rows (the browser keeps their boxes otherwise). */

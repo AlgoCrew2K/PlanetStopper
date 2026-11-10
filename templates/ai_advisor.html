@@ -1189,6 +1189,50 @@
             white-space: nowrap;
         }
 
+        /* An empty panel puts its one message beside its description, so the band under a short
+           last line is not an empty rectangle. */
+        @media (min-width: 1240px) {
+            .autotune-panel:has(.autotune-empty),
+            .prism-block:has(.prism-empty),
+            .obs-section:has(.obs-empty) {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                column-gap: 24px;
+                align-content: start;
+            }
+            .prism-block:has(.prism-empty) > *,
+            .obs-section:has(.obs-empty) > *,
+            .autotune-panel:has(.autotune-empty) > * { grid-column: 1; }
+            .prism-block > .prism-empty { grid-column: 2; grid-row: 1 / span 12; align-self: center; }
+            .obs-section:has(.obs-empty) { grid-template-columns: minmax(0, 4fr) minmax(0, 1fr); }
+            .obs-section > .obs-empty { grid-column: 2; grid-row: 1 / span 12; align-self: center; text-align: center; }
+            .autotune-panel:has(.autotune-empty) > .autotune-header,
+            .autotune-panel:has(.autotune-empty) > .adv-explainer,
+            .autotune-panel:has(.autotune-empty) > .autotune-spark { grid-column: 1 / -1; }
+            .autotune-panel > #autotune-runs-list:has(.autotune-empty) { grid-column: 2; align-self: start; }
+        }
+
+        /* With no card to show, the recommender column puts its Run control and last-run line at the end and
+           spreads its lines over the height the tenure column sets, so each short line has a wide one
+           beside or under it and no empty rectangle forms to the right of the stack. */
+        .retirement-pair--side > .retirement-subsection[data-testid="retirement-recommender-section"]:not(:has(.retirement-cards)) { align-content: space-between; }
+        .retirement-pair--side > .retirement-subsection[data-testid="retirement-recommender-section"]:not(:has(.retirement-cards)) > .retirement-run-now-line { order: 3; flex: 1 1 100%; }
+        .retirement-pair--side > .retirement-subsection[data-testid="retirement-recommender-section"]:not(:has(.retirement-cards)) > .retirement-last-run { order: 4; }
+
+        /* From 1440 px the tab bar takes the left and the description the right, so the description's
+           one line does not leave the right of the panel empty. */
+        @media (min-width: 1440px) {
+            .adv-panel--nav {
+                display: grid;
+                grid-template-columns: 880px minmax(0, 1fr);
+                column-gap: 24px;
+                align-items: start;
+            }
+            .adv-panel--nav > .adv-note { grid-column: 2; grid-row: 1; }
+            .adv-panel--nav > .hp-more { grid-column: 2; grid-row: 2; }
+            .adv-panel--nav > .cap-nav-wrap { grid-column: 1; grid-row: 1 / span 2; }
+        }
+
         /* A narrower page: the panels give up some padding. */
         @media (max-width: 700px) {
             .adv-panel { padding: 16px; margin-bottom: 12px; }
