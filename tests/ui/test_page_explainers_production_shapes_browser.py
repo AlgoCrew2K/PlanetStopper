@@ -114,7 +114,11 @@ def test_the_hero_holds_no_empty_region_once_the_headline_has_a_real_figure(
     with _Dashboard(firefox, advisor_server, width) as probe:
         probe.page.evaluate(prod.HERO_JS)
         probe.page.wait_for_timeout(150)
-        found = probe.page.evaluate(harness.EMPTY_REGION_JS, [".hero-section", MIN_W, MIN_H])
+        # The hero section only: the dollar-saved panel also carries .hero-section and is
+        # judged by the density tests' own measurement.
+        found = probe.page.evaluate(
+            harness.EMPTY_REGION_JS, ['[data-testid="hero-section"]', MIN_W, MIN_H]
+        )
     assert found, "premise: the hero is measured"
     assert not _offenders(found), "empty regions in the hero:\n" + "\n".join(_offenders(found))
 
