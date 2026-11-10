@@ -1,12 +1,14 @@
-"""A dashboard session ends 12 hours after login and a logout ends every earlier session.
+"""A dashboard session ends 30 days after login and a logout ends every earlier session.
 
 Contract pinned (the tests below read the daemon only through its routes and four named seams):
 
 * A session carries the instant of its login. A request whose session was issued longer ago than the
-  session lifetime (12 hours, or the whole number of hours from 1 to 720 in the optional ``.env`` key
+  session lifetime (720 hours, or the whole number of hours from 1 to 720 in the optional ``.env`` key
   ``DASHBOARD_SESSION_LIFETIME_HOURS``) gets the unauthenticated outcome: an HTML request is redirected
   (302) to ``/login``, an ``/api/`` or XHR request gets 401 ``{"error": "unauthenticated"}``. Requests
   made during the session never extend it.
+* The session cookie a login sets carries an expiry (``Expires`` or ``Max-Age``) of the lifetime from
+  the login, so it survives a browser restart, and no later request pushes that expiry forward.
 * ``POST /logout`` (header CSRF token only) records a revocation instant. Every session issued at or
   before it is refused from then on, on every browser, also after a daemon restart. A session issued by
   a later login is served. A logout without a valid session revokes nothing.
@@ -54,6 +56,8 @@ _NOT_DURABLE_LINE = "Signed out. Other sessions are ended until the daemon resta
 _RUN_URL = "/ai-advisor/retirement/run"
 _APP_PY = pathlib.Path(app_module.__file__)
 _SENTINEL_DETAIL = "sentinel-database-detail-7c1e"
+_DEFAULT_LIFETIME_HOURS = 720  # 30 days: the longest the key allows and the default
+_EXPIRY_TOLERANCE_S = 5.0  # Expires and Max-Age are whole seconds
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +67,11 @@ _SENTINEL_DETAIL = "sentinel-database-detail-7c1e"
 
 @pytest.fixture
 def gate(monkeypatch, tmp_path):
-    """The auth gate on, a known credential and secret, a 12 hour lifetime, a temporary ``.env``."""
+    """The auth gate on, a known credential and secret, an explicit 12 hour lifetime, a temporary ``.env``.
+
+    The explicit value keeps the boundary-mechanics cases independent of the default lifetime, which
+    its own cases pin through the function, a fresh process and the cookie.
+    """
     monkeypatch.setenv("DASHBOARD_PASSWORD", _PASSWORD)
     monkeypatch.setenv("SECRET_KEY", _SECRET)
     for name in ("DASHBOARD_PASSWORD_HASH", "FLASK_SECRET_KEY"):
@@ -233,10 +241,10 @@ class TestLifetimeHours:
         return app_module._session_lifetime_hours
 
     @pytest.mark.parametrize("raw", [None, ""], ids=["absent", "empty"])
-    def test_absent_or_empty_is_twelve_hours_and_says_nothing(self, raw, caplog):
+    def test_absent_or_empty_is_thirty_days_and_says_nothing(self, raw, caplog):
         fn = self._lifetime_fn()
         with caplog.at_level(logging.DEBUG, logger="alphabot"):
-            assert fn(raw) == 12
+            assert fn(raw) == _DEFAULT_LIFETIME_HOURS
         assert [r for r in caplog.records if r.name == "alphabot"] == []
 
     @pytest.mark.parametrize(
@@ -253,16 +261,16 @@ class TestLifetimeHours:
         "raw",
         ["abc", "0", "00", "-3", "1.5", "721", "100000", "+5", "1e2", "٣", "5h", "twelve"],
     )
-    def test_any_other_value_is_twelve_hours_with_one_warning(self, raw, caplog):
+    def test_any_other_value_is_thirty_days_with_one_warning(self, raw, caplog):
         fn = self._lifetime_fn()
         with caplog.at_level(logging.DEBUG, logger="alphabot"):
-            assert fn(raw) == 12
+            assert fn(raw) == _DEFAULT_LIFETIME_HOURS
         warnings = [
             r for r in caplog.records if r.name == "alphabot" and r.levelno == logging.WARNING
         ]
         assert len(warnings) == 1, f"{raw!r} logged {len(warnings)} warnings"
         text = warnings[0].getMessage()
-        assert _LIFETIME_KEY in text and "12" in text, text
+        assert _LIFETIME_KEY in text and str(_DEFAULT_LIFETIME_HOURS) in text, text
 
     def test_the_warning_never_prints_the_value_or_the_session_secret(self, caplog, monkeypatch):
         fn = self._lifetime_fn()
@@ -2010,12 +2018,12 @@ class TestTheInvalidLifetimeWarningReachesTheDaemonLogFile:
 
         hours, log_text = _import_app_in_a_fresh_process(tmp_path, junk)
 
-        assert hours == 12
+        assert hours == _DEFAULT_LIFETIME_HOURS
         lines = [line for line in log_text.splitlines() if _LIFETIME_KEY in line]
         assert len(lines) == 1, (
             f"the daemon log holds {len(lines)} lines naming the key: {log_text!r}"
         )
-        assert "12" in lines[0]
+        assert str(_DEFAULT_LIFETIME_HOURS) in lines[0]
         assert junk not in log_text and _SECRET not in log_text and _PASSWORD not in log_text
 
     def test_a_valid_value_is_used_and_logs_nothing_about_the_key(self, tmp_path):
@@ -2024,8 +2032,238 @@ class TestTheInvalidLifetimeWarningReachesTheDaemonLogFile:
         assert hours == 6
         assert _LIFETIME_KEY not in log_text
 
-    def test_an_absent_key_is_twelve_hours_and_logs_nothing_about_the_key(self, tmp_path):
+    def test_an_absent_key_is_thirty_days_and_logs_nothing_about_the_key(self, tmp_path):
         hours, log_text = _import_app_in_a_fresh_process(tmp_path, None)
 
-        assert hours == 12
+        assert hours == _DEFAULT_LIFETIME_HOURS
         assert _LIFETIME_KEY not in log_text
+
+
+# ---------------------------------------------------------------------------
+# The default lifetime is 30 days, end to end
+# ---------------------------------------------------------------------------
+
+
+class TestTheDefaultLifetimeIsThirtyDaysEndToEnd:
+    """A new process with the key absent serves a session until 30 days after its login and refuses
+    it after. The cookie comes from the real login of this process and the clock is pinned in the new
+    one, so the new process's own default is what answers."""
+
+    @pytest.mark.parametrize(
+        "age, status",
+        [
+            (dict(hours=12, seconds=1), 200),
+            (dict(days=7), 200),
+            (dict(days=29, hours=23), 200),
+            (dict(days=30), 200),
+            (dict(days=30, seconds=1), 401),
+            (dict(days=45), 401),
+        ],
+        ids=["past-12-hours", "a-week", "29d-23h", "exactly-30d", "30d-plus-1s", "45d"],
+    )
+    def test_a_session_is_served_to_30_days_and_refused_after(self, clock, tmp_path, age, status):
+        client = _signed_in(clock)
+        name = app_module.app.config["SESSION_COOKIE_NAME"]
+        cookie = client.get_cookie(name).value
+        later = clock.now + int(timedelta(**age).total_seconds() * _NS)
+
+        answers = _answers_of_a_fresh_process(tmp_path, later, {"session": cookie})
+
+        assert answers == {"session": status}, f"a session {age} old answered {answers}"
+
+
+# ---------------------------------------------------------------------------
+# The session cookie survives a browser restart and is never extended by use
+# ---------------------------------------------------------------------------
+
+
+def _attribute(set_cookie: str, name: str) -> str | None:
+    match = re.search(rf";\s*{name}=([^;]*)", set_cookie, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else None
+
+
+def _absolute_expiries(set_cookie: str, received_at: float) -> list[float]:
+    """The instants (epoch seconds) a browser would drop the cookie, from each expiry attribute set."""
+    from email.utils import parsedate_to_datetime
+
+    found: list[float] = []
+    max_age = _attribute(set_cookie, "Max-Age")
+    if max_age is not None:
+        found.append(received_at + int(max_age))
+    expires = _attribute(set_cookie, "Expires")
+    if expires is not None:
+        found.append(parsedate_to_datetime(expires).timestamp())
+    return found
+
+
+def _login_over_the_wire(client) -> tuple[object, float, float]:
+    """POST /login; return the response and the real instants just before and just after it."""
+    before = time.time()
+    response = client.post("/login", data={"password": _PASSWORD})
+    after = time.time()
+    assert response.status_code == 302, f"login answered {response.status_code}"
+    return response, before, after
+
+
+def _the_session_cookie(response) -> str:
+    cookies = _session_set_cookies(response)
+    assert len(cookies) == 1, f"the login set {len(cookies)} session cookies: {cookies}"
+    return cookies[0]
+
+
+class TestTheLoginCookieOutlivesTheBrowser:
+    @pytest.mark.parametrize("hours", [1, 12, 720], ids=["1h", "12h", "720h"])
+    def test_the_cookie_expires_the_configured_lifetime_after_the_login(
+        self, gate, monkeypatch, hours
+    ):
+        monkeypatch.setattr(app_module.app, "permanent_session_lifetime", timedelta(hours=hours))
+
+        response, before, after = _login_over_the_wire(_client())
+
+        cookie = _the_session_cookie(response)
+        expiries = _absolute_expiries(cookie, after)
+        assert expiries, f"a session-only cookie dies with the browser: {cookie}"
+        for expiry in expiries:
+            assert before + hours * 3600 - _EXPIRY_TOLERANCE_S <= expiry, cookie
+            assert expiry <= after + hours * 3600 + _EXPIRY_TOLERANCE_S, cookie
+
+    @pytest.mark.parametrize("prior", ["a-session-already-held", "after-a-logout"])
+    def test_a_login_made_on_top_of_an_earlier_session_still_sets_an_expiry(
+        self, clock, monkeypatch, prior
+    ):
+        monkeypatch.setattr(app_module.app, "permanent_session_lifetime", timedelta(hours=720))
+        client = _client()
+        _login(client)
+        clock.advance(seconds=2)
+        if prior == "after-a-logout":
+            _assert_logged_in_at_logout_redirect(_post_logout(client))
+            clock.advance(seconds=2)
+
+        response, before, after = _login_over_the_wire(client)
+
+        cookie = _the_session_cookie(response)
+        expiries = _absolute_expiries(cookie, after)
+        assert expiries, f"the second login's cookie has no expiry: {cookie}"
+        for expiry in expiries:
+            assert before + 720 * 3600 - _EXPIRY_TOLERANCE_S <= expiry, cookie
+
+    def test_the_cookie_keeps_its_protective_flags(self, gate, monkeypatch):
+        monkeypatch.setitem(app_module.app.config, "SESSION_COOKIE_SECURE", True)
+
+        response, _, after = _login_over_the_wire(_client())
+
+        cookie = _the_session_cookie(response)
+        lowered = cookie.lower()
+        assert _absolute_expiries(cookie, after), cookie
+        assert "httponly" in lowered and "samesite=lax" in lowered and "secure" in lowered, cookie
+
+
+class TestUseNeverPushesTheCookieExpiryForward:
+    @pytest.mark.parametrize("target", [_ACCOUNTS, "/"], ids=["api-read", "dashboard-page"])
+    def test_a_later_request_sets_no_session_cookie_or_one_no_later_than_the_login_expiry(
+        self, clock, monkeypatch, target
+    ):
+        monkeypatch.setattr(app_module.app, "permanent_session_lifetime", timedelta(hours=720))
+        client = _client()
+        login, _, login_received = _login_over_the_wire(client)
+        login_expiry = max(_absolute_expiries(_the_session_cookie(login), login_received))
+        clock.advance(hours=1)
+        time.sleep(2.2)  # real seconds: a refreshed expiry would sit at least two seconds later
+
+        response = client.get(target)
+        received = time.time()
+
+        assert response.status_code == 200, f"GET {target} answered {response.status_code}"
+        for header in _session_set_cookies(response):
+            for expiry in _absolute_expiries(header, received):
+                assert expiry <= login_expiry + 1.0, (
+                    f"a request an hour into the session moved the cookie expiry forward: {header}"
+                )
+
+
+_LOGIN_COOKIE_DRIVER = r"""
+import json, logging, sys, time
+repo, log_path, password = sys.argv[1:4]
+sys.path.insert(0, repo)
+import dotenv
+dotenv.load_dotenv = lambda *a, **k: False
+dotenv.dotenv_values = lambda *a, **k: {}
+_real_handler = logging.FileHandler
+class _TempFileHandler(_real_handler):
+    def __init__(self, filename, *a, **k):
+        super().__init__(log_path, *a, **k)
+logging.FileHandler = _TempFileHandler
+import app
+app._auth_check_enabled = True
+app.app.config["SESSION_COOKIE_SECURE"] = False
+client = app.app.test_client()
+before = time.time()
+response = client.post("/login", data={"password": password, "csrf_token": app._CSRF_TOKEN})
+after = time.time()
+sys.stdout.write("__LOGIN__" + json.dumps({
+    "status": response.status_code,
+    "cookies": response.headers.getlist("Set-Cookie"),
+    "before": before,
+    "after": after,
+}))
+"""
+
+
+def _login_in_a_fresh_process(tmp_path, lifetime_value: str | None) -> dict:
+    """Start the daemon module in a new process with the lifetime key set or absent, log in through
+    its real route and return the Set-Cookie headers with the instants around the request."""
+    env = {k: v for k, v in os.environ.items() if k != _LIFETIME_KEY}
+    env.update(
+        DB_PATH=database._db_file(),
+        SECRET_KEY=str(app_module.app.secret_key),
+        DASHBOARD_PASSWORD=_PASSWORD,
+        PYTHONIOENCODING="utf-8",
+    )
+    for name in ("DASHBOARD_PASSWORD_HASH", "FLASK_SECRET_KEY"):
+        env.pop(name, None)
+    if lifetime_value is not None:
+        env[_LIFETIME_KEY] = lifetime_value
+    repo = str(_APP_PY.parent)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            _LOGIN_COOKIE_DRIVER,
+            repo,
+            str(tmp_path / "daemon.log"),
+            _PASSWORD,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=240,
+        cwd=repo,
+        env=env,
+    )
+    marker = proc.stdout.rfind("__LOGIN__")
+    assert marker >= 0, f"app did not import (exit {proc.returncode}):\n{proc.stderr[-1500:]}"
+    return json.loads(proc.stdout[marker + len("__LOGIN__") :].strip())
+
+
+class TestTheCookieOfANewProcessFollowsItsLifetimeSetting:
+    @pytest.mark.parametrize(
+        "value, hours",
+        [(None, 720), ("", 720), ("zq9-lifetime-junk", 720), ("6", 6)],
+        ids=["absent", "empty", "malformed", "six-hours"],
+    )
+    def test_the_login_cookie_expires_that_many_hours_after_the_login(
+        self, gate, tmp_path, value, hours
+    ):
+        result = _login_in_a_fresh_process(tmp_path, value)
+
+        assert result["status"] == 302, f"login answered {result['status']}"
+        name = app_module.app.config["SESSION_COOKIE_NAME"]
+        cookies = [c for c in result["cookies"] if c.startswith(name + "=")]
+        assert len(cookies) == 1, result["cookies"]
+        expiries = _absolute_expiries(cookies[0], result["after"])
+        assert expiries, f"a session-only cookie dies with the browser: {cookies[0]}"
+        for expiry in expiries:
+            assert result["before"] + hours * 3600 - _EXPIRY_TOLERANCE_S <= expiry, cookies[0]
+            assert expiry <= result["after"] + hours * 3600 + _EXPIRY_TOLERANCE_S, cookies[0]
