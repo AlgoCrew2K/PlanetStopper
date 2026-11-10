@@ -35,6 +35,7 @@ from tests.app import _retirement_tab_world as w
 from tests.app.conftest import _reset_scheduler_run_state  # noqa: F401  (autouse, health state)
 from tests.ui import _page_explainers as harness
 from tests.ui import _page_explainers_advisor as adv
+from tests.ui import _page_explainers_production_shapes as prod
 from tests.ui._shell_support import (  # noqa: F401  (fixtures: overrides, empty directory, browser)
     _empty_post_mortem_directory,
     _stub_database_load_state_for_advisor_routes,
@@ -434,23 +435,126 @@ def test_the_retirement_subsections_always_stack_on_a_phone_even_when_short(
         assert state["pageScroll"] == state["pageClient"]
 
 
+@pytest.mark.parametrize("count", [1, 4, 5])
 @pytest.mark.parametrize("size", DESKTOPS)
-def test_five_pending_proposals_leave_no_empty_cell_in_the_grid_or_a_card(
+def test_pending_proposals_leave_no_empty_cell_in_the_grid_a_card_or_the_tab_panel(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    size,
+    count,  # noqa: F811
+):
+    """One, four and five cards: a lone or last-row card fills its row, so no blank sits beside it.
+
+    The tab panel's own content box is measured too, because a cap on the card's width leaves the
+    blank in the panel and inside no card.
+    """
+    _prepare(
+        tmp_path, monkeypatch, world="empty", seed=lambda: adv.seed_frontrunner_proposals(count)
+    )
+    with _open(firefox, advisor_server, size, "frontrunner-builder") as opened:
+        cards = opened.evaluate(_TEXT_JS, '[data-testid="frontrunner-proposal-card"]')
+        assert len(cards) == count and all(c["shown"] for c in cards), (
+            f"premise: {count} cards show"
+        )
+        # Everything above the cards (the build controls, the descriptions, the shared notes) is
+        # taken out of the panel, so the panel's content box measured here is the card area and
+        # a hole above it cannot stand in for one beside a card.
+        opened.evaluate(
+            "() => { const cards = document.querySelector("
+            "'[data-testid=\"frontrunner-proposal-cards\"]');"
+            " for (let el = cards.previousElementSibling; el; el = el.previousElementSibling)"
+            " el.style.display = 'none'; }"
+        )
+        selector = (
+            '[data-testid="frontrunner-proposal-cards"], #tab-panel-frontrunner-builder, '
+            + _scoped('[data-testid="tab-panel-frontrunner-builder"]')
+        )
+        offenders = _empty_regions(opened, selector)
+        assert not offenders, "empty regions in the Frontrunner tab:\n" + "\n".join(offenders)
+
+
+def _card_rows(layout: dict) -> list[list[dict]]:
+    rows: list[list[dict]] = []
+    for card in sorted(layout["cards"], key=lambda c: (round(c["card"]["top"]), c["card"]["left"])):
+        if rows and abs(rows[-1][0]["card"]["top"] - card["card"]["top"]) <= 2:
+            rows[-1].append(card)
+        else:
+            rows.append([card])
+    return rows
+
+
+@pytest.mark.parametrize("count", [1, 4])
+@pytest.mark.parametrize("size", DESKTOPS)
+def test_each_row_of_proposal_cards_spans_the_tab_panels_content_width(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    size,
+    count,  # noqa: F811
+):
+    """No cap on a card's width and no justify trick: the cards of a row meet both content edges."""
+    _prepare(
+        tmp_path, monkeypatch, world="empty", seed=lambda: adv.seed_frontrunner_proposals(count)
+    )
+    with _open(firefox, advisor_server, size, "frontrunner-builder") as opened:
+        layout = opened.evaluate(prod.FR_LAYOUT_JS)
+    assert len(layout["cards"]) == count
+    content = layout["content"]
+    problems = []
+    for row in _card_rows(layout):
+        left = min(c["card"]["left"] for c in row)
+        right = max(c["card"]["right"] for c in row)
+        if abs(left - content["left"]) > 1 or abs(right - content["right"]) > 1:
+            problems.append(
+                f"a row of {len(row)} card(s) spans {left:.0f}..{right:.0f}, the panel's "
+                f"content spans {content['left']:.0f}..{content['right']:.0f}"
+            )
+    assert not problems, "\n".join(problems)
+
+
+@pytest.mark.parametrize("size", DESKTOPS)
+def test_a_card_wide_enough_lays_its_figures_left_and_its_identity_and_actions_right(
     firefox,
     advisor_server,
     tmp_path,
     monkeypatch,
     size,  # noqa: F811
 ):
-    _prepare(tmp_path, monkeypatch, world="empty", seed=lambda: adv.seed_frontrunner_proposals(5))
+    """Inside a card of 44 rem and up two columns; below that one, whatever the page width.
+
+    Four cards: three share the first row (narrow, one column) and the last stretches across the
+    next (wide, two columns), so one page shows both sides of the rule.
+    """
+    _prepare(tmp_path, monkeypatch, world="empty", seed=lambda: adv.seed_frontrunner_proposals(4))
     with _open(firefox, advisor_server, size, "frontrunner-builder") as opened:
-        cards = opened.evaluate(_TEXT_JS, '[data-testid="frontrunner-proposal-card"]')
-        assert len(cards) == 5 and all(c["shown"] for c in cards), "premise: five cards show"
-        selector = '[data-testid="frontrunner-proposal-cards"], ' + _scoped(
-            '[data-testid="tab-panel-frontrunner-builder"]'
-        )
-        offenders = _empty_regions(opened, selector)
-        assert not offenders, "empty regions in the Frontrunner tab:\n" + "\n".join(offenders)
+        layout = opened.evaluate(prod.FR_LAYOUT_JS)
+    threshold = 44 * layout["rootSize"]
+    # A container query reads the card's content box; the card's own padding and border are
+    # well under 40 px a side, so these bands leave the in-between widths unjudged.
+    wide = [c for c in layout["cards"] if c["card"]["width"] >= threshold + 80]
+    narrow = [c for c in layout["cards"] if c["card"]["width"] < threshold]
+    assert wide and narrow, (
+        f"the last-row card must stretch across its row (a width cap keeps it narrow) and the "
+        f"first row's stay narrow; card widths are "
+        f"{[round(c['card']['width']) for c in layout['cards']]} against {threshold:.0f} px"
+    )
+    problems = []
+    for card in wide:
+        table, approve, summary = card["table"], card["approve"], card["summary"]
+        if not table["right"] <= approve["left"] + 1:
+            problems.append("a wide card puts Approve under its figures, not beside them")
+        if not table["right"] <= summary["left"] + 1:
+            problems.append("a wide card puts the overlay line under its figures")
+        if not table["left"] < approve["left"]:
+            problems.append("a wide card puts its figures right of its actions")
+    for card in narrow:
+        table, approve = card["table"], card["approve"]
+        if not approve["top"] >= table["bottom"] - 1:
+            problems.append("a narrow card does not stack its actions under its figures")
+    assert not problems, "\n".join(dict.fromkeys(problems))
 
 
 # ---------------------------------------------------------------------------

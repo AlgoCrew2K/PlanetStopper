@@ -291,3 +291,57 @@ def test_blank_space_beside_a_child_card_is_still_reported_by_the_panel(firefox)
     region = found["hp-panel"]
     assert region is not None and region["w"] >= 400 and region["h"] >= MIN_H
     assert region["x"] >= 10 + 4 + 20 + 100 - 1, "the region lies beside the card, not under it"
+
+
+# What a closed disclosure holds is not visible: the page carries no rule that removes its boxes,
+# so the measurement itself must not count them. Each case is shown closed (the region is
+# reported) and open (the same content fills the panel and none is).
+_DENSE_TEXT = " ".join(["word"] * 400)
+_CLOSED_TEXT = f"<details><summary>terms</summary><p style='margin:0'>{_DENSE_TEXT}</p></details>"
+_CLOSED_CONTROL = (
+    "<details><summary>terms</summary>"
+    "<button style='display:block;width:500px;height:150px;box-sizing:border-box'>b</button>"
+    "</details>"
+)
+_CLOSED_FILL = (
+    "<details><summary>terms</summary>"
+    "<div class='bar' style='width:500px;height:150px'></div></details>"
+)
+
+
+def _in_details(firefox, content: str, *, open_: bool) -> dict:  # noqa: F811
+    marked = content.replace("<details>", "<details open>") if open_ else content
+    return _empty(firefox, f'<div class="hp-panel">{marked}</div>')[0]
+
+
+@pytest.mark.parametrize(
+    "content", [_CLOSED_TEXT, _CLOSED_CONTROL, _CLOSED_FILL], ids=["text", "control", "filled-box"]
+)
+def test_content_inside_a_closed_details_is_not_content_so_the_region_is_reported(
+    firefox,  # noqa: F811
+    content,
+):
+    empty = _in_details(firefox, content, open_=False)["largest_empty"]
+    assert empty is not None and empty["w"] >= MIN_W and empty["h"] >= MIN_H, (
+        "a closed disclosure's text, control or filled box was counted as visible content"
+    )
+
+
+@pytest.mark.parametrize(
+    "content", [_CLOSED_TEXT, _CLOSED_CONTROL, _CLOSED_FILL], ids=["text", "control", "filled-box"]
+)
+def test_the_same_content_in_an_open_details_is_content_and_no_region_is_reported(
+    firefox,  # noqa: F811
+    content,
+):
+    assert _in_details(firefox, content, open_=True)["largest_empty"] is None
+
+
+def test_a_summary_is_content_of_a_closed_details(firefox):  # noqa: F811
+    """The closed details still shows its summary line: only what sits beneath it is dropped."""
+    found = _in_details(
+        firefox, "<details><summary>terms</summary><p>hidden</p></details>", open_=False
+    )
+    empty = found["largest_empty"]
+    assert empty is not None
+    assert empty["y"] > 20, "the summary line's own rows were reported as empty"
