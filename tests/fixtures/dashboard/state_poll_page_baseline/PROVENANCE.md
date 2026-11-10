@@ -22,3 +22,13 @@ The card text of seven of the nine scenarios held the word "Cash Now" (the butto
 - What differs from the previous record, checked by comparing every scenario field with the word "Cash Now" removed and white space folded: nothing else. Seven scenarios (`closed_first_poll_narrow_dark`, `closed_first_poll_wide_light`, `open_detail_panel_poll`, `open_fallback_poll`, `open_first_poll_wide_light`, `open_poll_answered_500`, `open_sse_refresh`) differ only by that word in card text; `no_state_first_load` and `open_poll_answered_401` are identical. `reference_commit` and `captured_at_utc` changed.
 - sha256 of `baseline.json`: `0a92cc520cda67a36aea811fa6afb9d8e1a5bf404e9abfc0376ae04853a34ac5`
 - PM sign-off: not needed (producer output; the only differences are the removed control's own text).
+
+## Revision: re-recorded at the page-explainers-and-density head (AC-1 and AC-6)
+
+The dashboard page now carries its description, term disclosures and denser card text, so the page text of eight of the nine scenarios changed on purpose and `baseline.json` was re-recorded.
+
+- Reference commit is now `ff188e270efab9b4e1a39103c27fc20e2eb5dcf5` (the last production commit of the Advisor cycle); it moved in `tests/ui/test_state_poll_page_unchanged_browser.py` and `tests/ui/produce_state_poll_page_baseline.py` only (`tests/app/_state_poll_worlds.py` and the golden `/api/state` records keep `758f7f95`). The producer refuses unless `git diff --quiet` against it over `app.py templates static analytics.py database.py market_calendar.py` exits 0 and those paths are clean; it ran at head `e3c82774c28bb80edcf69714494d3b0b27e48a6e`, whose production paths equal the reference.
+- Command: `BASELINE_OUT=<existing directory> python -m pytest -m browser -n0 tests/ui/produce_state_poll_page_baseline.py`, Firefox 148.0.2 headless, all nine scenarios in one run; the file was then copied into place.
+- What differs from the previous record, compared field by field: the fields `page_text`, `detail_text`, `cards` and (in `open_detail_panel_poll`) `before_poll` of eight scenarios. `open_poll_answered_401` is identical. In every scenario the `/api/state` requests of one poll, the final path, the footer, the Risk Math velocity and the header label are equal to the previous record. `reference_commit` and `captured_at_utc` changed.
+- sha256 of `baseline.json` (LF line ends): `0293feaec5b3ec88b42ce66449664c051a96f69bb79dd3ea4b0e9d0793395418`
+- PM sign-off: not needed (producer output; the only differences are the plan's own added text and layout).

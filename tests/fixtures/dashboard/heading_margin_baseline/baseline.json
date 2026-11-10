@@ -1,6 +1,6 @@
 {
- "base_sha": "758f7f9551ff3a15a292debb7bfd4f00b3ecf1e7",
- "captured_at_utc": "2026-11-04T16:45:32Z",
+ "base_sha": "ff188e270efab9b4e1a39103c27fc20e2eb5dcf5",
+ "captured_at_utc": "2026-11-10T05:25:47Z",
  "capture_instant": "2026-10-21T11:00:00-04:00",
  "browser_version": "148.0.2",
  "views": {
@@ -21,7 +21,45 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "147ca30e8e631f333e9b08039c7a01e2b8b18429fd984cb983b401ada549e185"
+    "style_digest": "1e4afe20adbb36fe41e8f9e87478bcf5f2d8ce8f995f87a6ab7ac09d2b8852ef"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "dash-panel-note"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The dollars the exits saved or lost agai",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "4px",
+     "margin-left": "0px"
+    },
+    "style_digest": "ffd3b24da6cae5579fe9a41de443bdd353a1d98c662cb06accef9721e7ab3b08"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Exit: one time the b",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "65086d49e7f5438fa1bde89abd930ad4148f364897f5a2dafac3bf758d7bfe98"
    },
    {
     "tag": "div",
@@ -111,7 +149,45 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "b3144054eba8e2e5dc14f9b5d0ce8298a1429592bc786bf06b0ce635b89baec1"
+    "style_digest": "42dd8f3516c052e1c4a3608e17b465788b14fb224dd6ffc352f62af463d3d854"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "dash-panel-note"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The dollars the exits saved or lost agai",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "4px",
+     "margin-left": "0px"
+    },
+    "style_digest": "af17cb0a46c58297798361c4cb4541c478b1dbb134124da0114ef8bcb0fedc49"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Exit: one time the b",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "038aba08b67fd5b63d5be9d7340a5e88bf6d50d35c09be1e36802d5683878556"
    },
    {
     "tag": "div",
@@ -201,7 +277,45 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "304a72ef5504d3ecbc795656199e3fffd4fb03d9f432f1723512812d9ff439f0"
+    "style_digest": "b9f4848643ec4cbef7cdc2aa1fc3520214c72e0cecf7cd7a761b3c9b9cfeec7f"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "dash-panel-note"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The dollars the exits saved or lost agai",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "4px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b51931b9a6b2f140b7b0c00ba7dc3e1c40ba37f742f92cd961c5c3bb5e1bfd3b"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Exit: one time the b",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "30110012140c6e6080236df2aac28000224c6169d131740304e67ed0582efa61"
    },
    {
     "tag": "div",
@@ -291,7 +405,45 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5bd4895c934cc110c2f5832488acef95596697fd57ab7119d1a9367624c77dc3"
+    "style_digest": "77b929f99bb5b89acfca8f772f56b4dadff295e7f2e5dfe07fd7afc238944969"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "dash-panel-note"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The dollars the exits saved or lost agai",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "4px",
+     "margin-left": "0px"
+    },
+    "style_digest": "41cbc35ef818fb8f429bc1f923ad656e02903f254719babfba899264279c6abe"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Exit: one time the b",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "aff088cdcb5ba18356dd98212f7ef64fa7579280f3810a1b557d002c8c32835d"
    },
    {
     "tag": "div",
@@ -366,6 +518,44 @@
   ],
   "history|load|1440|light": [
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "How the bot's exits scored against holdi",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "28cac803d3c3eaffafd8707b00c5961813897ce0919425bd5081945f0b2fc4c7"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Windows: calendar da",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "683803bea46ac6e3b50b477056cec6fd869588cc64f6a707774e722f25fb4e38"
+   },
+   {
     "tag": "div",
     "classes": [
      "hp-toolbar"
@@ -375,14 +565,14 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "30d 60d 90d 125d YTD 1Y 5Y Rollup of pos",
+    "text": "30d 60d 90d 125d YTD 1Y 5Y Totals from t",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "16px",
      "margin-left": "0px"
     },
-    "style_digest": "54a4aa512728dcd047fbc15e0d909514171757caaed39e39b7641ec681885fd3"
+    "style_digest": "fde8865232c12eae232ad3f669e572d734bb998f7c870cbcdb60525fa240d7bc"
    },
    {
     "tag": "div",
@@ -399,7 +589,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "b7db2741a3ad7266ff586df2151db1403331e8469b86afabbb0d7ba603f3171d"
+    "style_digest": "03c9bec5fff8ac3c0502da0b89566db638f5ebce0551ae0c6f257e342a4d710e"
    },
    {
     "tag": "div",
@@ -438,6 +628,25 @@
      "margin-left": "0px"
     },
     "style_digest": "b751ed1e0d5fb008a6b2b5128de98d9b76ba523ff4b253a08719bd9ccfa39d34"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each bar is one day's exit alpha added u",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1639ddf949d76f2ae113555e7547695dd42fa61df9c5f2358be758363fd713b2"
    },
    {
     "tag": "div",
@@ -498,6 +707,44 @@
     "style_digest": "912c4be27c1ce54c8af558a4d0e5089c40403239d7eecb6b312ba3ce3ea9bdf9"
    },
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "The same totals split by the rule that f",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1639ddf949d76f2ae113555e7547695dd42fa61df9c5f2358be758363fd713b2"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Wins: exits whose ex",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "18c4cf18ba16682cb890285d4a6448c69f97edfe6644b686eedc1fd79771d1a1"
+   },
+   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -507,7 +754,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Reason Sum of exit alpha Dollar result T",
+    "text": "Reason Sum of exit alpha Dollar result E",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -526,7 +773,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "What the exit reasons mean Take-ProfitMo",
+    "text": "What the exit reasons mean Take-profitth",
     "margins": {
      "margin-top": "12px",
      "margin-right": "0px",
@@ -534,25 +781,6 @@
      "margin-left": "0px"
     },
     "style_digest": "18c4cf18ba16682cb890285d4a6448c69f97edfe6644b686eedc1fd79771d1a1"
-   },
-   {
-    "tag": "div",
-    "classes": [
-     "hp-head"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "Today's exits (0) Today's exits",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "04bef18316f1c79166a7cd736c440f0d60327a2597fea93fccc605a1493ac3f5"
    },
    {
     "tag": "div",
@@ -571,7 +799,26 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "b751ed1e0d5fb008a6b2b5128de98d9b76ba523ff4b253a08719bd9ccfa39d34"
+    "style_digest": "195f93d53ac7e32fa80a030f4dcf933bc8f371e05d2a0d15f820bff16f7f75e6"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each exit of the day in the heading: whe",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "ba351c62051ac15d8b34135c5bd6f57afadae7cc3bdedaac2f4aed25d15330d2"
    },
    {
     "tag": "div",
@@ -590,10 +837,48 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "51492150898bfeb6fd9efcaabf9c9e660cf0bb372c51ae79c54c4b0234d643de"
+    "style_digest": "b4718a339874f268a344c05fb9831539e995ee25b1c9b592f6773659ba32f58f"
    }
   ],
   "history|load|1440|dark": [
+   {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "How the bot's exits scored against holdi",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "91952f8a2ec07cbd3a3887b54a3278d9eb75461bbe84cdbd19da84e9ab2cf1c8"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Windows: calendar da",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "fb8217458b28fb3446522918973618515561362945a94b13c6efc557333fe3fd"
+   },
    {
     "tag": "div",
     "classes": [
@@ -604,14 +889,14 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "30d 60d 90d 125d YTD 1Y 5Y Rollup of pos",
+    "text": "30d 60d 90d 125d YTD 1Y 5Y Totals from t",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "16px",
      "margin-left": "0px"
     },
-    "style_digest": "b124bdebb0b8ca328d286489a99c85567322da311cec8514bc0376665e7aeef6"
+    "style_digest": "e1803b521cf1d00c901a81463da2731bb8a71d8f74bf17634c43bc3897b32ab0"
    },
    {
     "tag": "div",
@@ -628,7 +913,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "091dfc18d2ab5435e397fce377d937803be343936dbc0bb57a2ef00d6e54c647"
+    "style_digest": "95d7dfc62e38f2a59d86af2adf136593d87ea057276057b562d364c39dca8b32"
    },
    {
     "tag": "div",
@@ -667,6 +952,25 @@
      "margin-left": "0px"
     },
     "style_digest": "a6e3bafcaad8743b31b87055ef8006a379d2f57aeb4c415c16629fd81c3b1797"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each bar is one day's exit alpha added u",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "64df5ed0a4f149369431f27621dee24ced8ab468757f627e1f4fead8306d88c8"
    },
    {
     "tag": "div",
@@ -727,6 +1031,44 @@
     "style_digest": "f7b8b5b7816d057a2dc716484eab9306d63e9271e25b04c327861e45d587f984"
    },
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "The same totals split by the rule that f",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "64df5ed0a4f149369431f27621dee24ced8ab468757f627e1f4fead8306d88c8"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Wins: exits whose ex",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "ad502c92ffc414c97f625dffdd85e01997f4debc800da28cdfdfb6edcdf4010e"
+   },
+   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -736,7 +1078,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Reason Sum of exit alpha Dollar result T",
+    "text": "Reason Sum of exit alpha Dollar result E",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -755,7 +1097,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "What the exit reasons mean Take-ProfitMo",
+    "text": "What the exit reasons mean Take-profitth",
     "margins": {
      "margin-top": "12px",
      "margin-right": "0px",
@@ -763,25 +1105,6 @@
      "margin-left": "0px"
     },
     "style_digest": "ad502c92ffc414c97f625dffdd85e01997f4debc800da28cdfdfb6edcdf4010e"
-   },
-   {
-    "tag": "div",
-    "classes": [
-     "hp-head"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "Today's exits (0) Today's exits",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "387bde73a22e55eb87b6b9b19361f16375373a0bf44bf4ab28b25b6ae6af9471"
    },
    {
     "tag": "div",
@@ -800,7 +1123,26 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "a6e3bafcaad8743b31b87055ef8006a379d2f57aeb4c415c16629fd81c3b1797"
+    "style_digest": "76278c035cb3e6b462d20329c967dc2d7b4c969eeb9b652cb6f25330de2a0829"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each exit of the day in the heading: whe",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "8a9a0c587df8889adfe769097bb9cef540c8c3bc7c31b48ef4e6519e58cb4523"
    },
    {
     "tag": "div",
@@ -819,10 +1161,48 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "9d59e916c47e3638e72f19e677cae8b1af286457f07b5d0e768d2e4a45772a67"
+    "style_digest": "82aeab9053773ddb7684115099bf0a06b596b3b4e6dd44b3b141070a5a70f734"
    }
   ],
   "history|load|375|light": [
+   {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "How the bot's exits scored against holdi",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "a9c134cd106cf3016e2566c64eddcd6a3a8fb58aeef509860686e72a7a38c5aa"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Windows: calendar da",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "74a7015ffd378d8f1c2868139f224b56702e4e9732b39f51963dc7e07df66594"
+   },
    {
     "tag": "div",
     "classes": [
@@ -833,7 +1213,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "30d 60d 90d 125d YTD 1Y 5Y Rollup of pos",
+    "text": "30d 60d 90d 125d YTD 1Y 5Y Totals from t",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -898,6 +1278,25 @@
     "style_digest": "4824f32d0a364691db1de88286e8503147a72b846a9d4ee4a152177328398ada"
    },
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each bar is one day's exit alpha added u",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "a9c134cd106cf3016e2566c64eddcd6a3a8fb58aeef509860686e72a7a38c5aa"
+   },
+   {
     "tag": "div",
     "classes": [
      "daily-chart-wrap"
@@ -956,6 +1355,44 @@
     "style_digest": "8ed986e2253cf5373ceb6823eed319960263234abf72ca70f4c358d427d8ac48"
    },
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "The same totals split by the rule that f",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "a9c134cd106cf3016e2566c64eddcd6a3a8fb58aeef509860686e72a7a38c5aa"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Wins: exits whose ex",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "74a7015ffd378d8f1c2868139f224b56702e4e9732b39f51963dc7e07df66594"
+   },
+   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -965,7 +1402,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Reason Sum of exit alpha Dollar result T",
+    "text": "Reason Sum of exit alpha Dollar result E",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -984,7 +1421,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "What the exit reasons mean Take-ProfitMo",
+    "text": "What the exit reasons mean Take-profitth",
     "margins": {
      "margin-top": "12px",
      "margin-right": "0px",
@@ -1032,6 +1469,25 @@
     "style_digest": "4824f32d0a364691db1de88286e8503147a72b846a9d4ee4a152177328398ada"
    },
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each exit of the day in the heading: whe",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "a9c134cd106cf3016e2566c64eddcd6a3a8fb58aeef509860686e72a7a38c5aa"
+   },
+   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -1053,6 +1509,44 @@
   ],
   "history|load|375|dark": [
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "How the bot's exits scored against holdi",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b88957917956150fc42a75b203402a45181f61c44e86c8ee064796bc5cee8350"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Windows: calendar da",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "2dd950e9bf6d048d8a539645c7bf71b3a16aa01a91512581033178506dcccf6e"
+   },
+   {
     "tag": "div",
     "classes": [
      "hp-toolbar"
@@ -1062,7 +1556,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "30d 60d 90d 125d YTD 1Y 5Y Rollup of pos",
+    "text": "30d 60d 90d 125d YTD 1Y 5Y Totals from t",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1127,6 +1621,25 @@
     "style_digest": "9ae92f5e053a5d60cc58094ae5e8ad08e6d9c620ac5b3cf074eb97df16d29e30"
    },
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each bar is one day's exit alpha added u",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b88957917956150fc42a75b203402a45181f61c44e86c8ee064796bc5cee8350"
+   },
+   {
     "tag": "div",
     "classes": [
      "daily-chart-wrap"
@@ -1185,6 +1698,44 @@
     "style_digest": "c492ad2a2d5205f301d1843b2013cc99c9d91034351906a62949feab5e6e1efd"
    },
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "The same totals split by the rule that f",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b88957917956150fc42a75b203402a45181f61c44e86c8ee064796bc5cee8350"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Wins: exits whose ex",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "2dd950e9bf6d048d8a539645c7bf71b3a16aa01a91512581033178506dcccf6e"
+   },
+   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -1194,7 +1745,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Reason Sum of exit alpha Dollar result T",
+    "text": "Reason Sum of exit alpha Dollar result E",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1213,7 +1764,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "What the exit reasons mean Take-ProfitMo",
+    "text": "What the exit reasons mean Take-profitth",
     "margins": {
      "margin-top": "12px",
      "margin-right": "0px",
@@ -1261,6 +1812,25 @@
     "style_digest": "9ae92f5e053a5d60cc58094ae5e8ad08e6d9c620ac5b3cf074eb97df16d29e30"
    },
    {
+    "tag": "p",
+    "classes": [
+     "hp-note"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each exit of the day in the heading: whe",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b88957917956150fc42a75b203402a45181f61c44e86c8ee064796bc5cee8350"
+   },
+   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -1282,6 +1852,44 @@
   ],
   "performance|load|1440|light": [
    {
+    "tag": "p",
+    "classes": [
+     "metrics-caption"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Risk-adjusted results of the bot's exits",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "f0ae6f276bf38cc024b727fd984b249918f6240bc3ce709061a911bc556c37ba"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Windows: calendar da",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "4e1b4b30cfbca5fce6d0bf6f1070f8c36a66e01b9c4a48dbf099a8d36183450a"
+   },
+   {
     "tag": "div",
     "classes": [
      "hp-toolbar"
@@ -1298,7 +1906,7 @@
      "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "e8f02cabe40f8d7b5757e17a35d440a49f2225074707fa8ee651a62dfde1c5d0"
+    "style_digest": "9fd8b7488de9e9b445782f199e43de83e049a78872cc88bf5b72ff64aa127cbd"
    },
    {
     "tag": "div",
@@ -1311,14 +1919,14 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Live (if held) vs Planet Stopper-exited ",
+    "text": "If held vs Bot (shadow record of the bot",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "12px",
+     "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "e8f02cabe40f8d7b5757e17a35d440a49f2225074707fa8ee651a62dfde1c5d0"
+    "style_digest": "480bc191768e47e601c32a734aa0624024313b94c4cae8e48ce39327ceef43b4"
    },
    {
     "tag": "div",
@@ -1334,10 +1942,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "16px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "96e1db0ca2a903f6efd783e81fa3bce317eaf77bc03d7036d4abf7d8b8d79265"
+    "style_digest": "17653f2c5372530fb97a0a7c19cdc7cc09a210b36696d20e2fc80c9b01b28d3a"
    },
    {
     "tag": "div",
@@ -1356,7 +1964,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "f7bbdbe9f321fda28467299882c5ba6eafae4072ccf5ab16841213a350073c68"
+    "style_digest": "fea1b7109e02bfff6224e376ad429a8bfb223fa75f2b2ad5c796e2fb992814d4"
    },
    {
     "tag": "div",
@@ -1368,7 +1976,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Cumulative returns Planet Stopper-exited",
+    "text": "Cumulative returns Bot (shadow) If held",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1395,6 +2003,25 @@
      "margin-left": "0px"
     },
     "style_digest": "80b3b693f22865c2674efdfee93b4c5aa1c52676eed65e59d475d65e36d34503"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "metrics-caption"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "The two return paths day by day: the sol",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e97c4a20fced4191c1be3efbf11f7c61af9de0da45db006bc2c6fc0b26ce34b1"
    },
    {
     "tag": "div",
@@ -1455,6 +2082,25 @@
     "style_digest": "e97c4a20fced4191c1be3efbf11f7c61af9de0da45db006bc2c6fc0b26ce34b1"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Max DD: the largest ",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
+   },
+   {
     "tag": "div",
     "classes": [
      "metrics-overflow"
@@ -1464,7 +2110,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Metric If-held baseline Bot (Planet Stop",
+    "text": "Metric If held Bot (shadow) Delta (DD an",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1503,7 +2149,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Kaminski & Lo (2014): a trailing stop is",
+    "text": "Checks whether each symphony's daily ret",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1511,6 +2157,25 @@
      "margin-left": "0px"
     },
     "style_digest": "e97c4a20fced4191c1be3efbf11f7c61af9de0da45db006bc2c6fc0b26ce34b1"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Sample: which daily ",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
    },
    {
     "tag": "div",
@@ -1561,7 +2226,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": true,
-    "text": "Exit turnover & estimated friction drag",
+    "text": "Exit turnover & estimated trading-cost d",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1580,7 +2245,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Exit-leg trigger counts per symphony ove",
+    "text": "How often each symphony's exits fired ov",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1588,6 +2253,25 @@
      "margin-left": "0px"
     },
     "style_digest": "e97c4a20fced4191c1be3efbf11f7c61af9de0da45db006bc2c6fc0b26ce34b1"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Retained: the days o",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
    },
    {
     "tag": "div",
@@ -1599,7 +2283,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Symphony 30d 90d 365d Est. annual fricti",
+    "text": "Symphony 30d 90d 365d Est. annual tradin",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1610,6 +2294,44 @@
    }
   ],
   "performance|load|1440|dark": [
+   {
+    "tag": "p",
+    "classes": [
+     "metrics-caption"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Risk-adjusted results of the bot's exits",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3bf49677eeb153f4f9d3948521f1a11810273a176e30a8d838571fba0cc36f62"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Windows: calendar da",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "abd6a1a51210ec415fbfa950ec174f6f10447d030caf10d90fc89784f695609c"
+   },
    {
     "tag": "div",
     "classes": [
@@ -1627,7 +2349,7 @@
      "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "55d09c9f0c1e2ef6c1758bfd0e621d34874ee1fa962dbab109920289811b2493"
+    "style_digest": "5d2d78961f4ad825a1cb1611351a79c1b4158ec6ecbae4ce608b15039a33545e"
    },
    {
     "tag": "div",
@@ -1640,14 +2362,14 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Live (if held) vs Planet Stopper-exited ",
+    "text": "If held vs Bot (shadow record of the bot",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "12px",
+     "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "55d09c9f0c1e2ef6c1758bfd0e621d34874ee1fa962dbab109920289811b2493"
+    "style_digest": "6e468d523c49b42cddb30e1856eb301dd069cdb4cb7450f2ac98a491de3e69a5"
    },
    {
     "tag": "div",
@@ -1663,10 +2385,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "16px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "fce19b836c310c8bfc208ee848949ed0b04463bde8c9d7f0607b8198cda64adc"
+    "style_digest": "8bcdc952a02747814bc46325fb55c27154e3ec6f1352206ffb1d736be88860ac"
    },
    {
     "tag": "div",
@@ -1685,7 +2407,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "a0e05910d32aa8d9fed1b6d820b9aa0f1df38b9d962e8ddf7f710e32b3f75d9f"
+    "style_digest": "c0e968f879f6b70e7d1186623ee992aba03b47d83e81d9c7b09d7e4116f0572f"
    },
    {
     "tag": "div",
@@ -1697,7 +2419,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Cumulative returns Planet Stopper-exited",
+    "text": "Cumulative returns Bot (shadow) If held",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1724,6 +2446,25 @@
      "margin-left": "0px"
     },
     "style_digest": "5ed4e6d630c93e260d7b6f5f90f87f5c0fba121e1d40e2fea026cd6cdecaa0ad"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "metrics-caption"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "The two return paths day by day: the sol",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "92379d559d11575a7fa0c48631a778a4fd4977ec9418155a0885e01dd94284b7"
    },
    {
     "tag": "div",
@@ -1784,6 +2525,25 @@
     "style_digest": "92379d559d11575a7fa0c48631a778a4fd4977ec9418155a0885e01dd94284b7"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Max DD: the largest ",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
+   },
+   {
     "tag": "div",
     "classes": [
      "metrics-overflow"
@@ -1793,7 +2553,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Metric If-held baseline Bot (Planet Stop",
+    "text": "Metric If held Bot (shadow) Delta (DD an",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1832,7 +2592,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Kaminski & Lo (2014): a trailing stop is",
+    "text": "Checks whether each symphony's daily ret",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1840,6 +2600,25 @@
      "margin-left": "0px"
     },
     "style_digest": "92379d559d11575a7fa0c48631a778a4fd4977ec9418155a0885e01dd94284b7"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Sample: which daily ",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
    },
    {
     "tag": "div",
@@ -1890,7 +2669,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": true,
-    "text": "Exit turnover & estimated friction drag",
+    "text": "Exit turnover & estimated trading-cost d",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1909,7 +2688,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Exit-leg trigger counts per symphony ove",
+    "text": "How often each symphony's exits fired ov",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1917,6 +2696,25 @@
      "margin-left": "0px"
     },
     "style_digest": "92379d559d11575a7fa0c48631a778a4fd4977ec9418155a0885e01dd94284b7"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Retained: the days o",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
    },
    {
     "tag": "div",
@@ -1928,7 +2726,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Symphony 30d 90d 365d Est. annual fricti",
+    "text": "Symphony 30d 90d 365d Est. annual tradin",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1939,6 +2737,44 @@
    }
   ],
   "performance|load|375|light": [
+   {
+    "tag": "p",
+    "classes": [
+     "metrics-caption"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Risk-adjusted results of the bot's exits",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "d60d885857266d447a9a03b02f4fcedf4474ba0fa028a1d47775f94144002f7d"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Windows: calendar da",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
+   },
    {
     "tag": "div",
     "classes": [
@@ -1969,7 +2805,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Live (if held) vs Planet Stopper-exited ",
+    "text": "If held vs Bot (shadow record of the bot",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2026,7 +2862,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Cumulative returns Planet Stopper-exited",
+    "text": "Cumulative returns Bot (shadow) If held",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2053,6 +2889,25 @@
      "margin-left": "0px"
     },
     "style_digest": "04e2b2fea6670ecf6b3e461229f2325c633faefd8efa2d999b89274e7e82acdc"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "metrics-caption"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "The two return paths day by day: the sol",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "d60d885857266d447a9a03b02f4fcedf4474ba0fa028a1d47775f94144002f7d"
    },
    {
     "tag": "div",
@@ -2113,6 +2968,25 @@
     "style_digest": "d60d885857266d447a9a03b02f4fcedf4474ba0fa028a1d47775f94144002f7d"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Max DD: the largest ",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
+   },
+   {
     "tag": "div",
     "classes": [
      "metrics-overflow"
@@ -2122,7 +2996,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Metric If-held baseline Bot (Planet Stop",
+    "text": "Metric If held Bot (shadow) Delta (DD an",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2161,7 +3035,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Kaminski & Lo (2014): a trailing stop is",
+    "text": "Checks whether each symphony's daily ret",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2169,6 +3043,25 @@
      "margin-left": "0px"
     },
     "style_digest": "d60d885857266d447a9a03b02f4fcedf4474ba0fa028a1d47775f94144002f7d"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Sample: which daily ",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
    },
    {
     "tag": "div",
@@ -2219,7 +3112,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": true,
-    "text": "Exit turnover & estimated friction drag",
+    "text": "Exit turnover & estimated trading-cost d",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2238,7 +3131,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Exit-leg trigger counts per symphony ove",
+    "text": "How often each symphony's exits fired ov",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2246,6 +3139,25 @@
      "margin-left": "0px"
     },
     "style_digest": "d60d885857266d447a9a03b02f4fcedf4474ba0fa028a1d47775f94144002f7d"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Retained: the days o",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
    },
    {
     "tag": "div",
@@ -2257,7 +3169,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Symphony 30d 90d 365d Est. annual fricti",
+    "text": "Symphony 30d 90d 365d Est. annual tradin",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2268,6 +3180,44 @@
    }
   ],
   "performance|load|375|dark": [
+   {
+    "tag": "p",
+    "classes": [
+     "metrics-caption"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "Risk-adjusted results of the bot's exits",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "f20044f6827ce337748ab132238099a32fc815dc74d91e2125da6cd1d6fe414a"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Windows: calendar da",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
+   },
    {
     "tag": "div",
     "classes": [
@@ -2298,7 +3248,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Live (if held) vs Planet Stopper-exited ",
+    "text": "If held vs Bot (shadow record of the bot",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2355,7 +3305,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Cumulative returns Planet Stopper-exited",
+    "text": "Cumulative returns Bot (shadow) If held",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2382,6 +3332,25 @@
      "margin-left": "0px"
     },
     "style_digest": "7e6ff69838dc42656d3ec04c9b7c4e4c57f1131d641cabccbd75f0422099f9c6"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "metrics-caption"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "The two return paths day by day: the sol",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "f20044f6827ce337748ab132238099a32fc815dc74d91e2125da6cd1d6fe414a"
    },
    {
     "tag": "div",
@@ -2442,6 +3411,25 @@
     "style_digest": "f20044f6827ce337748ab132238099a32fc815dc74d91e2125da6cd1d6fe414a"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Max DD: the largest ",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
+   },
+   {
     "tag": "div",
     "classes": [
      "metrics-overflow"
@@ -2451,7 +3439,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Metric If-held baseline Bot (Planet Stop",
+    "text": "Metric If held Bot (shadow) Delta (DD an",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2490,7 +3478,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Kaminski & Lo (2014): a trailing stop is",
+    "text": "Checks whether each symphony's daily ret",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2498,6 +3486,25 @@
      "margin-left": "0px"
     },
     "style_digest": "f20044f6827ce337748ab132238099a32fc815dc74d91e2125da6cd1d6fe414a"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Sample: which daily ",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",
@@ -2548,7 +3555,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": true,
-    "text": "Exit turnover & estimated friction drag",
+    "text": "Exit turnover & estimated trading-cost d",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2567,7 +3574,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Exit-leg trigger counts per symphony ove",
+    "text": "How often each symphony's exits fired ov",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2575,6 +3582,25 @@
      "margin-left": "0px"
     },
     "style_digest": "f20044f6827ce337748ab132238099a32fc815dc74d91e2125da6cd1d6fe414a"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "hp-panel"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Retained: the days o",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",
@@ -2586,7 +3612,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Symphony 30d 90d 365d Est. annual fricti",
+    "text": "Symphony 30d 90d 365d Est. annual tradin",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -3314,19 +4340,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -3341,7 +4387,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0a3e7267dac14366b8e0ffbd7bdeb9de6ae05c388d54e35368a33e0c48d7f132"
+    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
    },
    {
     "tag": "div",
@@ -3364,7 +4410,49 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "db6531fd04993bc9c91f6f3d122599643db0e1b8ce3fc25528dee6c05010e3de"
+    "style_digest": "0a03a476effbd439e36c0076237d73a2a4732f34a70955a871dfe3a55f4cbfb7"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each symphony's latest weekly autotune, ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1a577273fd2cf7c346cdb917f8c208c22012386be8125f4c16296b6da9892d36"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Runs without adoptin",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1b94524b2eec4346eaff9ab748e62f7a57f3ff6164ceebf997ef371a7d2828a7"
    },
    {
     "tag": "div",
@@ -3383,7 +4471,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "50123818354da49138d78741537ab6b2fafb24292a66236e818a87c155136a81"
+    "style_digest": "8f44c2da89fa5374e0233b6e3c90d5003b207153d261898149696d154c8d0d0e"
    },
    {
     "tag": "div",
@@ -3396,14 +4484,14 @@
      "prism-block"
     ],
     "shared_rule_matches": false,
-    "text": "Market Prism Synthesized by model unavai",
+    "text": "Market Prism Synthesizing model not know",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "217ba2d530096c15d0fcbbb3a28f7d9dc5a95ff5511e8b776ed4d4ea15363304"
+    "style_digest": "6ddeaeddfb46c592e2fb5a8b0b7f420e377420414d8aa93fa430a6eeffda0635"
    },
    {
     "tag": "span",
@@ -3428,6 +4516,46 @@
    {
     "tag": "p",
     "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "An overnight read of the market through ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e725df81593d61a612116890f411f84e7a648e897c933bbe55dfe3b33deb41ab"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean risk-on: conditions ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1b94524b2eec4346eaff9ab748e62f7a57f3ff6164ceebf997ef371a7d2828a7"
+   },
+   {
+    "tag": "p",
+    "classes": [
      "prism-empty"
     ],
     "parent_classes": [
@@ -3443,7 +4571,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "2db670882bb1d27042ce0ce57c816ecb59d85205db51635d8b01bfdfc9009ead"
+    "style_digest": "6fc4656445e16bf6cec1576acc7a9e688653c31a3d5f7923123a8bd5fc6c3ec3"
    },
    {
     "tag": "div",
@@ -3466,6 +4594,46 @@
      "margin-left": "0px"
     },
     "style_digest": "db6531fd04993bc9c91f6f3d122599643db0e1b8ce3fc25528dee6c05010e3de"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The latest verdict from each advisor tha",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "49b08b739ece20681c11fd87f7905e42c2478f87137707d22e99fc5694cc8249"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean THEORY spec: the fro",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "8c397dab4524bdb57e64c1aa6b7a696e9b3360d2a718aaf31e3cab49c9d129f7"
    },
    {
     "tag": "p",
@@ -3542,19 +4710,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -3569,7 +4757,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0a3e7267dac14366b8e0ffbd7bdeb9de6ae05c388d54e35368a33e0c48d7f132"
+    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
    },
    {
     "tag": "div",
@@ -3592,7 +4780,49 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "db6531fd04993bc9c91f6f3d122599643db0e1b8ce3fc25528dee6c05010e3de"
+    "style_digest": "0a03a476effbd439e36c0076237d73a2a4732f34a70955a871dfe3a55f4cbfb7"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each symphony's latest weekly autotune, ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1a577273fd2cf7c346cdb917f8c208c22012386be8125f4c16296b6da9892d36"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Runs without adoptin",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1b94524b2eec4346eaff9ab748e62f7a57f3ff6164ceebf997ef371a7d2828a7"
    },
    {
     "tag": "div",
@@ -3611,7 +4841,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "50123818354da49138d78741537ab6b2fafb24292a66236e818a87c155136a81"
+    "style_digest": "8f44c2da89fa5374e0233b6e3c90d5003b207153d261898149696d154c8d0d0e"
    },
    {
     "tag": "div",
@@ -3624,14 +4854,14 @@
      "prism-block"
     ],
     "shared_rule_matches": false,
-    "text": "Market Prism Synthesized by model unavai",
+    "text": "Market Prism Synthesizing model not know",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "217ba2d530096c15d0fcbbb3a28f7d9dc5a95ff5511e8b776ed4d4ea15363304"
+    "style_digest": "6ddeaeddfb46c592e2fb5a8b0b7f420e377420414d8aa93fa430a6eeffda0635"
    },
    {
     "tag": "span",
@@ -3656,6 +4886,46 @@
    {
     "tag": "p",
     "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "An overnight read of the market through ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e725df81593d61a612116890f411f84e7a648e897c933bbe55dfe3b33deb41ab"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean risk-on: conditions ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1b94524b2eec4346eaff9ab748e62f7a57f3ff6164ceebf997ef371a7d2828a7"
+   },
+   {
+    "tag": "p",
+    "classes": [
      "prism-empty"
     ],
     "parent_classes": [
@@ -3671,7 +4941,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "2db670882bb1d27042ce0ce57c816ecb59d85205db51635d8b01bfdfc9009ead"
+    "style_digest": "6fc4656445e16bf6cec1576acc7a9e688653c31a3d5f7923123a8bd5fc6c3ec3"
    },
    {
     "tag": "div",
@@ -3694,6 +4964,46 @@
      "margin-left": "0px"
     },
     "style_digest": "db6531fd04993bc9c91f6f3d122599643db0e1b8ce3fc25528dee6c05010e3de"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The latest verdict from each advisor tha",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "49b08b739ece20681c11fd87f7905e42c2478f87137707d22e99fc5694cc8249"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean THEORY spec: the fro",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "8c397dab4524bdb57e64c1aa6b7a696e9b3360d2a718aaf31e3cab49c9d129f7"
    },
    {
     "tag": "p",
@@ -3770,19 +5080,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -3797,7 +5127,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0a3e7267dac14366b8e0ffbd7bdeb9de6ae05c388d54e35368a33e0c48d7f132"
+    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
    },
    {
     "tag": "div",
@@ -3854,19 +5184,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -3881,7 +5231,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0a3e7267dac14366b8e0ffbd7bdeb9de6ae05c388d54e35368a33e0c48d7f132"
+    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
    },
    {
     "tag": "div",
@@ -3906,9 +5256,9 @@
     "style_digest": "1b410b3cfbe8d26ffb17665391c09c1aa0b7c572db9c61366075b69d9cd5932d"
    },
    {
-    "tag": "section",
+    "tag": "p",
     "classes": [
-     "retirement-subsection"
+     "adv-explainer"
     ],
     "parent_classes": [
      "adv-panel",
@@ -3916,14 +5266,35 @@
      "matrix-card"
     ],
     "shared_rule_matches": false,
-    "text": "Correlated pairs Not run yet \u2014 runs nigh",
+    "text": "Suggestions to retire a symphony that du",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "8px",
+     "margin-left": "0px"
+    },
+    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "retirement-pair",
+     "retirement-pair--side"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "matrix-card"
+    ],
+    "shared_rule_matches": false,
+    "text": "Correlated pairs A symphony is flagged w",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "50123818354da49138d78741537ab6b2fafb24292a66236e818a87c155136a81"
+    "style_digest": "57213112528bbc20cdd74ee5822902099aa73c7afb0289242f37335543cd9af5"
    },
    {
     "tag": "div",
@@ -3942,27 +5313,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "db6531fd04993bc9c91f6f3d122599643db0e1b8ce3fc25528dee6c05010e3de"
-   },
-   {
-    "tag": "section",
-    "classes": [
-     "retirement-subsection"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "matrix-card"
-    ],
-    "shared_rule_matches": false,
-    "text": "Symphony tenure review Run tenure review",
-    "margins": {
-     "margin-top": "24px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "84f72c70aa87020de3ebe586d9272ea0c8c1f63f437c91020911aa32ce298ac3"
+    "style_digest": "51ee5769bdb3870344ea5e3914b79fb269ba49dc3f7d79a4f4e46ba8382ead9a"
    },
    {
     "tag": "div",
@@ -3981,7 +5332,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "db6531fd04993bc9c91f6f3d122599643db0e1b8ce3fc25528dee6c05010e3de"
+    "style_digest": "4a06d987a2765857391f1cb6be4cbd087a9e849c22a4d75d021764402bec3049"
    }
   ],
   "ai-advisor|tab:asset-swaps|1440|light": [
@@ -3998,19 +5349,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4025,7 +5396,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0a3e7267dac14366b8e0ffbd7bdeb9de6ae05c388d54e35368a33e0c48d7f132"
+    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
    },
    {
     "tag": "div",
@@ -4082,19 +5453,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4109,7 +5500,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0a3e7267dac14366b8e0ffbd7bdeb9de6ae05c388d54e35368a33e0c48d7f132"
+    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
    },
    {
     "tag": "div",
@@ -4166,19 +5557,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4193,7 +5604,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0a3e7267dac14366b8e0ffbd7bdeb9de6ae05c388d54e35368a33e0c48d7f132"
+    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
    },
    {
     "tag": "div",
@@ -4270,19 +5681,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4297,7 +5728,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0a3e7267dac14366b8e0ffbd7bdeb9de6ae05c388d54e35368a33e0c48d7f132"
+    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
    },
    {
     "tag": "div",
@@ -4354,19 +5785,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
+    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4381,7 +5832,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0a3e7267dac14366b8e0ffbd7bdeb9de6ae05c388d54e35368a33e0c48d7f132"
+    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
    },
    {
     "tag": "div",
@@ -4414,7 +5865,7 @@
      "no-api-key-state"
     ],
     "shared_rule_matches": false,
-    "text": "ANTHROPIC_API_KEY not configured \u2014 the b",
+    "text": "The Frontrunner build needs an Anthropic",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -4458,19 +5909,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4485,7 +5956,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ee0f8a2d934a90e5da6086f7fcd463c6b21aa6c7a5d0ef6a14cede51c4c9699f"
+    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
    },
    {
     "tag": "div",
@@ -4508,7 +5979,49 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "536ebcf5a1032c1afc0895334b4b4b5ee26839a558c7c0fd16e1d29123d58ba0"
+    "style_digest": "47063406f4b864dbd80761d377a026e76d4f5655ee64889321904cba961dc0dc"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each symphony's latest weekly autotune, ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1e188cb38e26b613d69b1bf2409a50ac42526bfb6df8e3aa9e78cc7b6aac64b4"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Runs without adoptin",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "4a8fb29144071122784079c349becbe83b850bf838c342790c3adf7952ba40c1"
    },
    {
     "tag": "div",
@@ -4527,7 +6040,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "890fd06d7dc9a90bf12e97792b30cf4f5bdb486b05c572d0ba70279f0d987257"
+    "style_digest": "303fac0570779718db9831cec4ada2c83be154b5e210697635adc8394ed03265"
    },
    {
     "tag": "div",
@@ -4540,14 +6053,14 @@
      "prism-block"
     ],
     "shared_rule_matches": false,
-    "text": "Market Prism Synthesized by model unavai",
+    "text": "Market Prism Synthesizing model not know",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "f18f79a944bdef51c1f7806cc4264a40edf4ff37bea85d784073f864dccb1641"
+    "style_digest": "a06d28133481509b2b038c8cad0a2aed969200c836b543fe396ae1df7dddd00b"
    },
    {
     "tag": "span",
@@ -4572,6 +6085,46 @@
    {
     "tag": "p",
     "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "An overnight read of the market through ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "12a5b1198b8d18ac17d74713f22990b82c3f59404394109163acf0bb426d27c1"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean risk-on: conditions ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "4a8fb29144071122784079c349becbe83b850bf838c342790c3adf7952ba40c1"
+   },
+   {
+    "tag": "p",
+    "classes": [
      "prism-empty"
     ],
     "parent_classes": [
@@ -4587,7 +6140,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "958a13f9128ff61625282c494b7a5cfef6e3b4cec5de8ce05fe56e96fc1a39e3"
+    "style_digest": "5e456c7656ae2f290d0d750365fe449011d8687fb6c57b2ecd1cd0427153fb7a"
    },
    {
     "tag": "div",
@@ -4610,6 +6163,46 @@
      "margin-left": "0px"
     },
     "style_digest": "536ebcf5a1032c1afc0895334b4b4b5ee26839a558c7c0fd16e1d29123d58ba0"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The latest verdict from each advisor tha",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "80b06e69c95b0e94b822993c821676d096ed7693d49e510ba6032035e7d1e623"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean THEORY spec: the fro",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "f8cb493f39dab586e0b45941f488106ac42d08a2b5219a76cbba81777c924b00"
    },
    {
     "tag": "p",
@@ -4686,19 +6279,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4713,7 +6326,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ee0f8a2d934a90e5da6086f7fcd463c6b21aa6c7a5d0ef6a14cede51c4c9699f"
+    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
    },
    {
     "tag": "div",
@@ -4736,7 +6349,49 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "536ebcf5a1032c1afc0895334b4b4b5ee26839a558c7c0fd16e1d29123d58ba0"
+    "style_digest": "47063406f4b864dbd80761d377a026e76d4f5655ee64889321904cba961dc0dc"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each symphony's latest weekly autotune, ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1e188cb38e26b613d69b1bf2409a50ac42526bfb6df8e3aa9e78cc7b6aac64b4"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Runs without adoptin",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "4a8fb29144071122784079c349becbe83b850bf838c342790c3adf7952ba40c1"
    },
    {
     "tag": "div",
@@ -4755,7 +6410,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "890fd06d7dc9a90bf12e97792b30cf4f5bdb486b05c572d0ba70279f0d987257"
+    "style_digest": "303fac0570779718db9831cec4ada2c83be154b5e210697635adc8394ed03265"
    },
    {
     "tag": "div",
@@ -4768,14 +6423,14 @@
      "prism-block"
     ],
     "shared_rule_matches": false,
-    "text": "Market Prism Synthesized by model unavai",
+    "text": "Market Prism Synthesizing model not know",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "f18f79a944bdef51c1f7806cc4264a40edf4ff37bea85d784073f864dccb1641"
+    "style_digest": "a06d28133481509b2b038c8cad0a2aed969200c836b543fe396ae1df7dddd00b"
    },
    {
     "tag": "span",
@@ -4800,6 +6455,46 @@
    {
     "tag": "p",
     "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "An overnight read of the market through ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "12a5b1198b8d18ac17d74713f22990b82c3f59404394109163acf0bb426d27c1"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean risk-on: conditions ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "4a8fb29144071122784079c349becbe83b850bf838c342790c3adf7952ba40c1"
+   },
+   {
+    "tag": "p",
+    "classes": [
      "prism-empty"
     ],
     "parent_classes": [
@@ -4815,7 +6510,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "958a13f9128ff61625282c494b7a5cfef6e3b4cec5de8ce05fe56e96fc1a39e3"
+    "style_digest": "5e456c7656ae2f290d0d750365fe449011d8687fb6c57b2ecd1cd0427153fb7a"
    },
    {
     "tag": "div",
@@ -4838,6 +6533,46 @@
      "margin-left": "0px"
     },
     "style_digest": "536ebcf5a1032c1afc0895334b4b4b5ee26839a558c7c0fd16e1d29123d58ba0"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The latest verdict from each advisor tha",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "80b06e69c95b0e94b822993c821676d096ed7693d49e510ba6032035e7d1e623"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean THEORY spec: the fro",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "f8cb493f39dab586e0b45941f488106ac42d08a2b5219a76cbba81777c924b00"
    },
    {
     "tag": "p",
@@ -4914,19 +6649,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4941,7 +6696,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ee0f8a2d934a90e5da6086f7fcd463c6b21aa6c7a5d0ef6a14cede51c4c9699f"
+    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
    },
    {
     "tag": "div",
@@ -4998,19 +6753,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5025,7 +6800,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ee0f8a2d934a90e5da6086f7fcd463c6b21aa6c7a5d0ef6a14cede51c4c9699f"
+    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
    },
    {
     "tag": "div",
@@ -5050,9 +6825,9 @@
     "style_digest": "c5b01d8fb78e3955224f52cc58e82ed3fcfa603bcd5a272b64955acced423d9d"
    },
    {
-    "tag": "section",
+    "tag": "p",
     "classes": [
-     "retirement-subsection"
+     "adv-explainer"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5060,14 +6835,35 @@
      "matrix-card"
     ],
     "shared_rule_matches": false,
-    "text": "Correlated pairs Not run yet \u2014 runs nigh",
+    "text": "Suggestions to retire a symphony that du",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "8px",
+     "margin-left": "0px"
+    },
+    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "retirement-pair",
+     "retirement-pair--side"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "matrix-card"
+    ],
+    "shared_rule_matches": false,
+    "text": "Correlated pairs A symphony is flagged w",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "890fd06d7dc9a90bf12e97792b30cf4f5bdb486b05c572d0ba70279f0d987257"
+    "style_digest": "8042aefd2680bbac3a44e8132df6cdb45738cf58c7409e5e2b70cde2bf7f4612"
    },
    {
     "tag": "div",
@@ -5086,27 +6882,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "536ebcf5a1032c1afc0895334b4b4b5ee26839a558c7c0fd16e1d29123d58ba0"
-   },
-   {
-    "tag": "section",
-    "classes": [
-     "retirement-subsection"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "matrix-card"
-    ],
-    "shared_rule_matches": false,
-    "text": "Symphony tenure review Run tenure review",
-    "margins": {
-     "margin-top": "24px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "56eabe00a0acabd8d07fb37f0abf3a92b08adf54965b366c0a26c227f4986e32"
+    "style_digest": "26d6ffec6ae29b62f907a12d1a1d9d03992722c9cd9ac05f9db078749de5e20d"
    },
    {
     "tag": "div",
@@ -5125,7 +6901,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "536ebcf5a1032c1afc0895334b4b4b5ee26839a558c7c0fd16e1d29123d58ba0"
+    "style_digest": "4b519025dbc3c0311308772a857f3693566759c40908b648ea403f5c6d0b28c8"
    }
   ],
   "ai-advisor|tab:asset-swaps|1440|dark": [
@@ -5142,19 +6918,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5169,7 +6965,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ee0f8a2d934a90e5da6086f7fcd463c6b21aa6c7a5d0ef6a14cede51c4c9699f"
+    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
    },
    {
     "tag": "div",
@@ -5226,19 +7022,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5253,7 +7069,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ee0f8a2d934a90e5da6086f7fcd463c6b21aa6c7a5d0ef6a14cede51c4c9699f"
+    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
    },
    {
     "tag": "div",
@@ -5310,19 +7126,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5337,7 +7173,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ee0f8a2d934a90e5da6086f7fcd463c6b21aa6c7a5d0ef6a14cede51c4c9699f"
+    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
    },
    {
     "tag": "div",
@@ -5414,19 +7250,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5441,7 +7297,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ee0f8a2d934a90e5da6086f7fcd463c6b21aa6c7a5d0ef6a14cede51c4c9699f"
+    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
    },
    {
     "tag": "div",
@@ -5498,19 +7354,39 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
+    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5525,7 +7401,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ee0f8a2d934a90e5da6086f7fcd463c6b21aa6c7a5d0ef6a14cede51c4c9699f"
+    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
    },
    {
     "tag": "div",
@@ -5558,7 +7434,7 @@
      "no-api-key-state"
     ],
     "shared_rule_matches": false,
-    "text": "ANTHROPIC_API_KEY not configured \u2014 the b",
+    "text": "The Frontrunner build needs an Anthropic",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -5602,7 +7478,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -5612,9 +7488,29 @@
     "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5629,7 +7525,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "73e4f78e0d99641d9325f9cc4e9dfc136cc4814ff363e2ac0cae4841028ee327"
+    "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
    },
    {
     "tag": "div",
@@ -5652,7 +7548,49 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "5e85cbc4b014ecb74f47957785c37ea8d9cbe44510ee7d124a5a1f37e8df3ae6"
+    "style_digest": "bb6d85219d6e29ed8b79ee14625b8ab32c83f2d2192ee6a2ad8569010754d250"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each symphony's latest weekly autotune, ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "48fb1c95eee96c769c1508801688f904e525f006d07038bdb63960629f7755c8"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Runs without adoptin",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "c7b019421f5dd0244e3250cfa238933cab74f5e9a3d88711149554df66442fa6"
    },
    {
     "tag": "div",
@@ -5671,7 +7609,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8ae4522cf8a31fb03eade2e5b02b7407fc5ecd2d335c7fd2a78d1d97374e36a"
+    "style_digest": "edff43e62b8709367b0621dad0bf7c7740c9fb3a6ef2d2e989cd97c766a80755"
    },
    {
     "tag": "div",
@@ -5684,7 +7622,7 @@
      "prism-block"
     ],
     "shared_rule_matches": false,
-    "text": "Market Prism Synthesized by model unavai",
+    "text": "Market Prism Synthesizing model not know",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -5712,6 +7650,46 @@
      "margin-left": "0px"
     },
     "style_digest": "1d084a24d7af4dde13c918146cb41671fb14064de16abc92214f6905db3a47a9"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "An overnight read of the market through ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "6371001822245c2a348c1a3c3b54dda164109f730c7673d911a1193bd8b4215c"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean risk-on: conditions ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b2c6749bac8dbb26bf3dea5d85cccb66a88fba63d541d6ef1f44f9412640d483"
    },
    {
     "tag": "p",
@@ -5754,6 +7732,46 @@
      "margin-left": "0px"
     },
     "style_digest": "5e85cbc4b014ecb74f47957785c37ea8d9cbe44510ee7d124a5a1f37e8df3ae6"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The latest verdict from each advisor tha",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "6371001822245c2a348c1a3c3b54dda164109f730c7673d911a1193bd8b4215c"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean THEORY spec: the fro",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b2c6749bac8dbb26bf3dea5d85cccb66a88fba63d541d6ef1f44f9412640d483"
    },
    {
     "tag": "p",
@@ -5830,7 +7848,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -5840,9 +7858,29 @@
     "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5857,7 +7895,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "73e4f78e0d99641d9325f9cc4e9dfc136cc4814ff363e2ac0cae4841028ee327"
+    "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
    },
    {
     "tag": "div",
@@ -5880,7 +7918,49 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "5e85cbc4b014ecb74f47957785c37ea8d9cbe44510ee7d124a5a1f37e8df3ae6"
+    "style_digest": "bb6d85219d6e29ed8b79ee14625b8ab32c83f2d2192ee6a2ad8569010754d250"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each symphony's latest weekly autotune, ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "48fb1c95eee96c769c1508801688f904e525f006d07038bdb63960629f7755c8"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Runs without adoptin",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "c7b019421f5dd0244e3250cfa238933cab74f5e9a3d88711149554df66442fa6"
    },
    {
     "tag": "div",
@@ -5899,7 +7979,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8ae4522cf8a31fb03eade2e5b02b7407fc5ecd2d335c7fd2a78d1d97374e36a"
+    "style_digest": "edff43e62b8709367b0621dad0bf7c7740c9fb3a6ef2d2e989cd97c766a80755"
    },
    {
     "tag": "div",
@@ -5912,7 +7992,7 @@
      "prism-block"
     ],
     "shared_rule_matches": false,
-    "text": "Market Prism Synthesized by model unavai",
+    "text": "Market Prism Synthesizing model not know",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -5940,6 +8020,46 @@
      "margin-left": "0px"
     },
     "style_digest": "1d084a24d7af4dde13c918146cb41671fb14064de16abc92214f6905db3a47a9"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "An overnight read of the market through ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "6371001822245c2a348c1a3c3b54dda164109f730c7673d911a1193bd8b4215c"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean risk-on: conditions ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b2c6749bac8dbb26bf3dea5d85cccb66a88fba63d541d6ef1f44f9412640d483"
    },
    {
     "tag": "p",
@@ -5982,6 +8102,46 @@
      "margin-left": "0px"
     },
     "style_digest": "5e85cbc4b014ecb74f47957785c37ea8d9cbe44510ee7d124a5a1f37e8df3ae6"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The latest verdict from each advisor tha",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "6371001822245c2a348c1a3c3b54dda164109f730c7673d911a1193bd8b4215c"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean THEORY spec: the fro",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b2c6749bac8dbb26bf3dea5d85cccb66a88fba63d541d6ef1f44f9412640d483"
    },
    {
     "tag": "p",
@@ -6058,7 +8218,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6068,9 +8228,29 @@
     "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6085,7 +8265,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "73e4f78e0d99641d9325f9cc4e9dfc136cc4814ff363e2ac0cae4841028ee327"
+    "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
    },
    {
     "tag": "div",
@@ -6142,7 +8322,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6152,9 +8332,29 @@
     "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6169,7 +8369,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "73e4f78e0d99641d9325f9cc4e9dfc136cc4814ff363e2ac0cae4841028ee327"
+    "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
    },
    {
     "tag": "div",
@@ -6194,9 +8394,9 @@
     "style_digest": "de5cf1c171fe10d1a6bf93516e841c352008c3b66641d07443667bb7ecb48334"
    },
    {
-    "tag": "section",
+    "tag": "p",
     "classes": [
-     "retirement-subsection"
+     "adv-explainer"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6204,7 +8404,27 @@
      "matrix-card"
     ],
     "shared_rule_matches": false,
-    "text": "Correlated pairs Not run yet \u2014 runs nigh",
+    "text": "Suggestions to retire a symphony that du",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "8px",
+     "margin-left": "0px"
+    },
+    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "retirement-pair"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "matrix-card"
+    ],
+    "shared_rule_matches": false,
+    "text": "Correlated pairs A symphony is flagged w",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6230,27 +8450,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "5e85cbc4b014ecb74f47957785c37ea8d9cbe44510ee7d124a5a1f37e8df3ae6"
-   },
-   {
-    "tag": "section",
-    "classes": [
-     "retirement-subsection"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "matrix-card"
-    ],
-    "shared_rule_matches": false,
-    "text": "Symphony tenure review Run tenure review",
-    "margins": {
-     "margin-top": "24px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "5f58b10de01c4c643b3d568152d2fdbd8e476393950423a9f5a7e0db7d16263d"
+    "style_digest": "991716f38ed3289144a28bfab5c8524ee8b189ff1cd55e1102c607e1b1aa2ddc"
    },
    {
     "tag": "div",
@@ -6269,7 +8469,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "5e85cbc4b014ecb74f47957785c37ea8d9cbe44510ee7d124a5a1f37e8df3ae6"
+    "style_digest": "683168e9a224c764291971613f926a259087ca727f9860a09f81ee3867fc794e"
    }
   ],
   "ai-advisor|tab:asset-swaps|375|light": [
@@ -6286,7 +8486,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6296,9 +8496,29 @@
     "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6313,7 +8533,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "73e4f78e0d99641d9325f9cc4e9dfc136cc4814ff363e2ac0cae4841028ee327"
+    "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
    },
    {
     "tag": "div",
@@ -6370,7 +8590,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6380,9 +8600,29 @@
     "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6397,7 +8637,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "73e4f78e0d99641d9325f9cc4e9dfc136cc4814ff363e2ac0cae4841028ee327"
+    "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
    },
    {
     "tag": "div",
@@ -6454,7 +8694,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6464,9 +8704,29 @@
     "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6481,7 +8741,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "73e4f78e0d99641d9325f9cc4e9dfc136cc4814ff363e2ac0cae4841028ee327"
+    "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
    },
    {
     "tag": "div",
@@ -6558,7 +8818,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6568,9 +8828,29 @@
     "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6585,7 +8865,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "73e4f78e0d99641d9325f9cc4e9dfc136cc4814ff363e2ac0cae4841028ee327"
+    "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
    },
    {
     "tag": "div",
@@ -6642,7 +8922,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6652,9 +8932,29 @@
     "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6669,7 +8969,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "73e4f78e0d99641d9325f9cc4e9dfc136cc4814ff363e2ac0cae4841028ee327"
+    "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
    },
    {
     "tag": "div",
@@ -6702,7 +9002,7 @@
      "no-api-key-state"
     ],
     "shared_rule_matches": false,
-    "text": "ANTHROPIC_API_KEY not configured \u2014 the b",
+    "text": "The Frontrunner build needs an Anthropic",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6746,7 +9046,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6756,9 +9056,29 @@
     "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6773,7 +9093,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5e1aed02d71db802c9e16b8615e838618854eb02178bec92114ae1695514b482"
+    "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
    },
    {
     "tag": "div",
@@ -6796,7 +9116,49 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "b60c8f54f639d2bc03a88237e8d788d3abab896f0075b5df5aa43320ef3e013d"
+    "style_digest": "4b051951fed76079327d3ee49be59bcee4cb723ec397b39adb84fb448522c655"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each symphony's latest weekly autotune, ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1a9dcfc4640896e66fb3af55fed7ae32fc4c0131a5a4f3a1aa474daf6e912bc7"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Runs without adoptin",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "d3d1f14a908eb23382b41498b47c07fe8fc345873d996bfc4f97cf2a0e2c715f"
    },
    {
     "tag": "div",
@@ -6815,7 +9177,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "a24e401e52d37ed8f8b114d73e098d01023c963eaa7df9e7995f3d45fd3807a1"
+    "style_digest": "3bdc0f5b07b64cd77d61578446c24b50312e85d1613971bfd915954fe51cce6b"
    },
    {
     "tag": "div",
@@ -6828,7 +9190,7 @@
      "prism-block"
     ],
     "shared_rule_matches": false,
-    "text": "Market Prism Synthesized by model unavai",
+    "text": "Market Prism Synthesizing model not know",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6856,6 +9218,46 @@
      "margin-left": "0px"
     },
     "style_digest": "2106766f56a3ecd658e177e5299fbc8a3f84299ad60cd3e9903dd3c71ee57904"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "An overnight read of the market through ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "8fdd375e9c35be9c53652d44471230c53323e40d6d792f6e8f074a240343fddc"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean risk-on: conditions ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "392b74972b5ba34f362bad19cd12fddd7befc1a6b51f82b7c5c1578e9498a3b9"
    },
    {
     "tag": "p",
@@ -6898,6 +9300,46 @@
      "margin-left": "0px"
     },
     "style_digest": "b60c8f54f639d2bc03a88237e8d788d3abab896f0075b5df5aa43320ef3e013d"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The latest verdict from each advisor tha",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "8fdd375e9c35be9c53652d44471230c53323e40d6d792f6e8f074a240343fddc"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean THEORY spec: the fro",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "392b74972b5ba34f362bad19cd12fddd7befc1a6b51f82b7c5c1578e9498a3b9"
    },
    {
     "tag": "p",
@@ -6974,7 +9416,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -6984,9 +9426,29 @@
     "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7001,7 +9463,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5e1aed02d71db802c9e16b8615e838618854eb02178bec92114ae1695514b482"
+    "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
    },
    {
     "tag": "div",
@@ -7024,7 +9486,49 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "b60c8f54f639d2bc03a88237e8d788d3abab896f0075b5df5aa43320ef3e013d"
+    "style_digest": "4b051951fed76079327d3ee49be59bcee4cb723ec397b39adb84fb448522c655"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "Each symphony's latest weekly autotune, ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "1a9dcfc4640896e66fb3af55fed7ae32fc4c0131a5a4f3a1aa474daf6e912bc7"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--bare",
+     "autotune-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Runs without adoptin",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "d3d1f14a908eb23382b41498b47c07fe8fc345873d996bfc4f97cf2a0e2c715f"
    },
    {
     "tag": "div",
@@ -7043,7 +9547,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "a24e401e52d37ed8f8b114d73e098d01023c963eaa7df9e7995f3d45fd3807a1"
+    "style_digest": "3bdc0f5b07b64cd77d61578446c24b50312e85d1613971bfd915954fe51cce6b"
    },
    {
     "tag": "div",
@@ -7056,7 +9560,7 @@
      "prism-block"
     ],
     "shared_rule_matches": false,
-    "text": "Market Prism Synthesized by model unavai",
+    "text": "Market Prism Synthesizing model not know",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7084,6 +9588,46 @@
      "margin-left": "0px"
     },
     "style_digest": "2106766f56a3ecd658e177e5299fbc8a3f84299ad60cd3e9903dd3c71ee57904"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "An overnight read of the market through ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "8fdd375e9c35be9c53652d44471230c53323e40d6d792f6e8f074a240343fddc"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "prism-block"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean risk-on: conditions ",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "392b74972b5ba34f362bad19cd12fddd7befc1a6b51f82b7c5c1578e9498a3b9"
    },
    {
     "tag": "p",
@@ -7126,6 +9670,46 @@
      "margin-left": "0px"
     },
     "style_digest": "b60c8f54f639d2bc03a88237e8d788d3abab896f0075b5df5aa43320ef3e013d"
+   },
+   {
+    "tag": "p",
+    "classes": [
+     "adv-explainer"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "The latest verdict from each advisor tha",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "2px",
+     "margin-left": "0px"
+    },
+    "style_digest": "8fdd375e9c35be9c53652d44471230c53323e40d6d792f6e8f074a240343fddc"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "obs-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean THEORY spec: the fro",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "12px",
+     "margin-left": "0px"
+    },
+    "style_digest": "392b74972b5ba34f362bad19cd12fddd7befc1a6b51f82b7c5c1578e9498a3b9"
    },
    {
     "tag": "p",
@@ -7202,7 +9786,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7212,9 +9796,29 @@
     "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7229,7 +9833,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5e1aed02d71db802c9e16b8615e838618854eb02178bec92114ae1695514b482"
+    "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
    },
    {
     "tag": "div",
@@ -7286,7 +9890,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7296,9 +9900,29 @@
     "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7313,7 +9937,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5e1aed02d71db802c9e16b8615e838618854eb02178bec92114ae1695514b482"
+    "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
    },
    {
     "tag": "div",
@@ -7338,9 +9962,9 @@
     "style_digest": "57a3201f5015c9288383636dfb5e1d1e97c8176fb6912a029ed5b6615f5eb45f"
    },
    {
-    "tag": "section",
+    "tag": "p",
     "classes": [
-     "retirement-subsection"
+     "adv-explainer"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7348,7 +9972,27 @@
      "matrix-card"
     ],
     "shared_rule_matches": false,
-    "text": "Correlated pairs Not run yet \u2014 runs nigh",
+    "text": "Suggestions to retire a symphony that du",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "8px",
+     "margin-left": "0px"
+    },
+    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "retirement-pair"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "hero-section",
+     "matrix-card"
+    ],
+    "shared_rule_matches": false,
+    "text": "Correlated pairs A symphony is flagged w",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7374,27 +10018,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "b60c8f54f639d2bc03a88237e8d788d3abab896f0075b5df5aa43320ef3e013d"
-   },
-   {
-    "tag": "section",
-    "classes": [
-     "retirement-subsection"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "matrix-card"
-    ],
-    "shared_rule_matches": false,
-    "text": "Symphony tenure review Run tenure review",
-    "margins": {
-     "margin-top": "24px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "1e4796d749bd808bb39e4b59a3e5f57cd17993bc28cb3e3dde81c735fbfff1a3"
+    "style_digest": "359807e7b3ca62f13e4d3c35eb60adc02ab0338083ed7126916743fd5be7a5fb"
    },
    {
     "tag": "div",
@@ -7413,7 +10037,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "b60c8f54f639d2bc03a88237e8d788d3abab896f0075b5df5aa43320ef3e013d"
+    "style_digest": "088485b00140b334f0a68187fc4132de666803b95a02509533fc63070f808a2c"
    }
   ],
   "ai-advisor|tab:asset-swaps|375|dark": [
@@ -7430,7 +10054,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7440,9 +10064,29 @@
     "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7457,7 +10101,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5e1aed02d71db802c9e16b8615e838618854eb02178bec92114ae1695514b482"
+    "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
    },
    {
     "tag": "div",
@@ -7514,7 +10158,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7524,9 +10168,29 @@
     "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7541,7 +10205,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5e1aed02d71db802c9e16b8615e838618854eb02178bec92114ae1695514b482"
+    "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
    },
    {
     "tag": "div",
@@ -7598,7 +10262,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7608,9 +10272,29 @@
     "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7625,7 +10309,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5e1aed02d71db802c9e16b8615e838618854eb02178bec92114ae1695514b482"
+    "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
    },
    {
     "tag": "div",
@@ -7702,7 +10386,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7712,9 +10396,29 @@
     "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7729,7 +10433,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5e1aed02d71db802c9e16b8615e838618854eb02178bec92114ae1695514b482"
+    "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
    },
    {
     "tag": "div",
@@ -7786,7 +10490,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Advisory suite \u2014 operator must approve e",
+    "text": "Advisory tools: a suggestion changes not",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7796,9 +10500,29 @@
     "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
-    "tag": "nav",
+    "tag": "details",
     "classes": [
-     "cap-nav"
+     "hp-more"
+    ],
+    "parent_classes": [
+     "adv-panel",
+     "adv-panel--nav",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Tab dots: green mark",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "cap-nav-wrap"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7813,7 +10537,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5e1aed02d71db802c9e16b8615e838618854eb02178bec92114ae1695514b482"
+    "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
    },
    {
     "tag": "div",
@@ -7846,7 +10570,7 @@
      "no-api-key-state"
     ],
     "shared_rule_matches": false,
-    "text": "ANTHROPIC_API_KEY not configured \u2014 the b",
+    "text": "The Frontrunner build needs an Anthropic",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7888,7 +10612,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7987,7 +10711,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8086,7 +10810,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8183,7 +10907,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8241,7 +10965,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Keys + account UUIDs + webhook URLs. Val",
+    "text": "The keys, account ids and webhook addres",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -8249,6 +10973,25 @@
      "margin-left": "0px"
     },
     "style_digest": "c18b845c5a03f0d15e9135c8ad302cbbf095bee265208f90bf60d7a09ae148ee"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Composer: the key an",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
    },
    {
     "tag": "div",
@@ -8260,7 +11003,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Heads up. Saving any of these fields wri",
+    "text": "Heads up. The dashboard cannot save thes",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8339,7 +11082,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8407,6 +11150,25 @@
     "style_digest": "c18b845c5a03f0d15e9135c8ad302cbbf095bee265208f90bf60d7a09ae148ee"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms meanuses globals: no valu",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
+   },
+   {
     "tag": "div",
     "classes": [
      "sym-split"
@@ -8438,7 +11200,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8506,6 +11268,25 @@
     "style_digest": "c18b845c5a03f0d15e9135c8ad302cbbf095bee265208f90bf60d7a09ae148ee"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Synthetic post-morte",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
+   },
+   {
     "tag": "div",
     "classes": [
      "maint-warn"
@@ -8556,7 +11337,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8655,7 +11436,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8754,7 +11535,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8851,7 +11632,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8909,7 +11690,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Keys + account UUIDs + webhook URLs. Val",
+    "text": "The keys, account ids and webhook addres",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -8917,6 +11698,25 @@
      "margin-left": "0px"
     },
     "style_digest": "24dcdb1923d7cfd5047917c826c9bc982ec5dfafd08ab34d1cb7bddce8d11151"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Composer: the key an",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
    },
    {
     "tag": "div",
@@ -8928,7 +11728,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Heads up. Saving any of these fields wri",
+    "text": "Heads up. The dashboard cannot save thes",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9007,7 +11807,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9075,6 +11875,25 @@
     "style_digest": "24dcdb1923d7cfd5047917c826c9bc982ec5dfafd08ab34d1cb7bddce8d11151"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms meanuses globals: no valu",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
+   },
+   {
     "tag": "div",
     "classes": [
      "sym-split"
@@ -9106,7 +11925,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9174,6 +11993,25 @@
     "style_digest": "24dcdb1923d7cfd5047917c826c9bc982ec5dfafd08ab34d1cb7bddce8d11151"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Synthetic post-morte",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
+   },
+   {
     "tag": "div",
     "classes": [
      "maint-warn"
@@ -9224,7 +12062,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9323,7 +12161,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9422,7 +12260,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9519,7 +12357,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9577,7 +12415,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Keys + account UUIDs + webhook URLs. Val",
+    "text": "The keys, account ids and webhook addres",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -9585,6 +12423,25 @@
      "margin-left": "0px"
     },
     "style_digest": "c365d491e7bcd330e47132d1676cc107d8b18c65de0385fcb3c6690f54acc085"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Composer: the key an",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
    },
    {
     "tag": "div",
@@ -9596,7 +12453,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Heads up. Saving any of these fields wri",
+    "text": "Heads up. The dashboard cannot save thes",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9675,7 +12532,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9743,6 +12600,25 @@
     "style_digest": "c365d491e7bcd330e47132d1676cc107d8b18c65de0385fcb3c6690f54acc085"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms meanuses globals: no valu",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
+   },
+   {
     "tag": "div",
     "classes": [
      "sym-split"
@@ -9774,7 +12650,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9842,6 +12718,25 @@
     "style_digest": "c365d491e7bcd330e47132d1676cc107d8b18c65de0385fcb3c6690f54acc085"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Synthetic post-morte",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
+   },
+   {
     "tag": "div",
     "classes": [
      "maint-warn"
@@ -9892,7 +12787,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9991,7 +12886,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -10090,7 +12985,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -10187,7 +13082,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -10245,7 +13140,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Keys + account UUIDs + webhook URLs. Val",
+    "text": "The keys, account ids and webhook addres",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -10253,6 +13148,25 @@
      "margin-left": "0px"
     },
     "style_digest": "633ea75b55f1e6837a065ef3ff747c141feaa6d1613d22be155ea11ffc532678"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Composer: the key an",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",
@@ -10264,7 +13178,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Heads up. Saving any of these fields wri",
+    "text": "Heads up. The dashboard cannot save thes",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -10343,7 +13257,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -10411,6 +13325,25 @@
     "style_digest": "633ea75b55f1e6837a065ef3ff747c141feaa6d1613d22be155ea11ffc532678"
    },
    {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms meanuses globals: no valu",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
+   },
+   {
     "tag": "div",
     "classes": [
      "sym-split"
@@ -10442,7 +13375,7 @@
      "settings-actions"
     ],
     "shared_rule_matches": false,
-    "text": ".env globals + SQLite-isolated symphony ",
+    "text": "Global settings and per-symphony overrid",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -10508,6 +13441,25 @@
      "margin-left": "0px"
     },
     "style_digest": "633ea75b55f1e6837a065ef3ff747c141feaa6d1613d22be155ea11ffc532678"
+   },
+   {
+    "tag": "details",
+    "classes": [
+     "hp-more"
+    ],
+    "parent_classes": [
+     "hero-section",
+     "settings-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "What the terms mean Synthetic post-morte",
+    "margins": {
+     "margin-top": "12px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",

@@ -38,9 +38,10 @@ from tests.ui._state_poll_page_capture import SCENARIOS, capture_scenario
 pytestmark = pytest.mark.browser
 
 FIRST_SCENARIO = next(iter(SCENARIOS))
-# The page baseline is read at the commit that removed the per-card Cash Now control: its card text is
-# the one thing the page lost since the poll cleanup reference, which the golden producer keeps.
-REFERENCE_COMMIT = "5b0ea52ac3011fd370f3c71b2221849cec7387f8"
+# The page baseline is read at the commit whose page carries the page descriptions, disclosures and
+# the denser layout: its text is what the page gained since the Cash Now removal, and the golden
+# producer keeps the poll cleanup reference.
+REFERENCE_COMMIT = "ff188e270efab9b4e1a39103c27fc20e2eb5dcf5"
 
 
 @pytest.mark.parametrize("name", list(SCENARIOS))
