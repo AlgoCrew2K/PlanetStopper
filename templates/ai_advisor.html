@@ -1265,12 +1265,6 @@
            explainer then wraps to fewer lines. */
         .retirement-pair--side:has(.retirement-last-run > .retirement-last-run-line:only-child) { grid-template-columns: 3fr 4fr; }
 
-        /* From 1240 px the missing-items line takes its own line and reads from the right, under the end of
-           the long basis line, so the short lines do not leave an empty band beside the evidence columns. */
-        @media (min-width: 1240px) {
-            .tenure-review-entry > .tenure-review-line[data-testid="tenure-review-missing"] { flex: 1 1 100%; text-align: right; }
-        }
-
         /* From 1440 px the tab bar takes the left and the description the right, so the description's
            one line does not leave the right of the panel empty. */
         @media (min-width: 1440px) {
