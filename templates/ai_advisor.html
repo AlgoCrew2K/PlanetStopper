@@ -1212,13 +1212,6 @@
             .autotune-panel > #autotune-runs-list:has(.autotune-empty) { grid-column: 2; align-self: start; }
         }
 
-        /* With no card to show, the recommender column puts its Run control and last-run line at the end and
-           spreads its lines over the height the tenure column sets, so each short line has a wide one
-           beside or under it and no empty rectangle forms to the right of the stack. */
-        .retirement-pair--side > .retirement-subsection[data-testid="retirement-recommender-section"]:not(:has(.retirement-cards)) { align-content: space-between; }
-        .retirement-pair--side > .retirement-subsection[data-testid="retirement-recommender-section"]:not(:has(.retirement-cards)) > .retirement-run-now-line { order: 3; flex: 1 1 100%; }
-        .retirement-pair--side > .retirement-subsection[data-testid="retirement-recommender-section"]:not(:has(.retirement-cards)) > .retirement-last-run { order: 4; }
-
         /* From 1440 px the tab bar takes the left and the description the right, so the description's
            one line does not leave the right of the panel empty. */
         @media (min-width: 1440px) {
