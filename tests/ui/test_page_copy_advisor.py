@@ -351,6 +351,36 @@ def test_the_strategy_builder_run_note_reads_the_kept_note_with_the_models_state
     )
 
 
+def test_each_model_knob_is_read_once_so_a_badge_and_its_known_flag_come_from_one_choice(advisor):
+    """A cache that changes between two reads of one knob must not split a name from its flag.
+
+    The fake answers a resolved choice on a knob's first read and the unavailable one after it.
+    Two reads would print "model not known" beside a name that was just resolved; one read shows
+    the resolved wording, and the page asks once per knob.
+    """
+    import model_config
+
+    marker = "marker-single-read-model"
+    reads: dict = {}
+
+    def flipping(knob):
+        reads[knob] = reads.get(knob, 0) + 1
+        if reads[knob] == 1:
+            return model_config.ModelChoice(model_id=marker, source="override")
+        return model_config.ModelChoice()
+
+    shown = advisor.open(
+        "full",
+        key=True,
+        patches=lambda mp: mp.setattr(model_config, "peek", flipping),
+    )
+    assert reads == {model_config.Knob.SUGGESTION: 1, model_config.Knob.SYNTHESIS: 1}, reads
+    for row, tab, _family in MODEL_LINES:
+        assert _attribution(shown, tab) == adv.norm(
+            copy_fixture.fill(copy_fixture.row(row, "C")["new_resolved"], model=marker)
+        ), f"{tab}: the model line split the name from its known flag"
+
+
 def test_the_words_model_unavailable_appear_nowhere_on_a_page_with_no_model(advisor):
     shown = advisor.open("full", key=True, models=False, seed=_seed_everything)
     assert "model unavailable" not in shown.html.lower(), "the placeholder still prints"

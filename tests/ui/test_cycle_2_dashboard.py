@@ -557,9 +557,14 @@ def test_triggered_verdict_shows_computed_label(dashboard_client):
         "triggered_reason string: " + repr(leads)
     )
     if verdict_lead("matched") not in verdict_text:
-        assert "%" in verdict_text, (
-            "a verdict that names a side must include the percentage gap (e.g. '3.5%')."
+        # The gap between two percentages is a number of points, never a percentage itself.
+        unit = _page_copy.text("D30a", "C").split("{m}")[1]
+        assert unit.strip() == "pts", f"premise: the copy row's unit is pts, not {unit!r}"
+        assert unit in verdict_text, (
+            "a verdict that names a side must give the gap in points (e.g. '3.5 pts')."
         )
+        shown = re.sub(r"<[^>]*>", "", verdict_text)
+        assert "%" not in shown, f"a gap between two percentages is printed with a %: {shown!r}"
 
 
 def test_vs_rows_have_bar_elements(dashboard_client):

@@ -423,3 +423,122 @@ def test_the_values_table_names_every_slot_the_helper_resolves():
     table = {row["slot"] for row in copy.slot_rows()}
     assert set(SLOTS) <= table
     assert table - set(SLOTS) == {"min_history_days"}, "a Values slot the helper does not own"
+
+
+# ---------------------------------------------------------------------------
+# One number check: the helpers app.py already has, including for an int too large for a float
+# ---------------------------------------------------------------------------
+
+HUGE = 10**400
+NUMBER_SAMPLES = [
+    0,
+    3,
+    -3,
+    3.0,
+    3.5,
+    1e300,
+    HUGE,
+    -HUGE,
+    True,
+    False,
+    float("nan"),
+    float("inf"),
+    float("-inf"),
+    "3",
+    None,
+    [],
+]
+
+
+def _sample_id(value) -> str:
+    text = repr(value)
+    return text if len(text) < 24 else f"int-of-{len(text.lstrip('-'))}-digits"
+
+
+def _source_names(function_name: str) -> set[str]:
+    """Every name and attribute the function's own body reads (its docstring excluded)."""
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_helper(function_name))))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    return names
+
+
+@pytest.mark.parametrize(
+    ("function", "existing"),
+    [
+        ("_plain_number", "_is_finite_number"),
+        ("_whole_number_or_none", "_is_whole_number"),
+        ("_copy_screen_threshold", "_is_finite_number"),
+    ],
+)
+def test_a_copy_helper_calls_the_number_check_the_module_already_has(function, existing):
+    names = _source_names(function)
+    assert existing in names, f"{function} does not call {existing}"
+    assert "isfinite" not in names, f"{function} writes its own finite check beside {existing}"
+
+
+@pytest.mark.parametrize("value", NUMBER_SAMPLES, ids=_sample_id)
+def test_plain_number_answers_a_number_exactly_when_the_existing_check_does(value):
+    finite = _helper("_is_finite_number")
+    answer = _helper("_plain_number")(value, decimals=6)
+    assert (answer is not None) == finite(value), f"{value!r}: {answer!r}"
+
+
+def test_an_int_too_large_for_a_float_prints_its_digits_and_raises_nothing(plain_number):
+    assert plain_number(HUGE, decimals=6) == str(HUGE)
+    assert plain_number(-HUGE, decimals=2) == str(-HUGE)
+
+
+@pytest.mark.parametrize("value", NUMBER_SAMPLES, ids=_sample_id)
+def test_whole_number_or_none_answers_a_number_exactly_when_the_existing_check_does(value):
+    whole = _helper("_is_whole_number")
+    answer = _helper("_whole_number_or_none")(value)
+    assert (answer is not None) == whole(value), f"{value!r}: {answer!r}"
+    if answer is not None:
+        assert answer == int(value) and type(answer) is int
+
+
+@pytest.mark.parametrize("threshold", [HUGE, -HUGE], ids=["huge", "huge negative"])
+def test_a_run_threshold_too_large_for_a_float_is_a_number_as_the_existing_check_says(threshold):
+    """No OverflowError: the one helper the module has counts an int as finite, so it prints."""
+    assert _helper("_is_finite_number")(threshold)
+    run = {"status": "ok", "screen_threshold": threshold}
+    assert _helper("_copy_screen_threshold")(run) == f"{threshold}"
+
+
+@pytest.mark.parametrize("threshold", [HUGE, -HUGE], ids=["huge", "huge negative"])
+def test_a_threshold_in_effect_too_large_for_a_float_is_handled_without_error(
+    values, env_file, threshold
+):
+    review = {"threshold_in_effect": threshold}
+    assert values(["tenure_threshold"], tenure_review=review)["tenure_threshold"] == str(threshold)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_copy_tenure_threshold",
+        "_copy_screen_threshold",
+        "_copy_stress_fraction_pct",
+        "_copy_watch_trail_pp",
+        "_copy_friction_pct",
+        "_copy_min_history_days",
+        "_copy_shadow_retention_days",
+    ],
+)
+def test_each_copy_resolver_says_what_it_reads_and_what_none_means(name):
+    import inspect
+
+    resolver = _helper(name)
+    doc = inspect.getdoc(resolver) or ""
+    assert len(doc.split()) >= 6, f"{name} has no docstring naming its authority: {doc!r}"
+    if "None" in str(inspect.signature(resolver).return_annotation):
+        assert "None" in doc, f"{name} can return None and its docstring does not say when"

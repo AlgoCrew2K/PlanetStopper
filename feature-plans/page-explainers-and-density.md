@@ -130,7 +130,7 @@ Workflow (AI Advisor Overview, Correlations, Asset Swaps, Logic Changes, Chat, S
 |---|---|---|---|---|
 | 1 | Open `/` | none | The page line and the Active section line say what the page and section are | S-1.1 |
 | 2 | Open "What the terms mean" in Active | a click | Each status word, Bot · frozen, the ring and Cum are defined | S-2.1 |
-| 3 | Look at a triggered card | none | Its verdict reads "Exit beat holding by 1.2%" or "Exit trailed holding by 0.4%" with its basis, on first paint and after the next poll | S-3.1, S-3.2 |
+| 3 | Look at a triggered card | none | Its verdict reads "Exit beat holding by 1.2 pts" or "Exit trailed holding by 0.4 pts" with its basis, on first paint and after the next poll | S-3.1, S-3.2 |
 
 ### T-3: Scan a page at 1440 px
 | Step | User action | Input | Expected result | Scenario (S id) |
@@ -237,9 +237,9 @@ Rule: When a label in Copy table C renders, the host shall show its new text in 
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
-| S-3.1 | B | a triggered symphony whose exit return is 1.24 points above its held return | `/` first paints | its verdict reads "Exit beat holding by 1.2%" followed by its basis label |
+| S-3.1 | B | a triggered symphony whose exit return is 1.24 points above its held return | `/` first paints | its verdict reads "Exit beat holding by 1.2 pts" followed by its basis label |
 | S-3.2 | B | the same symphony | the poll rewrites the card (static/index.js) | the verdict text is identical to the first paint |
-| S-3.3 | B | a triggered symphony whose exit return is 0.42 points below its held return | first paint and poll | both read "Exit trailed holding by 0.4%" |
+| S-3.3 | B | a triggered symphony whose exit return is 0.42 points below its held return | first paint and poll | both read "Exit trailed holding by 0.4 pts" |
 | S-3.4 | N1 | an exit gap that prints as 0.0 at one decimal (exactly 0, 0.04 or -0.04) | first paint and poll | both read "Exit matched holding" |
 | S-3.5 | N3 | a triggered symphony with no guard figure (absent, null, not finite) | first paint and poll | both show a dash, as at the ref |
 | S-3.6 | B | a stored ok retirement run with blocked counts | the Retirement tab renders | the Blocked tile detail uses the four new gate words and the new stress-window sentence with the stored minimum |
@@ -616,8 +616,8 @@ Placement V means the definition is the visible description named; D means a lin
 #### Copy table C: reworded labels
 | Key | Host and place at the ref | Built by | Old text | New text (exact) | True of |
 |---|---|---|---|---|---|
-| D30a | `/`, a triggered card's verdict, gap above zero | server first paint (`app.py:3354`) and `static/index.js:1037-1041` (poll) | Good call · saved +{m}%α | Exit beat holding by {m}% | `app.py:3343-3355` |
-| D30b | `/`, a triggered card's verdict, gap below zero | `app.py:3354` and `static/index.js:1037-1041` | Early exit · gave up {m}%α | Exit trailed holding by {m}% | `app.py:3343-3355` |
+| D30a | `/`, a triggered card's verdict, gap above zero | server first paint (`app.py:3354`) and `static/index.js:1037-1041` (poll) | Good call · saved +{m}%α | Exit beat holding by {m} pts | `app.py:3343-3355` |
+| D30b | `/`, a triggered card's verdict, gap below zero | `app.py:3354` and `static/index.js:1037-1041` | Early exit · gave up {m}%α | Exit trailed holding by {m} pts | `app.py:3343-3355` |
 | D30c | `/`, a triggered card's verdict when {m} prints as 0.0 | `app.py:3354` and `static/index.js:1037-1041` | Early exit · gave up 0.0%α | Exit matched holding | `app.py:3352-3354` |
 | D29v | `/`, the pill for a VWAP breakdown exit | `templates/index.html:1653` and `static/index.js:2011-2012` | VWAP | VWAP breakdown | `math_engine.py:959-967` |
 | D68 | detail panel footer (`templates/index.html:2144`) | template | shadow_hwm · stop · mc_prob updated every 1m | Peak, stop and Monte Carlo reading update every minute | `app.py:2924` |
@@ -846,7 +846,7 @@ none: judged by the live check and the screenshot comparison in Definition of Do
 | Q-3 | removed: answered by the PM ruling G-22 (D-1, D-2, D-3, D-9) | plan | none | ruled by the PM |
 | Q-4 | Claude Design is recorded as the design system of record for new screens. Does this layout change need a Claude Design brief? | AC-6 | no: it creates no new screen and reuses the restyle's primitives, and the restyle itself was built in-team; the ux-expert judges the result | default approved by the PM, [PM-ASSUMED] |
 | Q-5 | May the display text the server builds for the page (the triggered verdict on first paint, the Blocked tile text) and the template context change, given G-16 names templates, CSS and static JS only? | AC-3, AC-4, AC-5 | yes, limited to that display text and the AC-4 values; no route, JSON body or stored value changes (D-6) | default approved by the PM, [PM-ASSUMED] |
-| Q-6 | Should a verdict gap that prints as 0.0 read "Exit matched holding" instead of "Exit trailed holding by 0.0%"? | AC-3 | yes | default approved by the PM, [PM-ASSUMED] |
+| Q-6 | Should a verdict gap that prints as 0.0 read "Exit matched holding" instead of "Exit trailed holding by 0.0 pts"? | AC-3 | yes | default approved by the PM, [PM-ASSUMED] |
 | Q-7 | May the dollar-saved panel's 160 px height pin grow by its added description and disclosure summary lines? | AC-6 | yes | default approved by the PM, [PM-ASSUMED] |
 | Q-9 | removed: ruled by the PM (D-11): Sensitive stays none | plan | none | ruled by the PM |
 | Q-8 | Do each Advisor tab, the detail panel and the settings modal count as their own page for "first appearance"? | AC-1, AC-2 | yes: each hides the others, so a definition elsewhere is out of sight (D-4) | default approved by the PM, [PM-ASSUMED] |

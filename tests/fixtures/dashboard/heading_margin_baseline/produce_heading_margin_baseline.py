@@ -25,7 +25,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[3]
 sys.path.insert(0, str(REPO))
 
-BASE_SHA = "ff188e270efab9b4e1a39103c27fc20e2eb5dcf5"
+BASE_SHA = "6b63f53e0d718e230878df900a4aabc72c5b67ed"
 WATCHED = ["static", "templates", "app.py"]
 
 _CREDENTIAL_VARIABLES = (

@@ -350,6 +350,17 @@
             padding: 8px 0;
             border-top: 1px solid var(--studio-rule);
         }
+        /* Only the name and the count remain once the run time, outcome, score and t-stat are said
+           once above: the runs then flow in several columns of name and count, so no wide band
+           lies between a name and its count. */
+        @media (min-width: 1001px) {
+            .autotune-table--lift-1.autotune-table--lift-2.autotune-table--lift-4.autotune-table--lift-5 {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+                column-gap: 32px;
+            }
+            .autotune-table--lift-1.autotune-table--lift-2.autotune-table--lift-4.autotune-table--lift-5 > .autotune-row { grid-template-columns: minmax(0, 1fr) auto; }
+        }
         .autotune-row--head { border-top: 0; padding: 4px 0; color: var(--studio-ink-dim); }
         .autotune-row--head > * { font-weight: 400; }
         .autotune-run-name {
@@ -524,8 +535,6 @@
         .adv-explainer + .hp-more { margin: 0 0 12px; }
         .retirement-subsection[data-testid="retirement-recommender-section"] .adv-explainer + .hp-more { margin-bottom: 4px; }
         .hp-more p { margin: 0 0 6px; }
-        /* A closed disclosure holds no box for its terms (not even a hidden one a script could measure). */
-        details.hp-more:not([open]) > :not(summary) { display: none; }
 
         /* Tab panels: only the active panel is visible */
         .tab-panel { display: none; }
@@ -728,7 +737,16 @@
         .proposal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 12px; }
         /* Cards that wrap onto a last row stretch across it, so the grid holds no empty cell. */
         .proposal-cards--fill { display: flex; flex-wrap: wrap; }
-        .proposal-cards--fill > .proposal-card { flex: 1 1 min(100%, 22rem); min-width: 0; max-width: 44rem; }
+        .proposal-cards--fill > .proposal-card { flex: 1 1 min(100%, 22rem); min-width: 0; container-type: inline-size; }
+        /* A card at least 44 rem wide lays its figures on the left and its overlay line and actions on
+           the right; a narrower one stacks them. */
+        @container (min-width: 44rem) {
+            /* Three columns: the figures, the overlay lines and the actions. The two narrow ones sit level
+               with the middle of the figures, so no block wider than its text lies beside them. */
+            .proposal-card-body { display: grid; grid-template-columns: minmax(0, 1fr) 18rem 18rem; gap: 0 24px; align-items: center; }
+            .proposal-card-body > .fr-card-flow { flex-direction: column; align-items: flex-start; }
+            .sym-card.proposal-card .proposal-card-body > .proposal-actions { margin-top: 0; flex-direction: column; align-items: flex-start; gap: 12px; }
+        }
         /* A stretched card keeps its short lines in rows that fill its width instead of down its left edge. */
         .fr-card-flow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
         .fr-card-flow > * { min-width: 0; }
@@ -828,8 +846,9 @@
         }
         .prism-block-header .prism-as-of { margin-left: auto; }
 
+        /* The rationale takes the width of the block (a long one is a row of its own), so no space
+           beside a capped column is left empty. */
         .prism-rationale {
-            max-width: 110ch;
             font-size: 13px;
             color: var(--studio-ink);
             line-height: 1.6;
@@ -1089,20 +1108,30 @@
         .tenure-review-notice--failed { color: var(--studio-neg); border-color: var(--studio-neg); }
         .tenure-review-run { display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 12px; }
         .tenure-review-entry { margin-bottom: 4px; font-size: 13px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; }
-        .tenure-review-entry > .tenure-review-entry-head,
         /* The lifecycle's explanation, status and actions share a row. */
+        .tenure-review-entry > .tenure-review-entry-head,
         .tenure-review-lifecycle { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; }
         .tenure-review-entry > .tenure-review-evidence-grid,
         .tenure-review-entry > .tenure-review-lifecycle { flex: 1 1 100%; min-width: 0; }
         .tenure-review-entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
         .tenure-review-line { color: var(--studio-ink-dim); font-size: 12px; margin-bottom: 4px; }
         .tenure-verdict-chip--none { --dot: var(--studio-ink-dim); }
-        /* The six evidence items read as compact lists side by side, each as tall as its own content. */
-        .tenure-review-evidence-grid {
-            columns: 8rem 6;
-            column-gap: 32px;
-            margin-top: 8px;
-        }
+        /* The evidence items wrap in one flex row: a short item shares a row with the others, and the
+           redundancy item (which lists every sibling it was compared with) is as wide as its text, so a
+           long one takes a row of its own, where its text leaves no empty block beside it, and a short
+           one sits in the row with the rest. One column on a phone. */
+        .tenure-review-evidence-grid { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 16px; margin-top: 8px; }
+        .tenure-review-evidence { flex: 1 1 8rem; min-width: 0; }
+        @media (max-width: 700px) { .tenure-review-evidence { flex-basis: 100%; } }
+        .tenure-review-evidence[data-testid="tenure-review-evidence-redundancy"] { order: 1; flex: 1 1 auto; }
+        /* The composite score's line is the longest of the others, so it gets a wider share. */
+        .tenure-review-evidence[data-testid="tenure-review-evidence-composite"] { flex: 3 1 14rem; }
+        /* The explanation takes the free width, so the status and the actions sit together at the end. */
+        .tenure-review-lifecycle > .retirement-rec-explanation { flex: 1 1 auto; }
+        .tenure-review-entry > .tenure-review-line[data-testid="tenure-review-missing"] { flex: 1 1 100%; }
+        /* Across the full width its heading and headline share one line. */
+        .tenure-review-evidence[data-testid="tenure-review-evidence-redundancy"] .tenure-review-evidence-summary > .tenure-review-evidence-meta,
+        .tenure-review-evidence[data-testid="tenure-review-evidence-redundancy"] .tenure-review-evidence-summary > .tenure-review-evidence-figure { display: inline; margin-left: 12px; }
 
         .tenure-review-evidence { border-top: 1px solid var(--studio-rule); padding: 0; break-inside: avoid; margin-bottom: 2px; }
         /* An item is a closed disclosure: the summary is its heading and one headline line; the rest of
@@ -1136,10 +1165,18 @@
             padding: 8px 0;
             font-size: 13px;
         }
+        /* On a wide page four equal columns share the line, each text starting at its column's left
+           edge, so the space beside a short text is never wider than one column; one stretching
+           column would stack a wide empty band down the producers. */
         .obs-producer-label { font-weight: 500; color: var(--studio-ink); margin: 0; }
         .obs-producer-verdict { min-width: 0; }
         .obs-producer-time, .obs-producer-total { color: var(--studio-ink-dim); font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
+        @media (min-width: 1240px) {
+            .obs-producer-line { grid-template-columns: minmax(0, 1.36fr) minmax(0, 1.52fr) minmax(0, 1.52fr) minmax(0, 0.96fr) minmax(0, 1fr); }
+            .obs-producer-time, .obs-producer-total { text-align: left; }
+        }
         .obs-history-toggle { color: var(--studio-ink-dim); font-size: 12px; text-align: right; }
+        @media (min-width: 1240px) { .obs-history-toggle { text-align: left; } }
         .obs-history-toggle::before { content: "+ "; }
         .obs-history[open] .obs-history-toggle::before { content: "\2212  "; }
         @media (max-width: 700px) {
@@ -1232,20 +1269,14 @@
             .autotune-panel > #autotune-runs-list:has(.autotune-empty) { grid-column: 2; }
         }
 
-        /* From 1240 px the rationale sits beside the description and its terms, so their short last
-           lines do not leave an empty band beside the lens row. */
         @media (min-width: 1240px) {
-            .prism-block:has(> .prism-rationale) {
-                display: grid;
-                grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-                column-gap: 24px;
-                align-items: start;
-            }
             .prism-lenses { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
-            .prism-block:has(> .prism-rationale) > * { grid-column: 1 / -1; }
-            .prism-block:has(> .prism-rationale) > .adv-explainer { grid-column: 1; grid-row: 2; }
-            .prism-block:has(> .prism-rationale) > details.hp-more { grid-column: 1; grid-row: 3; }
-            .prism-block:has(> .prism-rationale) > .prism-rationale { grid-column: 2; grid-row: 2 / span 2; }
+            /* A short rationale sits beside the description and its terms; a long one is as wide as its
+               text, so it takes a row of its own, in columns, under them. */
+            .prism-block:has(> .prism-rationale) { display: flex; flex-wrap: wrap; align-items: flex-start; column-gap: 24px; }
+            .prism-block:has(> .prism-rationale) > * { flex: 1 1 100%; min-width: 0; }
+            .prism-block:has(> .prism-rationale) > .prism-intro { flex: 2 1 28rem; }
+            .prism-block:has(> .prism-rationale) > .prism-rationale { flex: 1 1 auto; }
         }
 
         /* From 1240 px the history table's columns share its width, so no column leaves a wide empty
@@ -1260,24 +1291,17 @@
 
         /* Side by side, the tenure column's terms disclosure shares the row of its Run button and the line
            after it, so no wide empty band forms beside the short lines of its stack. */
-        .retirement-pair--side:has(.retirement-last-run > .retirement-last-run-line:only-child) > .retirement-subsection[data-testid="tenure-review-section"] > details.hp-more { flex: 0 0 auto; }
+        .retirement-pair--side.retirement-pair--never-run > .retirement-subsection[data-testid="tenure-review-section"] > details.hp-more { flex: 0 0 auto; }
         /* Before any run both columns hold short stacks; the wider column goes to the tenure side, whose
            explainer then wraps to fewer lines. */
-        .retirement-pair--side:has(.retirement-last-run > .retirement-last-run-line:only-child) { grid-template-columns: 3fr 4fr; }
-
-        /* From 1240 px the missing-items note follows the evidence columns it explains, so the head's facts
-           share one line and leave no empty band beside a second, short line. */
-        @media (min-width: 1240px) {
-            .tenure-review-entry > .tenure-review-line[data-testid="tenure-review-missing"] { order: 1; }
-            .tenure-review-entry > .tenure-review-lifecycle { order: 2; }
-        }
+        .retirement-pair--side.retirement-pair--never-run { grid-template-columns: 3fr 4fr; }
 
         /* From 1440 px the tab bar takes the left and the description the right, so the description's
            one line does not leave the right of the panel empty. */
         @media (min-width: 1440px) {
             .adv-panel--nav {
                 display: grid;
-                grid-template-columns: 880px minmax(0, 1fr);
+                grid-template-columns: max-content minmax(12rem, 1fr);
                 column-gap: 24px;
                 align-items: start;
             }
@@ -1539,6 +1563,7 @@
                     <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
                 {% endif %}
             </div>
+            <div class="prism-intro">
             <p class="adv-explainer" data-explainer="O15">An overnight read of the market through five lenses: technicals, sentiment, derivatives, macro and fundamentals. It is background for your decisions and changes nothing by itself.</p>
             <details class="hp-more" data-terms="O15">
                 <summary>What the terms mean</summary>
@@ -1546,6 +1571,7 @@
                 <p data-term="O19">Lenses: technicals reads price trends and breadth, sentiment reads news tone, derivatives reads volatility measures, macro reads rates, inflation and jobs data, and fundamentals reads company filings.</p>
                 <p data-term="O24">Numeric verification: each number the read lists as a cited figure is checked against lens data fetched after the read; verified means it matched, and unverifiable means there was nothing to check it against, not that it is wrong. Numbers that appear only in the prose are not checked.</p>
             </details>
+            </div>{# /prism-intro #}
 
             {% if market_prism_summary %}
 
@@ -2184,7 +2210,7 @@
             <div class="section-header matrix-card-header adv-heading">Retirement recommendations</div>
             <p class="adv-explainer" data-explainer="R01">Suggestions to retire a symphony that duplicates another or no longer earns its place. Nothing is retired for you: approving records your decision and gives you a checklist to wind the symphony down yourself in Composer.</p>
 
-            <div class="retirement-pair" data-testid="retirement-pair">
+            <div class="retirement-pair{% if not retirement_last_run %} retirement-pair--never-run{% endif %}" data-testid="retirement-pair">
 
             {# The recommender first: the card to act on is at the top, then the run it came from. #}
             <section class="retirement-subsection" data-testid="retirement-recommender-section">
@@ -3267,6 +3293,7 @@
                         <span class="card-name adv-card-name" data-testid="fr-incumbent-name" title="{{ p.symphony_id | e }}">{{ (p._incumbent_display_name or p.symphony_id) | e }} · proposal #{{ p.id }}</span>
                         {% if not is_fr %}<span class="fr-source" data-testid="proposal-source-badge">Strategy Builder (retrofit)</span>{% endif %}
                     </div>
+                    <div class="proposal-card-body">
                     <table class="stats-table" data-testid="stats-table">
                         {#- The figures are backtest figures, not what the symphony earned. A window is named only when both of its dates are stored. -#}
                         <caption class="stats-caption" data-testid="stats-backtest-label">Backtest figures{% if m.backtest_start and m.backtest_end %}, {{ m.backtest_start | e }} to {{ m.backtest_end | e }}{% endif %}</caption>
@@ -3342,6 +3369,7 @@
                             Reject
                         </button>
                     </div>
+                    </div>{# /proposal-card-body #}
                 </div>
                 {% endfor %}
             </div>

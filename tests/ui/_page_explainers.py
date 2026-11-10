@@ -151,8 +151,17 @@ EMPTY_REGION_JS = r"""
   const [selector, minW, minH] = args;
   const out = [];
   const num = (v) => parseFloat(v) || 0;
+  // What a closed <details> holds besides its summary is not visible, whatever boxes the browser
+  // keeps for it: the page carries no rule that removes them, so the measurement does not count them.
+  const inClosedDetails = (node) => {
+    for (let el = node.nodeType === 1 ? node : node.parentElement; el; el = el.parentElement) {
+      const holder = el.parentElement;
+      if (holder && holder.tagName === 'DETAILS' && !holder.open && el.tagName !== 'SUMMARY') return true;
+    }
+    return false;
+  };
   const shown = (el) => el.getClientRects().length > 0 &&
-      getComputedStyle(el).visibility !== 'hidden';
+      getComputedStyle(el).visibility !== 'hidden' && !inClosedDetails(el);
   const alphaOf = (c) => {
     const m = c.match(/rgba?\(([^)]+)\)/);
     if (!m) return 0;
@@ -178,7 +187,7 @@ EMPTY_REGION_JS = r"""
     };
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (!n.nodeValue.trim()) continue;
+      if (!n.nodeValue.trim() || inClosedDetails(n)) continue;
       const range = document.createRange();
       range.selectNodeContents(n);
       for (const g of range.getClientRects()) if (g.width > 0 && g.height > 0) add(g, n.parentElement);
@@ -188,8 +197,11 @@ EMPTY_REGION_JS = r"""
       const g = c.getBoundingClientRect();
       if (g.width > 0 && g.height > 0) add(g, c);
     }
+    // A filled bar is content, and so is the rail a bar fills (a track holding only its fill): an
+    // element with a visible background, no text and no control, canvas, SVG or image inside.
     for (const c of el.querySelectorAll('*')) {
-      if (c.children.length || (c.textContent || '').trim() || !shown(c)) continue;
+      if ((c.textContent || '').trim() || !shown(c)) continue;
+      if (c.children.length && c.querySelector('input,select,textarea,button,canvas,svg,img')) continue;
       const s = getComputedStyle(c);
       if (alphaOf(s.backgroundColor) > 0 || s.backgroundImage !== 'none') {
         const g = c.getBoundingClientRect();

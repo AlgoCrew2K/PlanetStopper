@@ -105,6 +105,26 @@ purpose and `baseline.json` was written again.
 - sha256 of `baseline.json` (LF line ends): `cde6821ffa2a6c12b535bbb77e3f8387aaf02889fe71ddf9ba4b274e3e8009dc`.
 - PM sign-off: not needed (producer output; the only differences are the plan's own added and re-arranged elements).
 
+## Revision: re-recorded at the page-explainers-and-density fix head
+
+The fix round re-arranged the dashboard hero, the History chart note and the Advisor Overview, Retirement and
+Frontrunner layouts, so the element set of 20 comparison cases changed on purpose and `baseline.json` was
+written again.
+
+- `base_sha` in the file, `BASE_SHA` in the producer and the producer's refusal now name
+  `6b63f53e0d718e230878df900a4aabc72c5b67ed`, the last production commit of the fix round; the producer refuses
+  unless `git diff --quiet` against it over `static templates app.py` exits 0 and those paths are clean (it ran in
+  a detached worktree with no `.env` at head `64dec7c95d19481686a6ac76cf47d94239833d0d`, whose `static`,
+  `templates` and `app.py` equal that commit; the later commits are test files). Run twice in separate
+  processes: the two records were equal apart from `captured_at_utc`.
+- Producer call and Firefox (`148.0.2`) as above; 76 views, 674 elements (was 686).
+- Compared with the previous record, view by view: the 76 view keys are the same; 20 views differ (Advisor 12,
+  Dashboard 4, History 4), all in their element set or an element's text or computed style; in every one of the 76
+  views the section headings (`.section-header`) are equal in tag, classes, margins and text to the previous
+  record, and the margins of the elements the shared rule matches are equal.
+- sha256 of `baseline.json` (LF line ends): `64c8f9ec615696324a3d3c2fd0898f49b68333c4b6d63727d46e1f327952668e`.
+- PM sign-off: not needed (producer output; the only differences are the fix round's own re-arranged elements).
+
 ## Regenerating
 
 A different Firefox version, or a deliberate change of a page that moves the elements, needs a new capture,

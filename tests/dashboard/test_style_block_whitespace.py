@@ -29,7 +29,11 @@ _REFERENCE_DIGESTS = {
     # Re-pinned after the padding override on the retirement recommendation card was dropped and the
     # tenure missing-items note was ordered after the evidence columns from 1240 px; the diff from the
     # previous pin is those two style changes and nothing else.
-    "ai_advisor.html": "1b91e6658328529d876c83ce34d8876d0e81a4eab4ad281b625d7abb426fe36d",
+    # Re-pinned after the production-shaped layout fixes (the tenure evidence row, the Frontrunner
+    # card columns, the Market Prism intro, the never-run pair class, the tab strip column, and the
+    # removal of the closed-disclosure rule and the stray selector-list comment); the diff from the
+    # previous pin is those style and markup changes and nothing else.
+    "ai_advisor.html": "9cd1fb30147eca113c80c14f3f8631b1978011789f32bc449da3b2ae0d638311",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     # Re-pinned after the Performance and History explainers, relabels and density layout were
     # added, and settings.html after the Settings explainers and density change (each diff
@@ -37,8 +41,10 @@ _REFERENCE_DIGESTS = {
     # Re-pinned again after the merged-head layout pass (the empty-state panel arrangements, the
     # Performance metric-table columns, the History empty table header rule and the lifted autotune
     # column tracks) and the Performance insufficient-history banner phrase; each diff is those rules.
-    "history.html": "522862dfdcaf8c87856ffce4d10e5feb3e0856a205b2ac4a1f6c6a90b52c2578",
-    "performance.html": "6e8c64ba02f26366b266e9b143c2c3310e80834752a31edc480a6eac4ef6157c",
+    # Re-pinned once more after the closed-disclosure rule was removed from both pages and the
+    # History chart note gained the space that keeps the tallest bar off it; each diff is that.
+    "history.html": "03156e78d1e86cac7a81ee56e0e6677e3ec100caee28ab5e812bf86d95e9eb0d",
+    "performance.html": "1d2646f9ed87f356fd8237baed0b4fa81b2654314c03276961d890c157e87b70",
     "settings.html": "6e07c5e17761f047e2493862f075709e748d7efd282a277e9fd4e636582acb78",
 }
 
