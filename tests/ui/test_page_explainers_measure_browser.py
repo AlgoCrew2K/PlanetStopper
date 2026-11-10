@@ -145,3 +145,80 @@ def test_height_facts_sum_the_explainers_and_the_term_summaries_and_the_relabell
     assert facts["relabelled"]["/"][1] == []
     assert facts["document_height"] >= 80 + 24 + 40
     assert facts["scroll_width"] <= facts["viewport_width"]
+
+
+# ---------------------------------------------------------------------------
+# Multi-column lists: the space under a content-holding column's last line is part of the list.
+# The narrowing is only that: empty columns, grid bands, bands beside short lines and a list that
+# lays out in one column are still reported.
+# ---------------------------------------------------------------------------
+
+_BAR = '<div class="bar" style="height:20px"></div>'
+
+
+def _stack(count: int) -> str:
+    return '<div style="break-inside:avoid">' + _BAR * count + "</div>"
+
+
+def _unequal(container_style: str) -> str:
+    """One tall item (8 bars) and one short item (1 bar) in a two-track container."""
+    return (
+        f'<div class="hp-panel" style="height:auto"><div style="column-gap:14px;{container_style}">'
+        f"{_stack(8)}{_stack(1)}</div></div>"
+    )
+
+
+def test_unequal_columns_of_a_multicolumn_list_leave_no_reported_region(firefox):  # noqa: F811
+    assert _empty(firefox, _unequal("columns:2"))[0]["largest_empty"] is None
+
+
+def test_the_same_unequal_tracks_in_a_grid_are_still_reported(firefox):  # noqa: F811
+    body = _unequal("display:grid;grid-template-columns:1fr 1fr")
+    empty = _empty(firefox, body)[0]["largest_empty"]
+    assert empty is not None and empty["w"] >= MIN_W and empty["h"] >= MIN_H
+
+
+def test_an_empty_column_of_a_multicolumn_list_is_still_reported(firefox):  # noqa: F811
+    """Four columns, content in the first two, the last two empty: the narrowing adds nothing there."""
+    filled = '<div class="hp-panel" style="height:auto"><div style="{style}">{items}</div></div>'
+    style = "columns:4;column-gap:14px;column-fill:auto;height:160px"
+    empty_tail = _empty(firefox, filled.format(style=style, items=_stack(8) + _stack(8)))
+    region = empty_tail[0]["largest_empty"]
+    assert region is not None and region["w"] >= MIN_W and region["h"] >= 150
+    all_filled = _empty(firefox, filled.format(style=style, items=_stack(8) * 4))
+    assert all_filled[0]["largest_empty"] is None
+
+
+def test_a_list_that_lays_out_in_one_column_gets_no_exemption(firefox):  # noqa: F811
+    """Two columns are asked for, only one fits: there is no column-fill imbalance to excuse."""
+    body = (
+        '<div class="hp-panel" style="height:auto"><div style="columns:2 200px;column-gap:14px;'
+        f'width:300px;height:160px">{_stack(1)}</div></div>'
+    )
+    region = _empty(firefox, body)[0]["largest_empty"]
+    assert region is not None and region["w"] >= 280 and region["h"] >= 130
+
+
+def test_a_band_beside_short_lines_above_a_multicolumn_list_is_still_reported(firefox):  # noqa: F811
+    short = "".join("<div>hi</div>" for _ in range(5))
+    body = (
+        f'<div class="hp-panel" style="height:auto">{short}'
+        f'<div style="columns:2;column-gap:14px">{_stack(8)}{_stack(1)}</div></div>'
+    )
+    region = _empty(firefox, body)[0]["largest_empty"]
+    assert region is not None and region["w"] >= MIN_W and region["h"] >= MIN_H
+    assert region["y"] + region["h"] <= 10 + 4 + 20 + 100 + 1, (
+        "the region must lie beside the short lines"
+    )
+
+
+def test_the_added_space_stops_at_the_lists_own_bottom_edge(firefox):  # noqa: F811
+    """Blank panel space below the list is a region of its own and is reported."""
+    body = (
+        '<div class="hp-panel" style="height:300px"><div style="columns:2;column-gap:14px">'
+        f"{_stack(8)}{_stack(1)}</div></div>"
+    )
+    region = _empty(firefox, body)[0]["largest_empty"]
+    list_bottom = 10 + 4 + 20 + 160
+    assert region is not None and region["w"] >= MIN_W and region["h"] >= MIN_H
+    assert region["y"] >= list_bottom - 1

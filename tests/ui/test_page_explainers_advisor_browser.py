@@ -375,6 +375,49 @@ def test_two_tall_retirement_subsections_stack_and_leave_no_empty_region(
         assert not offenders, "empty regions in the Retirement tab:\n" + "\n".join(offenders)
 
 
+_EVIDENCE_GRID_FAULT_CSS = (
+    ".tenure-review-evidence-grid { columns: 4rem 24; column-gap: 4px; column-fill: auto; "
+    "height: 300px; }"
+)
+_GRID_RECT_JS = """() => {
+  const g = document.querySelector('.tenure-review-evidence-grid');
+  const r = g.getBoundingClientRect();
+  return { l: r.left, t: r.top, r: r.right, b: r.bottom };
+}"""
+
+
+@pytest.mark.parametrize("size", DESKTOPS)
+def test_empty_columns_in_the_evidence_grid_are_still_reported(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    size,  # noqa: F811
+):
+    """The column-bottom allowance never hides a column that holds nothing.
+
+    A fault gives the evidence grid far more columns than items, filled in order, so most
+    columns are empty: the measurement must report a region that lies inside the grid.
+    """
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_cards_and_long_review)
+    with _open(firefox, advisor_server, size, "retirement") as opened:
+        opened.page.add_style_tag(content=_EVIDENCE_GRID_FAULT_CSS)
+        opened.page.wait_for_timeout(150)
+        grid = opened.evaluate(_GRID_RECT_JS)
+        found = opened.evaluate(
+            harness.EMPTY_REGION_JS,
+            [_scoped('[data-testid="tab-panel-retirement"]'), MIN_W, MIN_H],
+        )
+        inside = [
+            f["largest_empty"]
+            for f in found
+            if f["largest_empty"] is not None
+            and grid["l"] <= f["largest_empty"]["x"] + f["largest_empty"]["w"] / 2 <= grid["r"]
+            and grid["t"] <= f["largest_empty"]["y"] + f["largest_empty"]["h"] / 2 <= grid["b"]
+        ]
+        assert inside, f"empty columns of the evidence grid were not reported: {found}"
+
+
 @pytest.mark.parametrize("size", [PHONE, VERY_NARROW])
 def test_the_retirement_subsections_always_stack_on_a_phone_even_when_short(
     firefox,
