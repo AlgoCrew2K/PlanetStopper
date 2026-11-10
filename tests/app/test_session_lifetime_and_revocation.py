@@ -2166,7 +2166,9 @@ class TestUseNeverPushesTheCookieExpiryForward:
         monkeypatch.setattr(app_module.app, "permanent_session_lifetime", timedelta(hours=720))
         client = _client()
         login, _, login_received = _login_over_the_wire(client)
-        login_expiry = max(_absolute_expiries(_the_session_cookie(login), login_received))
+        login_expiries = _absolute_expiries(_the_session_cookie(login), login_received)
+        assert login_expiries, "the login set a session-only cookie, so there is no expiry to hold"
+        login_expiry = max(login_expiries)
         clock.advance(hours=1)
         time.sleep(2.2)  # real seconds: a refreshed expiry would sit at least two seconds later
 
