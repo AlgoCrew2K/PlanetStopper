@@ -81,7 +81,9 @@ class TestTheControlIsNamedByItsLabel:
 
     def test_the_never_run_line_names_the_real_button(self):
         text = _visible_text(render_page("/ai-advisor"))
-        lines = _sentences_with(text, "Not run yet")
+        # The line itself opens with "Not run yet"; another sentence of the page may say a lookup "has not
+        # run yet" (the model note) and is not this line.
+        lines = [s for s in _sentences_with(text, "Not run yet") if s.startswith("Not run yet")]
         assert lines, "precondition: a page with no run shows the never-run line"
         assert all(REAL_LABEL in line for line in lines), lines
 
