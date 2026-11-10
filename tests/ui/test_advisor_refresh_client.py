@@ -352,6 +352,26 @@ class TestSharedLine:
         assert len(stamps) == 11 and all(stamps), "a row lost its run time"
         assert len(set(stamps)) == 11, "premise: the seeded run times differ"
 
+    def test_a_lifted_column_leaves_the_row_with_no_cell_left_behind(self):
+        pe.seed_autotune_runs(11)
+        out = shared_run(
+            f"const rows = H.$$('#autotune-runs-list {CARDS}');"
+            f' return {{head: H.$$("{HEADERS}").length,'
+            " perRow: rows.map((r) => r.children.length),"
+            " cells: rows.map((r) => Array.from(r.children).map((c) => norm(c.textContent))),"
+            " leftover: rows.map((r) => r.querySelectorAll("
+            "'.autotune-run-outcome, .autotune-run-score, .autotune-run-tstat').length)};",
+            route(RUNS, adv.autotune_runs_answer(), method="GET"),
+        )
+        r = out.result
+        assert r["head"] > 0 and len(r["perRow"]) == 11, "premise: the rows rendered"
+        assert r["perRow"] == [r["head"]] * 11, (
+            f"a row holds {r['perRow']!r} cells against {r['head']} header cells"
+        )
+        assert r["leftover"] == [0] * 11, f"a lifted column left a cell in a row: {r['leftover']!r}"
+        for cells in r["cells"]:
+            assert all(cells), f"a row holds an empty cell: {cells!r}"
+
     def test_a_column_that_differs_in_one_row_stays_in_every_row(self):
         pe.seed_autotune_runs(11, adopted_at=3)
         body = adv.autotune_runs_answer()
