@@ -746,7 +746,7 @@
             .proposal-card-body { display: grid; grid-template-columns: minmax(0, 1fr) 32rem; grid-template-rows: 1fr 1fr; gap: 0 24px; align-items: stretch; }
             .proposal-card-body > .stats-table { grid-column: 1; grid-row: 1 / -1; }
             .proposal-card-body > .fr-card-flow { grid-column: 2; grid-row: 1; flex-wrap: nowrap; align-items: center; justify-content: space-between; }
-            .sym-card.proposal-card .proposal-card-body > .proposal-actions { grid-column: 2; grid-row: 2; margin-top: 0; padding-top: 0; justify-content: flex-start; align-items: center; }
+            .sym-card.proposal-card .proposal-card-body > .proposal-actions { grid-column: 2; grid-row: 2; margin-top: 0; justify-content: flex-start; align-items: center; }
         }
         /* A stretched card keeps its short lines in rows that fill its width instead of down its left edge. */
         .fr-card-flow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
@@ -1119,17 +1119,16 @@
         .tenure-review-entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
         .tenure-review-line { color: var(--studio-ink-dim); font-size: 12px; margin-bottom: 4px; }
         .tenure-verdict-chip--none { --dot: var(--studio-ink-dim); }
-        /* The evidence items are flex items of the entry, wrapping: a short item shares a row with the
-           others, and the redundancy item (which lists every sibling it was compared with) is as wide
-           as its text, so a long one takes a row of its own, where its text leaves no empty block
-           beside it, and a short one sits in the row with the rest. One column on a phone. */
-        .tenure-review-evidence-grid { display: contents; }
-        .tenure-review-evidence { flex: 1 1 11rem; min-width: 0; margin-top: 8px; }
+        /* The evidence items wrap in one flex row: a short item shares a row with the others, and the
+           redundancy item (which lists every sibling it was compared with) is as wide as its text, so a
+           long one takes a row of its own, where its text leaves no empty block beside it, and a short
+           one sits in the row with the rest. One column on a phone. */
+        .tenure-review-evidence-grid { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 16px; margin-top: 8px; }
+        .tenure-review-evidence { flex: 1 1 8rem; min-width: 0; }
+        @media (max-width: 700px) { .tenure-review-evidence { flex-basis: 100%; } }
         .tenure-review-evidence[data-testid="tenure-review-evidence-redundancy"] { order: 1; flex: 1 1 auto; }
-        /* The composite score's line is the longest of the others, so it gets twice their share. */
-        .tenure-review-evidence[data-testid="tenure-review-evidence-composite"] { flex: 3 1 17rem; }
-        /* The lifecycle is as wide as its text: a short one shares the row of a short redundancy item. */
-        .tenure-review-entry > .tenure-review-lifecycle { order: 2; flex: 1 1 auto; }
+        /* The composite score's line is the longest of the others, so it gets a wider share. */
+        .tenure-review-evidence[data-testid="tenure-review-evidence-composite"] { flex: 3 1 14rem; }
         /* The explanation takes the free width, so the status and the actions sit together at the end. */
         .tenure-review-lifecycle > .retirement-rec-explanation { flex: 1 1 auto; }
         .tenure-review-entry > .tenure-review-line[data-testid="tenure-review-missing"] { flex: 1 1 100%; }
