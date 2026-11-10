@@ -17,7 +17,9 @@ The browser readings (S-5.1, S-5.2) are in ``test_page_explainers_unchanged_brow
 
 from __future__ import annotations
 
+import glob
 import json
+import os
 import pathlib
 import re
 
@@ -57,6 +59,17 @@ def world(tmp_path, monkeypatch):
     harness.credential_free_environment(
         tmp_path / "page.env", monkeypatch.setattr, lambda n: monkeypatch.delenv(n, raising=False)
     )
+    # analytics sums the seeded post-mortem days in the order the filesystem lists them, and a float
+    # sum depends on its order: the reference was captured on a host that lists them by name, so a
+    # host that lists them otherwise (Linux CI) differs in the last digits of the totals. The test
+    # fixes the one input the code does not: the listing is by name.
+    real_glob = glob.glob
+
+    def post_mortem_days_by_name(pattern, *args, **kwargs):
+        found = real_glob(pattern, *args, **kwargs)
+        return sorted(found) if "post_mortem_" in os.fspath(pattern) else found
+
+    monkeypatch.setattr(glob, "glob", post_mortem_days_by_name)
 
     def make(name: str):
         harness.seed_world(name, tmp_path, monkeypatch.setattr)
