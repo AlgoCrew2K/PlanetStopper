@@ -102,6 +102,39 @@ def test_the_guard_effect_description_reads_under_the_headline_at_full_width(
     )
 
 
+_ROW_FIGURES_JS = """() => {
+  const lefts = (suffix) => [...document.querySelectorAll(
+      '[data-testid^="comp-"][data-testid$="-' + suffix + '-text"]')]
+    .filter((el) => el.getClientRects().length > 0)
+    .map((el) => ({ id: el.getAttribute('data-testid'), left: el.getBoundingClientRect().left }));
+  return { bot: lefts('bot'), held: lefts('held') };
+}"""
+
+
+@pytest.mark.parametrize("width", [1440, 1240])
+def test_the_figures_of_every_hero_row_line_up_under_each_other_when_a_row_has_no_gap_figure(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    seeded,
+    width,
+):
+    """The Max DD row hides its gap figure while it waits for history; its Bot and Held figures
+    must still sit under those of the rows above, not shift right into the gap's place."""
+    seeded("dashboard_full")
+    with _Dashboard(firefox, advisor_server, width) as probe:
+        hidden = probe.page.evaluate(
+            '() => [...document.querySelectorAll(\'[data-testid^="comp-"][data-testid$="-delta"]\')]'
+            ".filter((el) => el.hidden).length"
+        )
+        assert hidden >= 1, "premise: a row's gap figure is hidden in this state"
+        read = probe.page.evaluate(_ROW_FIGURES_JS)
+    for kind in ("bot", "held"):
+        figures = read[kind]
+        assert len(figures) >= 3, f"premise: three rows show their {kind} figure: {figures}"
+        spread = max(f["left"] for f in figures) - min(f["left"] for f in figures)
+        assert spread <= 1, f"the {kind} figures of the hero rows do not line up: {figures}"
+
+
 @pytest.mark.parametrize("width", [1440, 1240])
 def test_the_hero_holds_no_empty_region_once_the_headline_has_a_real_figure(
     firefox,  # noqa: F811
