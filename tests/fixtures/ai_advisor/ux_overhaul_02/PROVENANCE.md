@@ -179,6 +179,11 @@ through `tests/_advisor_overview_prism.py`.
   (`class="section-header prism-block-title"`). A line diff of the old and new baseline shows exactly those
   two lines changed and no text, attribute other than `class`, testid or Jinja expression changed; the
   guard still pins every other line of the block.
+- Re-captured at the page-explainers-and-density fix round (same script, nothing edited): the block gained one
+  wrapper, `<div class="prism-intro">` ... `</div>{# /prism-intro #}`, around the description and its term
+  disclosure, so the two sit together in one column and the disclosure stays directly under its description
+  (the ruled placement rule, review row UX-3). A line diff of the old and new baseline shows exactly those two
+  lines added and nothing else changed; the guard still pins every other line of the block.
 - Re-captured at the advisor density pass (branch unslop/advisor, same script, nothing edited): the block was
   rewritten on purpose (the verdict moved to the title line, each lens became a name-and-status head over a
   clamped summary, the per-lens source carousels moved behind one closed `<details>` that counts them, and the

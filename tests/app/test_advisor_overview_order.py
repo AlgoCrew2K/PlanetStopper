@@ -101,6 +101,9 @@ class TestOverviewOrder:
 
 class TestPrismBlockIsMovedNotEdited:
     def test_the_block_text_equals_the_copy_captured_before_the_move(self):
+        """Every line of the block equals the recorded copy. The copy is re-captured only for an
+        edit the plan rules on (see PROVENANCE.md, Prism block records), never to absorb an
+        unruled change: the last admitted edit is the description-and-disclosure wrapper."""
         expected = BASELINE.read_text(encoding="utf-8")
         actual = prism_block_source(TEMPLATE.read_text(encoding="utf-8"))
         assert actual == expected
