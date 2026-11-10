@@ -290,6 +290,9 @@ ROWS_STATE = f"""
   const listHtml = () => H.$('#autotune-runs-list').innerHTML;
 """
 OLD_CELL_WORDS = ("N/A", "Frozen-eval", "Fallback")
+# The score column's header when the seeded runs carry no objective; a lifted column has no header.
+SCORE_HEAD = "Best objective score"
+STREAK_HEAD = "Runs without adopting a tuned config"
 
 
 def shared_run(scenario, *routes_):
@@ -317,12 +320,13 @@ class TestSharedLine:
         )
         r = out.result
         names = _body_names(body["json"])
-        score_head = r["heads"][4]
         expected = (
             pe.SHARED_LINE_PREFIX
-            + f"Outcome Fallback, Frozen-eval not evaluated; {score_head} N/A; Sel t-stat N/A"
+            + f"Outcome Fallback, Frozen-eval not evaluated; {SCORE_HEAD} N/A; Sel t-stat N/A"
         )
-        assert r["heads"][2] == "Outcome" and r["heads"][5] == "Sel t-stat", r["heads"]
+        assert r["heads"] == ["Symphony", "Run time (ET)", STREAK_HEAD], (
+            f"a stated column keeps its header: {r['heads']!r}"
+        )
         assert r["lines"] == [expected], f"the line reads {r['lines']!r}, not {expected!r}"
         assert len(r["rows"]) == 11
         for text in r["rows"]:
@@ -357,8 +361,10 @@ class TestSharedLine:
             route(RUNS, body, method="GET"),
         )
         r = out.result
-        score_head = r["heads"][4]
-        assert r["lines"] == [pe.SHARED_LINE_PREFIX + f"{score_head} N/A; Sel t-stat N/A"], r[
+        assert r["heads"] == ["Symphony", "Run time (ET)", "Outcome", STREAK_HEAD], (
+            f"only the two stated columns leave the header: {r['heads']!r}"
+        )
+        assert r["lines"] == [pe.SHARED_LINE_PREFIX + f"{SCORE_HEAD} N/A; Sel t-stat N/A"], r[
             "lines"
         ]
         assert r["pills"] == 11, "Outcome left a row although it differs in one"
