@@ -237,7 +237,10 @@ def test_each_disclosure_starts_closed_and_opens_to_its_exact_rows(
             assert probe.page.evaluate("(s) => document.querySelector(s).open", selector) is False
             hidden_before = probe.page.evaluate(
                 "(s) => [...document.querySelectorAll(s + ' [data-term]')]"
-                ".every((p) => p.getClientRects().length === 0)",
+                # A closed details shows only its summary: its other children are not visible
+                # whatever boxes the browser keeps for them (no page rule removes them).
+                ".every((p) => { const d = p.closest('details');"
+                " return !!d && !d.open && !p.closest('summary'); })",
                 selector,
             )
             assert hidden_before, f"{anchor}: the definitions show while the disclosure is closed"
