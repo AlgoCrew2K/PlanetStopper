@@ -1,5 +1,5 @@
 # Feature: Aligned tables and quiet copy
-Status: gate-1
+Status: ready
 Story: none: the request is quoted in Trigger and saved verbatim in feature-plans/aligned-tables-and-quiet-copy.source.md
 Type: fix
 Suite: none
@@ -60,7 +60,7 @@ Every table on every in-scope page lines up under its own header, and every page
 [G-3] THE TABLES THAT DON'T ACTUALLY ALIGN, RANDOM FU CKING TEXT EVERYWHERE? aligned-tables-and-quiet-copy.source.md:1
 [G-4] THIS IS FUCKING BULLSHIT aligned-tables-and-quiet-copy.source.md:1
 [G-5] (The PM's note on the image, in the source) "(Image #1: the operator's screenshot of the AI Advisor Overview tab on the droplet at c0760e70, about 2000 px wide, saved by the operator at [a file path on the operator's machine, omitted here because a plan names no machine-local path].)" aligned-tables-and-quiet-copy.source.md:3
-G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of the attached image, verbatim apart from the omitted path. G-6 to G-16 are the PM's intake rulings K-1 to K-11, G-17 the PM brief's Not Building line, and G-18 to G-26 to G-31 the PM's rulings on the auditor's findings and questions, and G-32 and G-33 its rulings on the architect's raised items; each is [PM-ASSUMED] and recorded as the PM gave it, and together they supersede feature-plans/page-explainers-and-density.md where they differ.
+G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of the attached image, verbatim apart from the omitted path. G-6 to G-16 are the PM's intake rulings K-1 to K-11, G-17 the PM brief's Not Building line, and G-18 to G-26 to G-31 the PM's rulings on the auditor's findings and questions, G-32 and G-33 its rulings on the architect's raised items, and G-34 its approval of the plan; each is [PM-ASSUMED] and recorded as the PM gave it, and together they supersede feature-plans/page-explainers-and-density.md where they differ.
 [G-6] (PM ruling K-1; [PM-ASSUMED]) "Tables align. In every table, each column's header sits directly above that column, and every row's cells line up under it, at every width of 1001 px and up (narrower widths keep the existing stacked-row form). A table never flows its rows into side-by-side groups. Numeric columns are right-aligned, header included, on every table. Repeated cards that show the same fields (tenure review cards, retirement evidence) place each field at the same x position on every card."
 [G-7] (PM ruling K-2; [PM-ASSUMED]) "Alignment beats filling space. page-explainers-and-density AC-6 (no 240 by 80 px empty region at 1440) is withdrawn. A table or line may end before its panel's right edge. No layout moves text beside the tab bar, to the far end of a toolbar, or into another section's column to fill space. Columns sit at the width their content needs, not stretched to the panel edge with wide gaps between a label and its value."
 [G-8] (PM ruling K-3; [PM-ASSUMED]) "One description per section, at most one sentence of at most 25 words, directly under its heading, saying what the section is and why the operator cares. No page-level description beside or above the Advisor tab bar; no tab-level description when the tab's first section says the same. A fact appears once per screen: no hint, caption, banner or run note restates a description. Fixed boilerplate paragraphs (O-8's) are removed or folded into the glossary."
@@ -93,6 +93,8 @@ G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of th
 
 [G-32] (PM ruling on the architect's raised item, the AC-1 matrix cell; [PM-ASSUMED]) "Rule-by-Entry-Point Matrix: the AC-1 x "Host the page script builds" cell currently reads n/a. It should name S-1.20 and S-1.21, because Table T has TT-22, TT-23 and TT-25 there."
 [G-33] (PM ruling on the architect's raised item, word-for-word moves; [PM-ASSUMED]) "Glossary word-for-word rule (G2 / S-3.3 area): an entry may drop the term's own name and a leading "is" or "are" from the moved sentence. So O31a reads "Spec Critic: an active guardrail ..." and O31c reads "Divergence Explainer: disabled ...". Every other word stays word for word."
+
+[G-34] (PM approval of the plan, scaffold Step 7, under the operator's standing directive "Fully autonomous, ask nothing"; [PM-ASSUMED]) "Every open question is "default approved": Q-1, Q-3, Q-4, Q-5, Q-7, Q-8, Q-9 and Q-14. Every Not Building entry, NB-1 to NB-13, is approved. Every Narrowed mapping is approved as stated."
 
 ## Requirement Inventory
 | R-n | Requirement item | Source (G ids) | Maps to (AC ids, or NB-n) | Scope (full, or narrowed: what is left out) |
@@ -145,6 +147,7 @@ G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of th
 | R-46 | The tenure line reads "not decided", with N from its derivation, never a literal | G-29 | AC-6 | full |
 | R-48 | The AC-1 matrix cell for the hosts the page script builds names S-1.20 and S-1.21 | G-32 | AC-1 | full |
 | R-49 | A sentence moved into a Glossary may drop the term's own name and a leading "is" or "are"; every other word stays | G-33 | AC-3, AC-4 | full |
+| R-50 | The plan is approved: every open question default approved, every Not Building entry approved, every narrowed mapping approved as stated | G-34 | NB-11 | full |
 | R-47 | Table W measures the 1401 to 1439 band at 1420; Table T classes the suggestion, swap result, logic-change proposal and detail variable groups; TT-16 cites the server-rendered rows | G-31 | AC-1, AC-2 | full |
 
 ## User Tasks
@@ -729,7 +732,7 @@ Behaviour that stays exactly as it is:
 - NB-10: The correlation matrix's centred tiles (Q-4).
 
 Deferred:
-- NB-11: A proper table for the dashboard detail panel's Risk Profile, which static/index.js fills with rows that are not a table element; it is outside Table T (proposed: a follow-up if the PM's visual check finds it misaligned).
+- NB-11: A proper table for the dashboard detail panel's Risk Profile, which static/index.js fills with rows that are not a table element; it is outside Table T (approved by the PM [PM-ASSUMED]: a follow-up if the PM's visual check finds it misaligned).
 
 Protected surfaces consumed but not changed:
 - NB-12: `alpha_bot_execution.py`, `math_engine.py`, `database.py`, `advisors/tenure_review.py` and `migrations/` (S-7.6).
@@ -832,20 +835,20 @@ The operator reads each page without finding a header off its column or a senten
 ## Open Questions
 | Q-n | Question | Blocks (AC ids or "plan") | Proposed default | Answer |
 |---|---|---|---|---|
-| Q-1 | G-10 gives the form "Latest run Nov 6, 7:08 PM ET"; every other stamp on the page prints as "2026-11-06 19:08 ET" through one formatter (`static/ai_advisor.js:87`, `analytics.format_et_stamp`). Which format does the sentence use? | AC-5 | the page's existing stamp, "Latest run 2026-11-06 19:08 ET: ..." so one screen has one time format | |
-| Q-2 | removed: settled by PM ruling (G-24) | plan | n/a | |
-| Q-3 | Do the dashboard detail panel and the settings modal each end with their own Glossary, since they cover the page while open? | AC-4 | yes, each its own | |
-| Q-4 | Does the right-aligned numeric rule apply to the correlation matrix, whose cells are colour tiles? | AC-1 | no: its headers and tiles share a centre within 1 px instead | |
-| Q-5 | On Settings, where only one of five sections shows at a time, where is the Glossary? | AC-4 | after the five sections in the page content, shown whichever section is chosen | |
-| Q-6 | removed: settled by PM ruling (G-25) | plan | n/a | |
-| Q-7 | Does the AC-9 check include the open detail panel and settings modal, which G-16 does not name but G-13 lists as surfaces? | AC-9 | yes | |
-| Q-8 | Does the "Model not known" definition (A04) go in every tab whose model line can read "not known"? | AC-4 | yes: Overview, Asset Swaps, Logic Changes, Chat and Strategy Builder | |
-| Q-9 | Which columns count as numeric? | AC-1 | a column whose body cells each hold a number, a percent, a signed figure, a count or a dash, its header included | |
-| Q-14 | What does the link in the Retirement row's last cell read? | AC-2 | "Open tab" | |
-| Q-10 | removed: settled by PM ruling (G-28: S01 drops the clause S02 states) | plan | n/a | |
-| Q-11 | removed: settled by PM rulings (G-19, G-28) | plan | n/a | |
-| Q-12 | removed: settled by PM rulings (G-23, G-28) | plan | n/a | |
-| Q-13 | removed: settled by PM ruling (G-28: G-17 stands as recorded) | plan | n/a | |
+| Q-1 | G-10 gives the form "Latest run Nov 6, 7:08 PM ET"; every other stamp on the page prints as "2026-11-06 19:08 ET" through one formatter (`static/ai_advisor.js:87`, `analytics.format_et_stamp`). Which format does the sentence use? | AC-5 | the page's existing stamp, "Latest run 2026-11-06 19:08 ET: ..." so one screen has one time format | default approved (PM approval under the operator's standing autonomy directive) [PM-ASSUMED] |
+| Q-2 | removed: settled by PM ruling (G-24) | plan | n/a | settled by PM ruling before approval [PM-ASSUMED] |
+| Q-3 | Do the dashboard detail panel and the settings modal each end with their own Glossary, since they cover the page while open? | AC-4 | yes, each its own | default approved (PM approval under the operator's standing autonomy directive) [PM-ASSUMED] |
+| Q-4 | Does the right-aligned numeric rule apply to the correlation matrix, whose cells are colour tiles? | AC-1 | no: its headers and tiles share a centre within 1 px instead | default approved (PM approval under the operator's standing autonomy directive) [PM-ASSUMED] |
+| Q-5 | On Settings, where only one of five sections shows at a time, where is the Glossary? | AC-4 | after the five sections in the page content, shown whichever section is chosen | default approved (PM approval under the operator's standing autonomy directive) [PM-ASSUMED] |
+| Q-6 | removed: settled by PM ruling (G-25) | plan | n/a | settled by PM ruling before approval [PM-ASSUMED] |
+| Q-7 | Does the AC-9 check include the open detail panel and settings modal, which G-16 does not name but G-13 lists as surfaces? | AC-9 | yes | default approved (PM approval under the operator's standing autonomy directive) [PM-ASSUMED] |
+| Q-8 | Does the "Model not known" definition (A04) go in every tab whose model line can read "not known"? | AC-4 | yes: Overview, Asset Swaps, Logic Changes, Chat and Strategy Builder | default approved (PM approval under the operator's standing autonomy directive) [PM-ASSUMED] |
+| Q-9 | Which columns count as numeric? | AC-1 | a column whose body cells each hold a number, a percent, a signed figure, a count or a dash, its header included | default approved (PM approval under the operator's standing autonomy directive) [PM-ASSUMED] |
+| Q-14 | What does the link in the Retirement row's last cell read? | AC-2 | "Open tab" | default approved (PM approval under the operator's standing autonomy directive) [PM-ASSUMED] |
+| Q-10 | removed: settled by PM ruling (G-28: S01 drops the clause S02 states) | plan | n/a | settled by PM ruling before approval [PM-ASSUMED] |
+| Q-11 | removed: settled by PM rulings (G-19, G-28) | plan | n/a | settled by PM ruling before approval [PM-ASSUMED] |
+| Q-12 | removed: settled by PM rulings (G-23, G-28) | plan | n/a | settled by PM ruling before approval [PM-ASSUMED] |
+| Q-13 | removed: settled by PM ruling (G-28: G-17 stands as recorded) | plan | n/a | settled by PM ruling before approval [PM-ASSUMED] |
 
 ## Decisions
 | ID | Decision | Rationale |
