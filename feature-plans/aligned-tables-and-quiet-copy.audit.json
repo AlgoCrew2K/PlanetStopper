@@ -1,107 +1,164 @@
 {
-  "spec_audit": "feature-plans/aligned-tables-and-quiet-copy.md (tier: feature), re-check",
-  "verified_against": "PlanetStopper @ c0760e70eb6f (worktree .claude/worktrees/atq, branch feat/aligned-tables-and-quiet-copy; untracked: only the plan, its source and this file); plan-trace check --stage gate-1 clean, self-contained 0 findings, angle-bracket grep 0 hits, all rerun this turn",
+  "spec_audit": "feature-plans/aligned-tables-and-quiet-copy.md (tier: feature), narrow re-check of the text from PM rulings G-18 to G-28 (authorized by the PM)",
+  "verified_against": "worktree HEAD db634dbf8030 (## feat/aligned-tables-and-quiet-copy; the commit adds the plan files only); code read at PlanetStopper@c0760e70eb6f with git show; plan-trace check --stage gate-1 clean, self-contained 0 findings, angle-bracket grep 0 hits",
   "checklist": ".claude/agents/_refs/spec-review-checklist.md (project copy)",
-  "result": "1 CONFIRMED, 3 QUESTION (open); 29 first-round findings resolved",
-  "verdict": "NOT READY: one CONFIRMED finding remains (32); the loop is capped, so it goes to the PM",
-  "open_findings": [
+  "source": "the rulings file's section 'PM rulings sent to atq-spec after the first audit', Messages A, B and C",
+  "result": "7 CONFIRMED, 0 QUESTION",
+  "verdict": "NOT READY",
+  "findings": [
     {
-      "n": 32,
-      "section": "B",
+      "n": 40,
+      "section": "A",
       "classification": "CONFIRMED",
-      "location": "Decisions D-8; AC-6 rule ('... and the paired-with sibling (D-8)'); S-6.2 ('\"paired with:\" names the shown sibling as at the ref')",
-      "spec_says": "D-8 keeps the paired-with sibling on an unavailable redundancy item because 'that pair was compared (its gates read \"not met\" or \"not evaluated\" with a reason), so it is not a comparison that could not be made (G-11)'",
-      "code_does": "the shown pair is the most correlated screen hit 'even one with too few aligned days to be evaluated', so its gates can read 'insufficient data' or 'undefined', not only 'not met' or 'not evaluated'. A pair below the floor (the larger of the structural-gate days, derived at import at retirement_recommender.py:180, and MIN_OBS_FLOOR) has not reached a result, so that same sibling is also one of the listed undecided peers. S-6.2 then keeps naming, in the Redundancy cell, a symphony whose comparison could not be made, which is what G-11 forbids, so D-8's premise is false for this case. Whether the 9 pair-kept production cards are this case (their peers have 153 to 170 aligned days) is settled by KU-4's tenure query, comparing evidence.redundancy.pair n_obs and its gate states with the floor. Either drop or count the paired-with name when the shown pair has not reached a result, or have the PM rule on it as a narrowing of R-25 (currently marked full)",
+      "location": "Requirements as Given, G-18",
+      "spec_says": "G-18 quotes the PM's tenure-card ruling, including '(verify where it lives)' after 'if a configured value exists for it' and a closing sentence 'The WHAT must cover the card as rendered from the stored rows above; leave the HOW to Gate 2.'",
+      "code_does": "the recorded source (rulings file, Message A, 'PM ruling on R-1 / K-6', recorded as verbatim) has neither phrase: it reads '... naming the required count if a configured value exists for it. The full stored reason ... no stored row is rewritten (K-9).' G-19 to G-28 match their sources character for character (scripted comparison); G-18 does not. Either the plan quotes text that is not in the ruling, or the record dropped it. Make G-18 equal the recorded ruling, or have the PM correct the record",
       "evidence": [
         [
-          "PlanetStopper:advisors/tenure_review.py:1430-1434",
-          "the pair its row shows: the most correlated flagging pair, else the most correlated screen hit, even one with too few aligned days to be evaluated"
+          "rulings file, Message A",
+          "PM ruling on R-1 / K-6: the card states the missing redundancy item ONCE ... naming the required count if a configured value exists for it. The full stored reason stays reachable behind a closed disclosure on that card, never shown by default. No producer change in advisors/tenure_review.py, and no stored row is rewritten (K-9)."
+        ]
+      ]
+    },
+    {
+      "n": 41,
+      "section": "B",
+      "classification": "CONFIRMED",
+      "location": "G-25 mapping: R-42 (full), NB-8, S-6.18",
+      "spec_says": "NB-8 and S-6.18 keep, by name, 'the \"not compared\" lines inside the Redundancy cell's closed disclosure' along with the Marginal left-out lines and the last run's excluded list; R-42 maps G-25 at full scope",
+      "code_does": "G-25: 'K-6 covers only the tenure card's list of symphonies a comparison could not be made with.' The 'not compared: {name}, bases differ' lines are exactly that list: the producer builds them as 'The peers with a series on another basis, which no pair could compare'. G-25 exempts the left-out lines, not these. Keeping their names contradicts G-11 and G-25, and the earlier revision's count form ('not compared: {k} other symphonies, bases differ') is gone. Production has none today (not_compared is empty on every card, rulings file Message A), so nothing renders yet, but the rule as written permits it",
+      "evidence": [
+        [
+          "PlanetStopper:advisors/tenure_review.py:1446-1452",
+          "def _not_compared(p, preps): \"\"\"The peers with a series on another basis, which no pair could compare.\"\"\""
         ],
         [
-          "PlanetStopper:advisors/tenure_review.py:243-249",
-          "_GATE_INSUFFICIENT = \"insufficient data\" ... _GATE_UNDEFINED = \"undefined\""
+          "PlanetStopper:templates/ai_advisor.html:2192-2197",
+          "not compared: {{ peer.get('display_name') | tenure_text }}, {{ peer.get('reason') | tenure_text }}"
+        ]
+      ]
+    },
+    {
+      "n": 42,
+      "section": "B",
+      "classification": "CONFIRMED",
+      "location": "AC-6 rule; S-6.1 with S-6.2 (from G-18 together with G-27)",
+      "spec_says": "on the production card the missing line reads 'redundancy (not compared: too few shared trading days with the other symphonies; 181 are needed)', and the same card's Redundancy cell names the paired sibling with its correlation (0.75 with its interval in production, D-8)",
+      "code_does": "the two rulings put a new contradiction on one card. The pair was compared: it has at least MIN_OBS_FLOOR (30) aligned days and a computed correlation and interval, which G-27 keeps on screen. What falls short is the 181-day floor the structural-redundancy gate needs before the comparison can decide. So 'not compared' is untrue for every pair-kept card (9 of the 10 in production). N = 181 is verified by evaluating the review's floor at the ref. The wording is G-18's, so this needs a PM ruling, for example 'compared, but too few shared trading days to decide; 181 are needed'",
+      "evidence": [
+        [
+          "PlanetStopper:advisors/tenure_review.py:1533",
+          "floor = max(_structural_needs_days(), retirement_recommender.MIN_OBS_FLOOR)"
         ],
         [
           "PlanetStopper:advisors/tenure_review.py:1487",
           "if pair[\"n_obs\"] < floor or pair[\"correlation\"] is None:"
         ],
         [
-          "PlanetStopper:advisors/tenure_review.py:1533-1538",
-          "floor = max(_structural_needs_days(), retirement_recommender.MIN_OBS_FLOOR) ... if not _comparison_reached_result(pair_with[q.sym.symphony_id], floor)"
+          "computed at the ref",
+          "max(_structural_needs_days(), MIN_OBS_FLOOR) = 181; STRESS_GATE_MIN_ALIGNED_DAYS = 181"
+        ],
+        [
+          "plan:D-8",
+          "in production the pair's correlation is computed (0.75 with an interval)"
         ]
       ]
     },
     {
-      "n": 33,
-      "section": "A",
-      "classification": "QUESTION",
-      "location": "Trigger EV-O1, EV-R1; KU-4",
-      "spec_says": "the production shapes (12 autotune rows; 11 tenure cards, 10 with the list, 9 of them with a kept pair; 1 left-out symphony per card)",
-      "code_does": "production data shape cannot be confirmed from code. KU-4 now names the read-only queries that settle it, so this is not blocking",
+      "n": 43,
+      "section": "B",
+      "classification": "CONFIRMED",
+      "location": "Table W (G-20 'enumerate every breakpoint from 1001 px up')",
+      "spec_says": "Table W lists the breakpoints in the page templates and measures 1001, 1120, 1290, 1350, 1400, 1440, 1920 and 2560",
+      "code_does": "it misses the breakpoints loaded on every in-scope page from static/tokens.css and the shared header templates/_chrome.html: max-width 1400 px, and 1401 to 1500 px. The band from 1401 to 1439 px is never measured. Only the page header changes there, so no Table T or Table L rule changes today, but G-20 asks for every breakpoint. Add the band, or record why the header's breakpoints are out of scope",
       "evidence": [
         [
-          "plan:KU-4",
-          "SELECT raw_response FROM advisor_observations WHERE advisor_role = 'TENURE_REVIEW_RUN' ORDER BY id DESC LIMIT 1 ..."
+          "PlanetStopper:static/tokens.css:169",
+          "@media (max-width: 1400px) {"
+        ],
+        [
+          "PlanetStopper:templates/_chrome.html:121",
+          "@media (min-width: 1401px) and (max-width: 1500px) {"
+        ],
+        [
+          "PlanetStopper:templates/_chrome.html:124",
+          "@media (max-width: 1400px) {"
         ]
       ]
     },
     {
-      "n": 34,
-      "section": "A",
-      "classification": "QUESTION",
-      "location": "Open Questions Q-11, Q-12, Q-13",
-      "spec_says": "a control at a row's end is not a hit (R-33 narrowed); the CVaR and sleeves panels keep their shared row; G-17 is worded as recorded",
-      "code_does": "each is a PM ruling that the code cannot settle. The defaults are applied in the body and the narrowing is marked; the PM answers them at approval",
+      "n": 44,
+      "section": "B",
+      "classification": "CONFIRMED",
+      "location": "Table T (G-22 'classify every repeated row group on every in-scope surface')",
+      "spec_says": "Table T is presented as every repeated row group on the in-scope hosts",
+      "code_does": "it omits repeated groups the page scripts build: the Overview's Run Claude advisor suggestion cards; the Asset Swaps result cards (survivor, rejected and error cards in a card grid); the Logic Changes proposal cards; and the detail panel's Symphony variables rows (key, value, lock mark). TT-16 also cites static/index.js:1290 for the 'Risk math rows', but that line is the Risk Profile builder, which NB-11 keeps outside Table T. The Risk math rows are server-rendered",
       "evidence": [
         [
-          "plan:Q-11",
-          "Is a control at a row's end a hit? | AC-2, AC-9 | no"
+          "PlanetStopper:static/ai_advisor.js:186",
+          "// Render suggestion cards"
+        ],
+        [
+          "PlanetStopper:static/ai_advisor_asset_swaps.js:112-117",
+          "var cardClass = 'sym-card adv-card swap-card' + ..."
+        ],
+        [
+          "PlanetStopper:static/ai_advisor_logic_changes.js:296",
+          "<div class=\"sym-card adv-card proposal-card ${cardModifier}\" data-testid=\"proposal-card\">"
+        ],
+        [
+          "PlanetStopper:static/index.js:1718-1721",
+          "return '<div class=\"var-row\">' + '<span class=\"var-key\">' + escHtml(k) + lockBadge + '</span>' + '<span class=\"var-val\">' ..."
+        ],
+        [
+          "PlanetStopper:static/index.js:1288-1290",
+          "// Match the existing .math-row pattern ... return '<div class=\"math-row\">' (inside the Risk Profile fetch)"
+        ],
+        [
+          "PlanetStopper:templates/index.html:2197",
+          "<div class=\"math-row\" id=\"dp-rm-mc-row\">"
         ]
       ]
     },
     {
-      "n": 35,
+      "n": 45,
       "section": "C",
-      "classification": "QUESTION",
-      "location": "User Tasks, Workflow lines (four screens)",
-      "spec_says": "no workflow file: .claude/workflows/ does not exist at the ref",
-      "code_does": "unchanged and verified; the workflow-file check cannot run (never blocking)",
+      "classification": "CONFIRMED",
+      "location": "Design-System Mapping; Authorities Touched (row N)",
+      "spec_says": "Design-System Mapping still reads 'Retirement pointer | its own line | existing .adv-pointer link styling'; the Authorities Touched row for N has two cells",
+      "code_does": "under G-24 the pointer is the last row of the observations list, not its own line, so the mapping row contradicts AC-2 and CX-2. The N row lacks its 'What it replaced' and 'What proves no second source' cells",
       "evidence": [
         [
-          "PlanetStopper:.claude/ (git ls-tree c0760e70)",
-          "no workflows entry"
+          "plan:Design-System Mapping",
+          "| Retirement pointer | its own line | existing `.adv-pointer` link styling | placement only |"
+        ]
+      ]
+    },
+    {
+      "n": 46,
+      "section": "C",
+      "classification": "CONFIRMED",
+      "location": "Header Status line",
+      "spec_says": "Status: gate-1, committed at db634dbf ('Status gate-1')",
+      "code_does": "the template sets Status to gate-1 only once the auditor has cleared the plan. This audit has not cleared it, so the status should read draft until it does",
+      "evidence": [
+        [
+          "~/.claude/skills/scaffold/templates/feature.md",
+          "Status is draft while the plan is written, gate-1 once the auditor has cleared it"
         ]
       ]
     }
   ],
-  "resolved_first_round_findings": {
-    "1": "R22 now names redundancy, backtest and portfolio effect (tenure_review.py:1155-1157)",
-    "2": "R01 now reads 'duplicates another live symphony and scores lower' (tenure_review.py:1179; retirement_recommender.py:316)",
-    "3": "R02 names both gates, at 25 words with the slot filled and 24 with its fallback",
-    "4": "S-6.20 null reads 'missing: not recorded', matching templates/ai_advisor.html:2465-2467",
-    "5": "S-6.1 and S-6.2 use the pair-kept shape, which fails at the ref; S-6.17 covers the no-pair shape",
-    "6": "S-1.8 keeps the ref's visible order with Redundancy last (:1126)",
-    "7": "X03 and D48 are one sentence each (24 and 13 words), with no dash",
-    "8": "TT-13 excludes the live cards (static/ai_advisor.js:1550-1551)",
-    "9": "KU-4 gives the queries; carried as non-blocking QUESTION 33",
-    "10": "open as Q-13 for the PM (QUESTION 34)",
-    "11": "the table and list kinds are separated; R-2 narrowed (D-9)",
-    "12": "widths 1001, 1240, 1300, 1360, 1440, 1920 and 2560 cover every band; R-3 narrowed; performance.html:344 verified",
-    "13": "content-box edges are named",
-    "14": "D-7 defines a control; AC-9 judges non-controls; R-33 narrowed; Q-11 goes to the PM",
-    "15": "TL-10, TF-7, TF-8, TT-14 and S-2.19 added; the Settings live card is a label beside a switch (a control under D-7)",
-    "16": "the pointer is the first line of the tab in AC-2, S-2.4, T-1, Q-2 and the Worked Example",
-    "17": "the AC-6 rule is scoped to the missing line and the Redundancy cell, and S-6.18 keeps the left-out lines (residual in finding 32)",
-    "18": "S-3.3 exempts the Glossary; S-7.1 exempts the AC-5 and AC-6 elements",
-    "19": "S-7.15 is replaced by a figure-format boundary scenario",
-    "20": "S-5.16 and S-5.22 to S-5.26 list each field's absent, null and string cases",
-    "21": "L01 no longer restates the model line or the FDR banner",
-    "22": "AC-4 matches labels by lead term, with S-4.8 naming 'Composite gap:' (:2275); R-19 narrowed",
-    "23": "the earlier-criteria rows and the three density pins are added",
-    "24": "all conditional sections are present; Authorities Touched is filled in",
-    "25": "inventory ids are EV-*; the D-n and R-n ids are unique",
-    "30": "builder names are replaced by 'server render' and 'page script' in the criteria",
-    "31": "the Retirement subsections stack (AC-2, S-2.18); CVaR and sleeves go to the PM as Q-12 under D-10"
-  },
-  "refusal_enumeration": "unchanged from the first round: no input reaches a write path; the Run recommender and Run tenure review 409s are covered by S-7.5 and the auth hook by S-7.8; CSRF 403 and the 413 cap are unreachable because no request is added or changed"
+  "checked_and_holding": [
+    "G-19 to G-28 equal their recorded sources character for character (scripted comparison against Messages B and C and the Message A G-17 line); G-17 matches by reading.",
+    "G-19/D-7, AC-2 and AC-9: the control list matches ruling 1; AC-9 judges only text, links, status words and stamps; R-33 is narrowed to match.",
+    "G-20: correcting the band edge to 1360 is right, since max-width:1359px holds at 1359 (templates/ai_advisor.html:313).",
+    "G-21: AC-1 uses the bounding box of the text or control with padding excluded, left or right edge by column kind, within 2 px.",
+    "G-23: S-2.18 fails at the ref, which pairs the subsections side by side (static/ai_advisor.js:1156-1160).",
+    "G-24: S-2.4, S-2.5, S-2.11, S-2.12 and S-2.20 fail at the ref (the pointer is in the toolbar grid, templates/ai_advisor.html:1454). S-7.13 and the 02 AC-5/AC-6 earlier-criteria rows were updated, and the verdict text comes from _build_retirement_pointer (app.py:7298) with no new request.",
+    "G-26: S-3.3 now forbids dropped text only in section bodies and allows the word-for-word Glossary moves.",
+    "G-27/D-8: S-6.23 and S-6.24 fail at the ref, where the template prints 'paired with:' whenever a pair mapping is present (templates/ai_advisor.html:2144, :2175). D-8's premise now cites the 'insufficient data' and 'undefined' gate states (advisors/tenure_review.py:243-249).",
+    "G-18 scenarios: S-6.1, S-6.3, S-6.4, S-6.5 and S-6.7 fail at the ref, which prints the stored list in the missing line (templates/ai_advisor.html:2467-2470). N = 181 is verified by evaluating the review's floor at the ref, with advisors/ unchanged from c0760e70."
+  ],
+  "earlier_rounds": "first audit and first re-check findings 1 to 35 are superseded by this round (finding 32 is closed by G-27)"
 }

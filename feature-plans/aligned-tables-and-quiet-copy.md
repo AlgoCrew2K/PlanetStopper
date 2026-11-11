@@ -74,7 +74,7 @@ G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of th
 [G-16] (PM ruling K-11; [PM-ASSUMED]) "Deploy gate adds a PM visual check: the PM looks at full-page screenshots of every page and every Advisor tab at 1920, 1440 and 390 px before deploy and lists, per screenshot, any header not above its column, any sentence that restates another on the same screen, and any element placed beside the tab bar or at a toolbar's far end. Any hit blocks the deploy."
 [G-17] (PM brief to the spec writer, "Not building (PM answers)"; [PM-ASSUMED]) "no figure, control, route, JSON body, engine, database or migration change (K-9); Login page out (K-8); no new visual direction or token change: the restyle's look (studio tokens, type sizes) stays; no dark-theme-only work beyond keeping both themes legible."
 
-[G-18] (PM ruling on audit finding 9, the tenure card; [PM-ASSUMED]) "the card states the missing redundancy item ONCE, in one short line saying it was not compared because there are too few shared trading days with the other symphonies, and naming the required count if a configured value exists for it (verify where it lives). The full stored reason stays reachable behind a closed disclosure on that card, never shown by default. No producer change in advisors/tenure_review.py, and no stored row is rewritten (K-9). The WHAT must cover the card as rendered from the stored rows above; leave the HOW to Gate 2."
+[G-18] (PM ruling on audit finding 9, the tenure card, as worded in the PM's message to the spec writer; the PM's own record of it omits "(verify where it lives)" and the last sentence; [PM-ASSUMED]) "the card states the missing redundancy item ONCE, in one short line saying it was not compared because there are too few shared trading days with the other symphonies, and naming the required count if a configured value exists for it (verify where it lives). The full stored reason stays reachable behind a closed disclosure on that card, never shown by default. No producer change in advisors/tenure_review.py, and no stored row is rewritten (K-9). The WHAT must cover the card as rendered from the stored rows above; leave the HOW to Gate 2."
 [G-19] (PM ruling 1, controls and text; [PM-ASSUMED]) "Controls vs text (the 24 px / far-end rule): a control is a button, select, input, checkbox or segmented picker. A control MAY sit at the end of a heading row or a form row: the dashboard window picker, Settings Save/Discard and Run buttons stay where they are. Text, links, status words and stamps may NOT be placed beside the Advisor tab bar or at the far end of a toolbar row. K-11's PM check applies to text, links and status only."
 [G-20] (PM ruling 2, widths; [PM-ASSUMED]) "Widths: from the stylesheets at the ref, enumerate every breakpoint from 1001 px up, and measure one width inside each resulting layout band plus 2560. Bands so far: 1001-1239, 1240-1339, 1340-1358, 1359-1439, 1440+. K-11 stays 1920, 1440 and 390 as the PM's own visual check."
 [G-21] (PM ruling 3, column edge; [PM-ASSUMED]) "Column edge = the bounding box of the text (or the control) inside the cell, excluding cell padding. A left-aligned column compares left edges and a right-aligned column compares right edges, header text included, within 2 px."
@@ -220,7 +220,7 @@ Rule: When an in-scope host renders at each width of Table W, every Table T grou
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
 | S-1.1 | B | the production-shape state of the Definition of Done | each host renders at 1920 and 2560 | every Table T group meets the rule |
-| S-1.2 | B | the same state | each host renders at 1120, 1290, 1350, 1400 and 1440 | every Table T group meets the rule; the risk metrics table is one column group and the turnover numbers end at their right edge in every band (EV-X1, EV-P2) |
+| S-1.2 | B | the same state | each host renders at 1120, 1290, 1350, 1400, 1420 and 1440 | every Table T group meets the rule; the risk metrics table is one column group and the turnover numbers end at their right edge in every band (EV-X1, EV-P2) |
 | S-1.3 | N1 | the same state, at 1001 px, the narrowest width the rule covers | each host renders | every Table T group meets the rule |
 | S-1.4 | N1 | the same state at 1000 px | each host renders | each table shows the stacked-row form it shows at the ref at 1000 px (AC-8) |
 | S-1.5 | B | 12 autotune rows with one shared run time and outcome and N/A scores, and 38 older runs (rows the page script writes on each refresh) | the Overview renders | the main table shows one header row naming Symphony and Runs without adopting a tuned config, then 12 body rows one under another, each as wide as the table; the older-runs table, opened, does the same |
@@ -245,15 +245,17 @@ Negative coverage: N1 S-1.3, S-1.4, S-1.13 · N2 n/a: layout refuses nothing · 
 Questions: Q-4, Q-9
 
 #### Table W: the widths AC-1 and AC-2 measure
-Breakpoints at the ref from 1001 px up: `min-width: 1001px` (`templates/ai_advisor.html:356`), `min-width: 1240px` (`templates/performance.html:344`, `templates/history.html:305`, `templates/index.html:736`, `templates/ai_advisor.html:1174`, `:1237`, `:1272`, `:1284`; with `max-width: 1239px` at `:1260`), `min-width: 1340px` (`templates/performance.html:396`), `max-width: 1359px` (`templates/ai_advisor.html:313`), `min-width: 1440px` (`templates/ai_advisor.html:1301`) and `min-width: 2560px` (`templates/settings.html:464`, `:911`). A `max-width: 1359px` rule applies at 1359 itself, so the band edge is 1360, not 1359 as G-20 lists it.
+Breakpoints at the ref from 1001 px up: `min-width: 1001px` (`templates/ai_advisor.html:356`), `min-width: 1240px` (`templates/performance.html:344`, `templates/history.html:305`, `templates/index.html:736`, `templates/ai_advisor.html:1174`, `:1237`, `:1272`, `:1284`; with `max-width: 1239px` at `:1260`), `min-width: 1340px` (`templates/performance.html:396`), `max-width: 1359px` (`templates/ai_advisor.html:313`), `min-width: 1440px` (`templates/ai_advisor.html:1301`) `min-width: 2560px` (`templates/settings.html:464`, `:911`), and the header's `max-width: 1400px` (`static/tokens.css:169`, `templates/_chrome.html:124`) and `min-width: 1401px` to `max-width: 1500px` (`templates/_chrome.html:121`), which change only the header. A `max-width: 1359px` rule applies at 1359 itself, so the band edge is 1360, not 1359 as G-20 lists it.
 
 | Band | Width measured |
 |---|---|
 | 1001 to 1239 | 1001 (the boundary) and 1120 |
 | 1240 to 1339 | 1290 |
 | 1340 to 1359 | 1350 |
-| 1360 to 1439 | 1400 |
-| 1440 to 2559 | 1440 and 1920 |
+| 1360 to 1400 | 1400 |
+| 1401 to 1439 | 1420 |
+| 1440 to 1500 | 1440 |
+| 1501 to 2559 | 1920 |
 | 2560 and up | 2560 |
 
 #### Table T: every repeated row group on the in-scope hosts
@@ -264,8 +266,9 @@ Kind table: one header row and the column rule. Kind repeated fields: not a tabl
 | TT-1 | `/` | comparison rows `#portfolio-strip .vs-row` (`templates/index.html:1425`, `:1466`, `:1499`, `:1545`) | repeated fields | each row is a different measure whose figures name themselves ("Bot +6.09%") | label, Bot, Held, α | Bot, Held, α |
 | TT-2 | `/` | symphony cards in Active and Standby (`templates/index.html:1706`, `:1821`; rewritten by the page script on each poll) | repeated fields | a card per symphony, not a grid of cells | name block; session column; Cum column; Max DD column; ring; sparkline; settings button | the figures of the three ledger columns |
 | TT-15 | `/` | sleeve rule rows (`templates/index.html:1917`) | repeated fields | a row per rule with its own controls | rule name; mode; actions | none |
-| TT-16 | detail panel | Risk math rows (written by the page script, `static/index.js:1290`) | repeated fields | a label, a value and a bar per row, each row a different figure | label; value; bar | value |
+| TT-16 | detail panel | Risk math rows (server rendered, `templates/index.html:2186-2248`, for example `:2197`; refilled by the page script) | repeated fields | a label, a value and a bar per row, each row a different figure | label; value; bar | value |
 | TT-17 | detail panel | event rows (written by the page script, `static/index.js:1678`) | repeated fields | a time and a sentence per event | time; text | none |
+| TT-29 | detail panel | symphony variable rows (written by the page script, `static/index.js:1718-1721`) | repeated fields | a name and its value per variable | name (with its locked mark); value | value |
 | TT-3 | Performance | risk metrics table (`templates/performance.html:684`) | table | a metric per row under shared column meanings | Metric, If held, Bot (shadow), Delta | If held, Bot (shadow), Delta |
 | TT-4 | Performance | stop-justification preconditions (`templates/performance.html:755`; rows written by the page script) | table | a symphony per row under shared columns | Symphony, Sample, ρ, 95% CI, Daily Sharpe, N, Verdict | ρ, 95% CI, Daily Sharpe, N |
 | TT-5 | Performance | exit turnover (`templates/performance.html:799`; rows written by the page script) | table | a symphony per row under shared columns | Symphony, 30d, 90d, 365d, Est. annual trading-cost drag | 30d, 90d, 365d, drag |
@@ -275,6 +278,7 @@ Kind table: one header row and the column rule. Kind repeated fields: not a tabl
 | TT-23 | Settings | per-symphony override rows (written by the page script, `static/settings.js:604-615`) | repeated fields | a row per parameter with its own input | header; global line; input row | none |
 | TT-24 | Settings | Master controls ledger (`templates/settings.html:1001`) | no repeated fields | two different cards (the live card and the start time), not repeats | none | none |
 | TT-25 | settings modal | locked-variable entries and autotuner parameter rows (written by the page script, `static/settings-modal.js:136-158`) | repeated fields | a key and its value per entry | key; value | value |
+| TT-30 | Overview | suggestion cards after Run Claude advisor (written by the page script, `static/ai_advisor.js:186-400`) | repeated fields | a card per suggestion | title; gate dots; figures; accept and dismiss buttons | none |
 | TT-8 | Overview | autotune runs and older runs (written by the page script, `static/ai_advisor.js:839-905`) | table | a run per row under shared columns | the columns AC-5 leaves | Runs without adopting a tuned config, the score, Sel t-stat |
 | TT-9 | Overview | observation lines (`templates/ai_advisor.html:1826-1835`) and the Retirement row (G-24) | repeated fields | a producer per line whose words name themselves | label; verdict; time; count; last cell | count |
 | TT-9h | Overview | each producer's history table (`templates/ai_advisor.html:1838`) | table | an observation per row under shared columns | its columns | its figure columns |
@@ -286,6 +290,8 @@ Kind table: one header row and the column rule. Kind repeated fields: not a tabl
 | TT-21 | Retirement | the last run's excluded list (`templates/ai_advisor.html:2349`) | single field | one sentence per excluded symphony | none | none |
 | TT-11 | Retirement | tenure review cards (`templates/ai_advisor.html:2447-2482`) | repeated fields | a card per symphony with the same six evidence items | head (name, verdict chip); the six evidence cells in the S-1.8 order | none |
 | TT-14 | Asset Swaps, Logic Changes | a result's Baseline and Variant figures (`.stat-row` label and value rows, `templates/ai_advisor.html:655`; written by the page script, `static/ai_advisor_asset_swaps.js:155-159`) | repeated fields | each row names its own figure | in each column: label; value | value |
+| TT-31 | Asset Swaps | swap result cards (written by the page script, `static/ai_advisor_asset_swaps.js:112-117`) | repeated fields | a card per swap | title; verdict; the TT-14 figures; notes | none |
+| TT-32 | Logic Changes | proposal cards (written by the page script, `static/ai_advisor_logic_changes.js:296`) | repeated fields | a card per proposal | objective line; heading; the TT-14 figures; notes | none |
 | TT-13 | Strategy Builder, Frontrunner Builder | each stored card's `stats-table` (`templates/ai_advisor.html:2975`, `:3124`, `:3297`) | table | a metric per row under shared columns | metric and its figure columns | every figure column |
 | TT-26 | Strategy Builder, Frontrunner Builder | the stored survivor, rejected, backtest-failed and pending-proposal cards (`templates/ai_advisor.html:2942-3104`, `:3111-3116`, `:3265-3340`) | repeated fields | a card per candidate | title; chips; figures table; notes; actions | none |
 | TT-27 | Strategy Builder | the cards of a live run (written by the page script, `static/ai_advisor.js:1550-1551`) | repeated fields | a card per candidate with a title, an objective strip and guidance only | title; strip; guidance | none |
@@ -588,7 +594,7 @@ Questions: Q-1
 
 ### AC-6: Tenure cards state the missing redundancy once, without names
 Requirement items: R-1, R-24, R-25, R-35, R-42, R-44
-Rule: When the Retirement tab renders a tenure card, its missing line shall name each missing item once; when the redundancy item's stored reason is the undecided-peer list (it begins "comparison decides nothing for: "), its entry in the missing line shall read "redundancy (not compared: too few shared trading days with the other symphonies; {N} are needed)" if N can be read, every listed peer's aligned-day count is below N and no listed peer carries a gate suffix, and "redundancy (no comparison with the other symphonies reached a result)" otherwise, where N is the fewest aligned days the review's redundancy comparison needs (Authorities Touched); that stored reason shall be shown, word for word, only inside one closed disclosure on the card, directly after the missing line, whose summary reads "Comparisons that decided nothing"; every evidence cell of an item in the missing list shall read "unavailable" or "not applicable" in its summary with no reason, whether or not the item keeps a shown pair, and its "not used in the verdict" line shall carry no reason; and the Redundancy cell shall name its shown pair's sibling ("paired with:" and the pair's figures) only when at least one of the pair's correlation, interval bounds, stressed correlation or holdings overlap holds a number, and otherwise shall name no sibling (D-8).
+Rule: When the Retirement tab renders a tenure card, its missing line shall name each missing item once; when the redundancy item's stored reason is the undecided-peer list (it begins "comparison decides nothing for: "), its entry in the missing line shall read "redundancy (not compared: too few shared trading days with the other symphonies; {N} are needed)" if N can be read, every listed peer's aligned-day count is below N and no listed peer carries a gate suffix, and "redundancy (no comparison with the other symphonies reached a result)" otherwise, where N is the fewest aligned days the review's redundancy comparison needs (Authorities Touched); that stored reason shall be shown, word for word, only inside one closed disclosure on the card, directly after the missing line, whose summary reads "Comparisons that decided nothing"; every evidence cell of an item in the missing list shall read "unavailable" or "not applicable" in its summary with no reason, whether or not the item keeps a shown pair, and its "not used in the verdict" line shall carry no reason; the peers on another basis, listed inside the Redundancy cell's disclosure, shall render as one line "not compared: {k} other symphony, bases differ" or "not compared: {k} other symphonies, bases differ"; and the Redundancy cell shall name its shown pair's sibling ("paired with:" and the pair's figures) only when at least one of the pair's correlation, interval bounds, stressed correlation or holdings overlap holds a number, and otherwise shall name no sibling (D-8).
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
@@ -611,13 +617,15 @@ Rule: When the Retirement tab renders a tenure card, its missing line shall name
 | S-6.10 | N3 | an item in the missing list whose cell has no stored reason | the tab renders | the missing line prints "not recorded" for it, as at the ref |
 | S-6.17 | N1 | the production card whose redundancy item keeps no shown pair | the tab renders | its summary reads "unavailable" with no reason, as at the ref; its "not used in the verdict" line carries no reason (the ref prints the peer list there) |
 | S-6.11 | N7 | an evidence item that is not in the missing list | the tab renders | its cell's summary and body are as at the ref |
-| S-6.18 | N7 | a card whose Marginal contribution cell lists a symphony left out, a Redundancy cell with "not compared" peers on another basis, and the last run's excluded list | each disclosure opens | the "left out", "not compared" and excluded lines are as at the ref (NB-8, G-25) |
+| S-6.18 | N7 | a card whose Marginal contribution cell lists a symphony left out, and the last run's excluded list | each disclosure opens | the "left out" and excluded lines are as at the ref (NB-8, G-25) |
+| S-6.25 | B | a card whose Redundancy cell lists 3 peers on another basis (production holds none) | its disclosure opens | one line reads "not compared: 3 other symphonies, bases differ"; no peer name (the ref prints one line per name, `templates/ai_advisor.html:2192-2197`) |
+| S-6.26 | N1 | exactly one peer on another basis | its disclosure opens | "not compared: 1 other symphony, bases differ" |
 | S-6.12 | N7 | the stored tenure review and `GET /api/retirement-recommendations` | they are read | the stored JSON and the route body are byte-identical to the ref; `advisors/tenure_review.py` has zero diff |
 | S-6.13 | N5 | Run tenure review completes and the tab reloads | the cards are read | each card follows the rule; each new disclosure is closed |
 | S-6.14 | N6 | the stored review cannot be read | the tab renders | "Review unavailable: the stored review could not be read." as at the ref |
 | S-6.15 | N8 | an approve or reject on a retire-candidate card is in progress | the card is read | the missing line, the disclosure and the cells follow the rule; the lifecycle block behaves as at the ref |
 
-Negative coverage: N1 S-6.4, S-6.5, S-6.16, S-6.17, S-6.22, S-6.24 · N2 n/a: no refusal is added; Run tenure review's refusal is unchanged (S-7.5) · N3 S-6.7, S-6.8, S-6.9, S-6.10, S-6.19, S-6.20, S-6.21, S-6.23 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-6.13 · N6 S-6.14 · N7 S-6.11, S-6.12, S-6.18 · N8 S-6.15
+Negative coverage: N1 S-6.4, S-6.5, S-6.16, S-6.17, S-6.22, S-6.24, S-6.26 · N2 n/a: no refusal is added; Run tenure review's refusal is unchanged (S-7.5) · N3 S-6.7, S-6.8, S-6.9, S-6.10, S-6.19, S-6.20, S-6.21, S-6.23 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-6.13 · N6 S-6.14 · N7 S-6.11, S-6.12, S-6.18 · N8 S-6.15
 Questions: none
 
 ### AC-7: No figure, control, contract or protected surface changes
@@ -704,7 +712,7 @@ Non-goals:
 Behaviour that stays exactly as it is:
 - NB-6: Every Copy table C label of the earlier plan except MU5 (CX-10).
 - NB-7: The header's definitions, carried as titles (copy.json rows H02, H07 to H10).
-- NB-8: The "left out" lines of the Marginal contribution cell, the "not compared" lines inside the Redundancy cell's closed disclosure and the last run's excluded list, which name symphonies with their reasons; G-25 keeps them (S-6.18).
+- NB-8: The "left out" lines of the Marginal contribution cell and the last run's excluded list, which name symphonies with their reasons; G-25 keeps them (S-6.18). The "not compared" lines are covered by AC-6 (S-6.25).
 - NB-9: The order of sections on every host, and the CVaR and Managed sleeves panels sharing one row where the ref places them: each is a whole panel in its own box, so no text sits in another section's column (D-10). The Retirement subsections stop sharing a row (AC-2, S-2.18).
 - NB-10: The correlation matrix's centred tiles (Q-4).
 
@@ -723,7 +731,7 @@ Protected surfaces consumed but not changed:
 | DC-3 | A narrow assertion licenses an unlisted sibling of a family (zero and non-zero counts; one, several and equal peer counts; each outcome label) | N1 | the AC-5 and AC-6 scenario families listed whole | S-5.2 to S-5.16, S-6.3 to S-6.5 | none yet |
 | DC-4 | A shortened sentence says something the code does not do | B | for each Copy table A and G2 row, read its "True of" citation at the ref | S-3.1, S-4.5 | none yet |
 | DC-5 | Old text survives in a hidden tab panel or a second copy of a string | N7 | grep each removed sentence's distinctive words in templates/, static/ and app.py | S-3.3 | none yet |
-| DC-6 | A layout fixed at one width breaks at another media-query band | N1 | list every `@media` in templates/*.html and static/layout.css and measure at 1001, 1240, 1340, 1440 and 1920 | S-1.3, S-2.2, S-8.4 | none yet |
+| DC-6 | A layout fixed at one width breaks at another media-query band | N1 | list every `@media` in templates/*.html, static/layout.css and static/tokens.css and measure at each Table W width | S-1.3, S-2.2, S-8.4 | none yet |
 | DC-7 | A script-built header lacks the title its template sibling carries | B | grep `columnheader` and `<th` in static/*.js against Table G3 | S-4.8 | none yet |
 | DC-8 | Reading aligned days from a stored text misreads a name that holds a comma, parentheses or the words "aligned days" | N1 | the stored reason format at `advisors/tenure_review.py:1500-1540` | S-6.22 | none yet |
 
@@ -779,7 +787,7 @@ none: no runtime, service or provider is added; the browser tests use the existi
 | Glossary | the closed disclosure | `.hp-more` (`static/layout.css`), summary text "Glossary" | one per host, last |
 | Tables | header row and cells | existing `.metrics-tbl`, `.hp-tbl`, `.stats-table`, `.obs-table`, autotune row classes | numeric cells use the existing tabular-figure setting |
 | Figure lines | Table F | existing `.mini-stats`, `.hp-figs`, `.adv-figs`, dollar line classes | gaps from existing spacing values |
-| Retirement pointer | its own line | existing `.adv-pointer` link styling | placement only |
+| Retirement row | the last row of Advisor observations | the existing observation-line classes, with the existing link styling for "Open tab" | placement only (G-24) |
 
 ## Definition of Done (Verification)
 | AC | Scenarios | Test level | Real-entrypoint test |
@@ -789,7 +797,7 @@ none: no runtime, service or provider is added; the browser tests use the existi
 | AC-3 | S-3.1, S-3.2, S-3.3, S-3.4, S-3.5, S-3.6, S-3.7, S-3.8, S-3.9, S-3.10, S-3.11, S-3.12, S-3.13, S-3.14 | template render tests and browser tests | `GET` of each host through the Flask test client and in the browser |
 | AC-4 | S-4.1, S-4.2, S-4.3, S-4.4, S-4.5, S-4.6, S-4.7, S-4.8, S-4.9, S-4.10, S-4.11, S-4.12, S-4.13, S-4.14, S-4.15 | template render tests and browser tests | the same, with the modal and detail panel opened by their real controls |
 | AC-5 | S-5.1, S-5.2, S-5.3, S-5.4, S-5.5, S-5.6, S-5.7, S-5.8, S-5.9, S-5.10, S-5.11, S-5.12, S-5.13, S-5.14, S-5.15, S-5.16, S-5.17, S-5.18, S-5.19, S-5.20, S-5.21, S-5.22, S-5.23, S-5.24, S-5.25, S-5.26 | script tests on static/ai_advisor.js and render tests of the verification line | the Overview in the browser fed by `GET /api/autotune-runs` |
-| AC-6 | S-6.1, S-6.2, S-6.3, S-6.4, S-6.5, S-6.6, S-6.7, S-6.8, S-6.9, S-6.10, S-6.11, S-6.12, S-6.13, S-6.14, S-6.15, S-6.16, S-6.17, S-6.18, S-6.19, S-6.20, S-6.21, S-6.22, S-6.23, S-6.24 | template render tests | `GET /ai-advisor` with a stored tenure review |
+| AC-6 | S-6.1, S-6.2, S-6.3, S-6.4, S-6.5, S-6.6, S-6.7, S-6.8, S-6.9, S-6.10, S-6.11, S-6.12, S-6.13, S-6.14, S-6.15, S-6.16, S-6.17, S-6.18, S-6.19, S-6.20, S-6.21, S-6.22, S-6.23, S-6.24, S-6.25, S-6.26 | template render tests | `GET /ai-advisor` with a stored tenure review |
 | AC-7 | S-7.1, S-7.2, S-7.3, S-7.4, S-7.5, S-7.6, S-7.7, S-7.8, S-7.9, S-7.10, S-7.11, S-7.12, S-7.13, S-7.14, S-7.15 | byte-equality, hash and diff tests | the route requests of S-7.3 |
 | AC-8 | S-8.1, S-8.2, S-8.3, S-8.4, S-8.5, S-8.6, S-8.7, S-8.8, S-8.9, S-8.10 | browser tests at 390, 320 and 1000 | each host in the browser |
 | AC-9 | S-9.1, S-9.2, S-9.3, S-9.4, S-9.5, S-9.6, S-9.7 | PM manual check | the PM's screenshots of the deploy SHA |
