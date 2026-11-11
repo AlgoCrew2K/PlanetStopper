@@ -60,7 +60,7 @@ Every table on every in-scope page lines up under its own header, and every page
 [G-3] THE TABLES THAT DON'T ACTUALLY ALIGN, RANDOM FU CKING TEXT EVERYWHERE? aligned-tables-and-quiet-copy.source.md:1
 [G-4] THIS IS FUCKING BULLSHIT aligned-tables-and-quiet-copy.source.md:1
 [G-5] (The PM's note on the image, in the source) "(Image #1: the operator's screenshot of the AI Advisor Overview tab on the droplet at c0760e70, about 2000 px wide, saved by the operator at [a file path on the operator's machine, omitted here because a plan names no machine-local path].)" aligned-tables-and-quiet-copy.source.md:3
-G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of the attached image, verbatim apart from the omitted path. G-6 to G-16 are the PM's intake rulings K-1 to K-11, G-17 the PM brief's Not Building line, and G-18 to G-26 to G-31 the PM's rulings on the auditor's findings and questions; each is [PM-ASSUMED] and recorded as the PM gave it, and together they supersede feature-plans/page-explainers-and-density.md where they differ.
+G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of the attached image, verbatim apart from the omitted path. G-6 to G-16 are the PM's intake rulings K-1 to K-11, G-17 the PM brief's Not Building line, and G-18 to G-26 to G-31 the PM's rulings on the auditor's findings and questions, and G-32 and G-33 its rulings on the architect's raised items; each is [PM-ASSUMED] and recorded as the PM gave it, and together they supersede feature-plans/page-explainers-and-density.md where they differ.
 [G-6] (PM ruling K-1; [PM-ASSUMED]) "Tables align. In every table, each column's header sits directly above that column, and every row's cells line up under it, at every width of 1001 px and up (narrower widths keep the existing stacked-row form). A table never flows its rows into side-by-side groups. Numeric columns are right-aligned, header included, on every table. Repeated cards that show the same fields (tenure review cards, retirement evidence) place each field at the same x position on every card."
 [G-7] (PM ruling K-2; [PM-ASSUMED]) "Alignment beats filling space. page-explainers-and-density AC-6 (no 240 by 80 px empty region at 1440) is withdrawn. A table or line may end before its panel's right edge. No layout moves text beside the tab bar, to the far end of a toolbar, or into another section's column to fill space. Columns sit at the width their content needs, not stretched to the panel edge with wide gaps between a label and its value."
 [G-8] (PM ruling K-3; [PM-ASSUMED]) "One description per section, at most one sentence of at most 25 words, directly under its heading, saying what the section is and why the operator cares. No page-level description beside or above the Advisor tab bar; no tab-level description when the tab's first section says the same. A fact appears once per screen: no hint, caption, banner or run note restates a description. Fixed boilerplate paragraphs (O-8's) are removed or folded into the glossary."
@@ -90,6 +90,9 @@ G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of th
 [G-29] (PM ruling on re-check finding 42; [PM-ASSUMED]) "use your proposed wording, recorded as a PM ruling [PM-ASSUMED]: "missing: redundancy (not decided: too few shared trading days with the other symphonies; 181 are needed)", with N from the cited derivation, not a literal. Change AC-6, S-6.1, S-6.6, the worked example and the Copy tables wherever the "not compared: too few shared trading days" form appears. The pair kept under G-27 still shows its computed correlation."
 [G-30] (PM ruling on re-check finding 41; [PM-ASSUMED]) "the "not compared ... bases differ" lines are covered by K-6. Render them in count form only: "not compared: {k} other symphony, bases differ" or "{k} other symphonies, bases differ". Never name them, in the closed disclosure either. Fix NB-8, S-6.18 and R-42 to match."
 [G-31] (PM rulings on re-check findings 43 to 46; [PM-ASSUMED]) "43: add the 1401-1439 band, measured at 1420, to Table W. 44: add the omitted repeated groups to Table T, each classed with its reason: the Overview suggestion cards, the Asset Swaps result cards, the Logic Changes proposal cards, and the detail panel's Symphony variables rows. Fix TT-16's citation to the server-rendered Risk math rows. 45: you're right that the N row is complete, so it stays as is. 46: the status stays gate-1."
+
+[G-32] (PM ruling on the architect's raised item, the AC-1 matrix cell; [PM-ASSUMED]) "Rule-by-Entry-Point Matrix: the AC-1 x "Host the page script builds" cell currently reads n/a. It should name S-1.20 and S-1.21, because Table T has TT-22, TT-23 and TT-25 there."
+[G-33] (PM ruling on the architect's raised item, word-for-word moves; [PM-ASSUMED]) "Glossary word-for-word rule (G2 / S-3.3 area): an entry may drop the term's own name and a leading "is" or "are" from the moved sentence. So O31a reads "Spec Critic: an active guardrail ..." and O31c reads "Divergence Explainer: disabled ...". Every other word stays word for word."
 
 ## Requirement Inventory
 | R-n | Requirement item | Source (G ids) | Maps to (AC ids, or NB-n) | Scope (full, or narrowed: what is left out) |
@@ -140,6 +143,8 @@ G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of th
 | R-44 | A tenure card names its paired sibling only when the pair carries at least one computed figure; otherwise it names no sibling and the Redundancy cell reads "unavailable" | G-27 | AC-6 | full |
 | R-45 | S01 drops the clause S02 states; a control at a row's end is not a hit; the subsections stack and CVaR and sleeves keep their static row; G-17 stands as recorded | G-28 | AC-2, AC-3, AC-9 | full |
 | R-46 | The tenure line reads "not decided", with N from its derivation, never a literal | G-29 | AC-6 | full |
+| R-48 | The AC-1 matrix cell for the hosts the page script builds names S-1.20 and S-1.21 | G-32 | AC-1 | full |
+| R-49 | A sentence moved into a Glossary may drop the term's own name and a leading "is" or "are"; every other word stays | G-33 | AC-3, AC-4 | full |
 | R-47 | Table W measures the 1401 to 1439 band at 1420; Table T classes the suggestion, swap result, logic-change proposal and detail variable groups; TT-16 cites the server-rendered rows | G-31 | AC-1, AC-2 | full |
 
 ## User Tasks
@@ -220,7 +225,7 @@ Searched every `feature-plans/*.md` with the `.completed.md` and `.obsolete.md` 
 ## Acceptance Criteria (Building)
 
 ### AC-1: Every table lines up under one header
-Requirement items: R-1, R-2, R-3, R-5, R-6, R-7, R-28, R-37, R-38, R-39, R-47
+Requirement items: R-1, R-2, R-3, R-5, R-6, R-7, R-28, R-37, R-38, R-39, R-47, R-48
 Rule: When an in-scope host renders at each width of Table W, every Table T group of kind table shall show exactly one header row, above all its body rows, whose body rows neither overlap vertically nor sit side by side, and in each of its columns the bounding box of the text or control inside every cell, cell padding excluded, header included, shall share its left edge (a text column) or its right edge (a numeric column, D-4) within 2 px; and in every Table T group of kind repeated fields, each named field's bounding box shall start (or, for a numeric field, end) at the same offset from its row's or card's left edge on every row or card, within 2 px.
 
 | ID | Kind | Given | When | Then |
@@ -360,14 +365,14 @@ Questions: Q-14
 | TF-8 | `/` | each sleeve card's line (`templates/index.html:1158`, `:1941`) |
 
 ### AC-3: One short description per section, said once
-Requirement items: R-1, R-12, R-13, R-14, R-15, R-16, R-28, R-30, R-43, R-45
+Requirement items: R-1, R-12, R-13, R-14, R-15, R-16, R-28, R-30, R-43, R-45, R-49
 Rule: When an in-scope host renders, each section of Copy table A shall show, directly under its heading (or at the top of a section or panel with no heading), exactly the row's new text as its only description, or no description where the row reads none; each new text shall be one sentence of at most 25 words with the slot filled or its fallback phrase in place; no element of the Advisor navigation panel shall carry a description; each row of Copy table X shall show its new text or be absent as the row says; and the old text of every removed or shortened row shall be absent from the host.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
 | S-3.1 | B | the production-shape state | each host renders | every Copy table A row for that host shows its exact new text, visible, once, directly under its heading |
 | S-3.2 | B | the same state | each host renders | every Copy table X row shows its exact new text, or is absent where it reads removed |
-| S-3.3 | N7 | every row whose disposition is removed or shortened | each host renders, all eight Advisor tab panels in the page | its old text, and each old sentence the new text drops, appears in no section body, hidden panels included; a sentence Table G2 moves into the Glossary word for word appears there once (G-26) |
+| S-3.3 | N7 | every row whose disposition is removed or shortened | each host renders, all eight Advisor tab panels in the page | its old text, and each old sentence the new text drops, appears in no section body, hidden panels included; a sentence Table G2 moves into the Glossary appears there once, word for word apart from the term's own name and a leading "is" or "are", which the line may drop after its "Term: " prefix (G-26, G-33) |
 | S-3.4 | N1 | every new text in Copy table A, with each slot filled by its longest authority value and, in turn, by its fallback phrase | the texts are counted | each is one sentence of at most 25 words; none contains "!", an emoji, U+2014 or U+2013 |
 | S-3.5 | B | `/ai-advisor` | it renders | the navigation panel holds no `data-explainer` element and no disclosure |
 | S-3.6 | B | the Strategy Builder tab | it renders | the risk banner reads exactly the CX-9 text; the model line and B00 show; no run note shows under Propose new strategies |
@@ -472,7 +477,7 @@ Every other slot of the earlier plan's Values table (`stress_fraction_pct`, `wat
 | CX-14 | every host, each "What the terms mean" disclosure | server render and page scripts | removed; its lines move to the host's Glossary | none | G-9 |
 
 ### AC-4: Every definition is in one Glossary at the end of its host
-Requirement items: R-1, R-16, R-17, R-18, R-19, R-20, R-28, R-32
+Requirement items: R-1, R-16, R-17, R-18, R-19, R-20, R-28, R-32, R-49
 Rule: When an in-scope host renders, it shall carry exactly one closed disclosure whose summary reads "Glossary", as the last element of the host (Table G), holding one paragraph per Table G line for that host in Table G order with exactly the text Table G gives; no host shall carry a "What the terms mean" disclosure; and each label element (a table header cell, a figure or tile label, a tenure evidence heading, a comparison row label, or an element whose whole text is a term followed by ":") whose text, trimmed and without a trailing ":", equals the lead term of a Glossary line of that host (the text before the line's first ": "), and each element Table G3 lists, shall carry as its `title` the full text of that Glossary line, unless it carries a `title` at the ref.
 
 | ID | Kind | Given | When | Then |
@@ -482,7 +487,7 @@ Rule: When an in-scope host renders, it shall carry exactly one closed disclosur
 | S-4.3 | N7 | every host, all eight tab panels | it renders | no `summary` reads "What the terms mean"; no element carries `data-terms` other than the Glossary |
 | S-4.4 | N1 | a Glossary | it is reached by keyboard | it has the accessible name "Glossary", opens and closes with Enter and Space, and is closed on load |
 | S-4.5 | B | the Table G2 lines | their hosts render | each changed and new line reads exactly its Table G2 text, with slots filled per the Values table |
-| S-4.6 | B | the Overview Glossary | it is opened | O31a, O31b and O31c read the first three sentences of `templates/ai_advisor.html:1809-1815` word for word |
+| S-4.6 | B | the Overview Glossary | it is opened | O31a, O31b and O31c read the first three sentences of `templates/ai_advisor.html:1809-1815` word for word after their "Term: " prefix, each without its own leading term name and, for O31a and O31c, without the "is" that follows it (G-33) |
 | S-4.7 | N7 | every unchanged Table G line | its host renders | its text equals the `new_text` of its row in `tests/fixtures/page_explainers/copy.json` at the ref, with slots filled |
 | S-4.8 | B | each Table G3 element and each label element whose text matches a lead term, for example the recommendation card's "Composite gap:" (`templates/ai_advisor.html:2275`, line R18) | its host renders, the page scripts' rows included (TG3-5, TG3-6, TG3-14) | its `title` equals the full text of its Glossary line |
 | S-4.9 | N7 | each element that carries a `title` at the ref (the info marks, the score header, the tab dots, the symphony-name titles, R12's button) | its host renders | its `title` is unchanged |
@@ -530,9 +535,9 @@ Removed definition rows: D40t (the Standby description itself says what Standby 
 | Y16 | History | changed: a Glossary line names its term | Detail: the exit's exit alpha, in pts. | `app.py:8719-8725` (`_guard_alpha_detail`) |
 | S14s | Settings | new: the storage sentence of the ref's S14 | Where overrides live: they are stored in alphabot_state.db, keyed on the normalized symphony name. | the ref's S14 text at `templates/settings.html:1132` |
 | S14p | Settings | new: the pinned-value sentence of the ref's S14 | Pinned value: a value stored for the symphony that equals the global today; it will not follow a later global change. | the ref's S14 text at `templates/settings.html:1132` |
-| O31a | Overview | new: the first guardrail sentence, word for word | the first sentence of `templates/ai_advisor.html:1809-1810`, prefixed "Spec Critic: " with its own leading "Spec Critic " dropped | DECISIONS.md "AC-14 Guardrail honesty" |
-| O31b | Overview | new: the second guardrail sentence, word for word | the sentence of `templates/ai_advisor.html:1811-1813`, prefixed "Overfitting Conscience: " with its own leading "Overfitting Conscience " dropped | DECISIONS.md "AC-14 Guardrail honesty" |
-| O31c | Overview | new: the third guardrail sentence, word for word | the sentence of `templates/ai_advisor.html:1814-1815`, prefixed "Divergence Explainer: " with its own leading "Divergence Explainer " dropped | DECISIONS.md "AC-14 Guardrail honesty" |
+| O31a | Overview | new: the first guardrail sentence, word for word apart from its leading "Spec Critic is " (G-33) | "Spec Critic: an active guardrail" followed by the rest of the first sentence of `templates/ai_advisor.html:1809-1810`, every word as at the ref | DECISIONS.md "AC-14 Guardrail honesty" |
+| O31b | Overview | new: the second guardrail sentence, word for word apart from its leading "Overfitting Conscience " (G-33) | "Overfitting Conscience: checks one narrow overfitting-risk source" followed by the rest of the sentence of `templates/ai_advisor.html:1811-1813`, every word as at the ref | DECISIONS.md "AC-14 Guardrail honesty" |
+| O31c | Overview | new: the third guardrail sentence, word for word apart from its leading "Divergence Explainer is " (G-33) | "Divergence Explainer: disabled by default" followed by the rest of the sentence of `templates/ai_advisor.html:1814-1815`, every word as at the ref | DECISIONS.md "AC-14 Guardrail honesty" |
 | R12 | Retirement | changed: K-3 forces it, the CX-12 hint says the market-hours refusal | Run recommender: runs the nightly analysis now; it takes a minute or two. | `app.py:12451` (`ai_advisor_retirement_run`) |
 
 #### Table G3: labels that carry a Glossary line as their title
@@ -700,7 +705,7 @@ Questions: Q-7
 ## Rule-by-Entry-Point Matrix
 | Rule | Server first paint | Page script refresh or poll | Host the page script builds (Settings overrides, settings modal) | Below 1001 px |
 |---|---|---|---|---|
-| AC-1 tables align | S-1.1 | S-1.15 | n/a: those hosts carry no Table T entry | S-1.4 |
+| AC-1 tables align | S-1.1 | S-1.15 | S-1.20, S-1.21 (TT-22, TT-23, TT-25) | S-1.4 |
 | AC-2 nothing moved to fill space | S-2.2 | S-2.13 | n/a: those hosts carry no Table L row or Table F line | n/a: AC-2 covers 1001 px and up (G-6); below it AC-8 keeps the stacked forms |
 | AC-3 one description per section | S-3.1 | S-3.10 | S-3.14 | S-8.2 |
 | AC-4 one Glossary per host | S-4.1 | S-4.10 | S-4.13 | S-8.2 |
@@ -845,7 +850,7 @@ The operator reads each page without finding a header off its column or a senten
 ## Decisions
 | ID | Decision | Rationale |
 |---|---|---|
-| D-1 | The guardrail paragraph's three scope sentences move to the Overview Glossary word for word, not reworded | they are recorded honesty text (DECISIONS.md "AC-14 Guardrail honesty"); G-8 allows folding |
+| D-1 | The guardrail paragraph's three scope sentences move to the Overview Glossary word for word, not reworded, apart from each one's leading term name and "is" (G-33) | they are recorded honesty text (DECISIONS.md "AC-14 Guardrail honesty"); G-8 allows folding |
 | D-2 | Honesty text kept on screen is never shortened to fit 25 words; only descriptions are | G-14 keeps honesty text; G-8 bounds descriptions |
 | D-3 | "Restates" is judged on visible text; the closed Glossary may define a term a visible line implies | a closed reference does not repeat itself to the reader; it keeps G-15's "a plain definition on its page" |
 | D-4 | A numeric column is one whose cells hold numbers, percents, signed figures, counts or dashes (Q-9) | gives the right-align rule one test |
