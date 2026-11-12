@@ -345,6 +345,27 @@ def test_a_table_whose_rows_keep_their_time_and_scores_still_lines_up(advisor_pr
     assert gaps["violations"] == [], gaps["violations"]
 
 
+def test_a_refresh_that_fails_leaves_the_last_table_in_place_and_still_aligned(advisor_probe):
+    _seed_weekly_batches()
+    _reload_at(advisor_probe, 1440)
+    page = advisor_probe.page
+    before = _measure_runs(advisor_probe, "autotune_runs", al.COLUMN_EDGES_JS)
+    assert before["found"] == 1 and before["violations"] == [], before["violations"]
+    page.route(
+        "**/api/autotune-runs",
+        lambda route: route.fulfill(status=500, content_type="application/json", body="{}"),
+    )
+    with page.expect_response("**/api/autotune-runs", timeout=25_000):
+        pass
+    page.wait_for_timeout(400)
+    after = _measure_runs(advisor_probe, "autotune_runs", al.COLUMN_EDGES_JS)
+    assert after["found"] == 1 and after["violations"] == [], after["violations"]
+    assert after["instances"][0]["body_rows"] == before["instances"][0]["body_rows"], (
+        "the failed refresh changed the rows"
+    )
+    assert "Could not refresh runs" in page.inner_text("body"), "the notice is not on the page"
+
+
 def test_a_long_symphony_name_wraps_inside_its_own_cell_and_the_columns_stay_aligned(advisor_probe):
     _seed_weekly_batches()
     # A stored key no live state holds prints as itself; spaces give the name places to wrap.
