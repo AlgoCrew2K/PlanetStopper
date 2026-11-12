@@ -117,6 +117,11 @@ REWRITTEN_FIGURE_KEYS = frozenset(
 )
 REWRITTEN_CONTROL_TESTIDS = frozenset({"retirement-pointer", "autotune-older-summary"})
 
+# Term disclosures the plan removes from a host, as (host, tag, text) -> how many: the Overview's
+# five (its tab line, O03, O08, O15 and O27) became lines of its one Glossary. A later cycle adds
+# its host's. At most this many may be missing, so a sixth lost disclosure is still reported.
+REMOVED_DISCLOSURES = {("/ai-advisor", "summary", "What the terms mean"): 5}
+
 
 def _relabelled_by_a_copy_row(key: str) -> bool:
     row = RELABELLED_FIGURE_KEYS.get(key)
@@ -173,9 +178,19 @@ def figure_differences(reading: list, reference: list, matchers: list[re.Pattern
     return problems
 
 
-def control_differences(reading: list, reference: list, matchers: list[re.Pattern]) -> list[str]:
-    """Controls the reference listed that the page no longer lists, or lists changed."""
+def control_differences(
+    reading: list,
+    reference: list,
+    matchers: list[re.Pattern],
+    removed_disclosures: Counter | None = None,
+) -> list[str]:
+    """Controls the reference listed that the page no longer lists, or lists changed.
+
+    ``removed_disclosures`` counts, per (tag, text), the controls the plan removes from this host;
+    that many missing ones are excused and any further one is reported.
+    """
     have = Counter(_control_key(c) for c in reading)
+    excusable = Counter(removed_disclosures or {})
     problems = []
     for control in reference:
         if (
@@ -186,6 +201,9 @@ def control_differences(reading: list, reference: list, matchers: list[re.Patter
             continue
         key = _control_key(control)
         if have[key] <= 0:
+            if excusable[(control["tag"], control["text"])] > 0:
+                excusable[(control["tag"], control["text"])] -= 1
+                continue
             problems.append(f"missing or changed control {key}")
         else:
             have[key] -= 1
@@ -242,7 +260,16 @@ def test_every_figure_and_control_equals_the_reference(
         problems += [
             f"{width} {p}"
             for p in control_differences(
-                reading[f"controls_{width}"], want[f"controls_{width}"], matchers
+                reading[f"controls_{width}"],
+                want[f"controls_{width}"],
+                matchers,
+                Counter(
+                    {
+                        (tag, text): n
+                        for (h, tag, text), n in REMOVED_DISCLOSURES.items()
+                        if h == host
+                    }
+                ),
             )
         ]
         assert reading[f"page_errors_{width}"] == [], f"{world} {host} {width}: page errors"
@@ -300,6 +327,24 @@ def test_the_control_comparison_reports_a_missing_and_a_disabled_control_and_ski
     assert control_differences([], reference, []) != []
     assert control_differences([{**base, "disabled": True}], reference, []) != []
     assert control_differences([{**base, "displayed": False}], reference, []) != []
+
+
+def test_the_control_comparison_excuses_only_as_many_removed_disclosures_as_the_plan_names():
+    disclosure = {
+        "tag": "summary",
+        "id": "",
+        "testid": "",
+        "type": "",
+        "text": "What the terms mean",
+        "href": "",
+        "disabled": False,
+        "displayed": True,
+    }
+    reference = [disclosure] * 3
+    excused = Counter({("summary", "What the terms mean"): 2})
+    assert control_differences([disclosure], reference, [], excused) == []
+    assert len(control_differences([], reference, [], excused)) == 1
+    assert len(control_differences([disclosure], reference, [], None)) == 2
 
 
 def test_the_form_comparison_reports_a_changed_a_lost_and_a_missing_table():
