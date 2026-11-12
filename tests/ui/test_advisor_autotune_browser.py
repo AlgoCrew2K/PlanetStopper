@@ -145,15 +145,8 @@ def test_the_older_runs_details_takes_no_space_when_each_symphony_has_one_run(ad
 
 
 _ON_SCREEN_JS = """() => {
-  const colour = (value) => {
-    const probe = document.createElement('span');
-    probe.style.color = value;
-    document.body.appendChild(probe);
-    const resolved = getComputedStyle(probe).color;
-    probe.remove();
-    return resolved;
-  };
   const box = (el) => {
+    if (!el) return { w: 0, h: 0 };
     const r = el.getBoundingClientRect();
     return { w: Math.round(r.width), h: Math.round(r.height) };
   };
@@ -167,7 +160,7 @@ _ON_SCREEN_JS = """() => {
   const figure = row.querySelector('.autotune-streak-figure');
   const tail = row.querySelector('.autotune-streak-tail');
   return {
-    frozenText: frozen.innerText,
+    frozenText: frozen ? frozen.innerText : null,
     frozenInRow: row.querySelector('.autotune-run-frozen') !== null,
     frozenBox: box(frozen),
     headDisplay: getComputedStyle(head).display,

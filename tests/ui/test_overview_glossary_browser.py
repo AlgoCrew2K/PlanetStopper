@@ -98,6 +98,11 @@ def _open(firefox, server, size=(1440, 900)):  # noqa: F811
         assert probe.page_errors == [], probe.page_errors
 
 
+def _require_glossary(page) -> None:
+    """A missing Glossary fails here, by name, instead of as a timeout on its first use."""
+    assert page.locator(GLOSSARY).count() == 1, "the Overview carries no Glossary"
+
+
 _SHOWN_TEXT_JS = """(selector) => [...document.querySelectorAll(selector)].map((el) => ({
   key: el.getAttribute('data-term'),
   text: (el.textContent || '').replace(/\\s+/g, ' ').trim(),
@@ -121,6 +126,7 @@ def test_the_glossary_is_closed_named_and_opens_and_closes_with_enter_and_space(
     _prepare(tmp_path, monkeypatch)
     with _open(firefox, advisor_server) as probe:
         page = probe.page
+        _require_glossary(page)
         summary = page.locator(f"{GLOSSARY} > summary")
         assert page.locator(GLOSSARY).evaluate("(el) => el.open") is False, "open on load"
         assert summary.inner_text().strip() == "Glossary"
@@ -148,6 +154,7 @@ def test_the_glossary_hides_its_lines_until_opened_and_shows_each_in_order_after
     expected = copy_fixture.glossary("Overview")
     with _open(firefox, advisor_server) as probe:
         page = probe.page
+        _require_glossary(page)
         closed = page.evaluate(_SHOWN_TEXT_JS, LINES)
         assert len(closed) == len(expected) and not any(c["shown"] for c in closed), (
             "a line shows before the Glossary is opened"
@@ -281,6 +288,7 @@ def test_an_opened_glossary_stays_open_with_the_same_lines_through_the_runs_refr
     _prepare(tmp_path, monkeypatch, seed=_seed_titled_world)
     with _open(firefox, advisor_server) as probe:
         page = probe.page
+        _require_glossary(page)
         page.click(f"{GLOSSARY} > summary")
         before = [r["text"] for r in page.evaluate(_SHOWN_TEXT_JS, LINES)]
         # The next answer of the page's own 15 s refresh of its autotune runs.
