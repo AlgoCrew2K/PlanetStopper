@@ -903,6 +903,7 @@ _TENURE_RENDER_HELPER_FN_NAMES = [
     "_tenure_eastern",
     "_is_finite_number",
     "_is_whole_number",
+    "_tenure_redundancy_missing",
 ]
 
 # The Retirement tab's render helpers: the summary tiles, the Overview pointer and the
