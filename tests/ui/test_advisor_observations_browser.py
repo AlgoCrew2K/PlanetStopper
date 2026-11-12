@@ -230,3 +230,53 @@ def test_the_open_tab_link_opens_the_retirement_tab_and_asks_for_nothing_the_tab
     )
     assert via_link <= via_tab, f"the link asked for more than the tab does: {via_link - via_tab}"
     assert advisor_probe.page_errors == [], advisor_probe.page_errors
+
+
+# ---------------------------------------------------------------------------
+# An open observation history and an open evidence disclosure: every other line and card keeps its
+# fields where they were, and the open one keeps its own (a disclosure grows its box, not its
+# neighbours' columns)
+# ---------------------------------------------------------------------------
+
+
+def _seed_lines_and_tenure_cards() -> None:
+    from tests.app import _tenure_review_panel_builders as pb
+
+    _seed_lines()
+    pb.store_run(pb.undecided_record())
+
+
+def _tenure_spec(**extra) -> dict:
+    return al.spec_of(al.TABLE_GROUPS["tenure_cards"], name="tenure_cards", **extra)
+
+
+@pytest.mark.parametrize("width", [1920, 1440, 1001])
+def test_an_open_history_and_open_evidence_disclosures_leave_every_fields_place_alone(
+    advisor_probe, width
+):
+    """S-1.18: the Overview's open history and the Retirement tab's open evidence cells, the
+    undecided disclosure included, change no line's or card's field offsets."""
+    _seed_lines_and_tenure_cards()
+    _open_lines(advisor_probe, width)
+    advisor_probe.page.locator(_HISTORY.format(role=_OC)).locator("summary").first.click()
+    advisor_probe.page.wait_for_timeout(150)
+    lines = al.measure(advisor_probe.page, al.FIELD_OFFSETS_JS, _line_spec())
+    assert lines["found"] == 4 and lines["violations"] == [], lines["violations"]
+    _show_tab(advisor_probe, "retirement")
+    before = al.measure(advisor_probe.page, al.FIELD_OFFSETS_JS, _tenure_spec())
+    assert before["found"] == 11 and before["violations"] == [], before["violations"]
+    advisor_probe.page.evaluate(
+        """() => {
+          const card = document.querySelector('[data-testid="tenure-review-entry"]');
+          card.querySelectorAll('details').forEach((d) => { d.open = true; });
+        }"""
+    )
+    advisor_probe.page.wait_for_timeout(150)
+    after = al.measure(advisor_probe.page, al.FIELD_OFFSETS_JS, _tenure_spec())
+    assert after["violations"] == [], after["violations"]
+    for name, field in before["fields"].items():
+        assert abs(after["fields"][name]["spread"] - field["spread"]) <= al.TOLERANCE_PX, name
+    _show_tab(advisor_probe, "overview")
+    again = al.measure(advisor_probe.page, al.FIELD_OFFSETS_JS, _line_spec())
+    assert again["violations"] == [], again["violations"]
+    assert advisor_probe.page_errors == [], advisor_probe.page_errors

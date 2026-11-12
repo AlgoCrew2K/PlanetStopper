@@ -203,7 +203,7 @@ def reading(firefox, server, seeded, world, host, width, *, theme=None):  # noqa
 
 # Hosts whose descriptions this plan has already changed in production: their rows are read from the
 # plan's Copy table A (a removed row reads None), every other host from the reference rows.
-PLAN_HOSTS = {"Advisor", "Overview"}
+PLAN_HOSTS = {"Advisor", "Overview", "Retirement"}
 
 
 def _plan_row(key: str) -> dict | None:

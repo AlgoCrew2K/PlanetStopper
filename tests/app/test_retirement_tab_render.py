@@ -182,6 +182,26 @@ class TestTabAndPanel:
 # ===========================================================================
 
 
+class TestBothRetirementRunRoutesRefuseWhileTheMarketIsOpen:
+    """S-7.5: the refusal is the one the reference gave, from the same two routes, with the market
+    open: status 409 and the body ``{"status": "market_open"}``, nothing started, no row written."""
+
+    @pytest.mark.parametrize(
+        "route", ["/ai-advisor/retirement/run", "/ai-advisor/retirement/review/run"]
+    )
+    def test_the_route_answers_409_market_open_and_writes_nothing(
+        self, client, isolated_db, monkeypatch, route
+    ):
+        import app as app_module
+
+        monkeypatch.setattr(app_module, "get_market_state", lambda *a, **k: "open")
+        before = pb.observation_count()
+        response = client.post(route)
+        assert response.status_code == 409
+        assert response.get_json() == {"status": "market_open"}
+        assert pb.observation_count() == before, "a refusal wrote a row"
+
+
 class TestRunTiles:
     @pytest.fixture()
     def page(self, client, isolated_db):

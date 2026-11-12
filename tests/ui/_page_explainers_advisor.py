@@ -59,14 +59,17 @@ TAB_OF_A_KEY = {
 # The keys the Overview's cycle changed: their descriptions are read from this plan's Copy table A
 # (``_page_copy.a_text``) and their terms from the Overview Glossary, never from the reference rows.
 # A01 and O01 are removed; O03, O08, O15 and O27 are shortened. A later cycle moves its own keys here.
-RE_PINNED_A_KEYS = ("A01", "O01", "O03", "O08", "O15", "O27")
+# The Retirement tab's cycle moves R01, R02 and R22 the same way: shortened, with their slots read
+# from this plan's Values table and their terms in the Retirement Glossary.
+RETIREMENT_A_KEYS = ("R01", "R02", "R22")
+RE_PINNED_A_KEYS = ("A01", "O01", "O03", "O08", "O15", "O27", *RETIREMENT_A_KEYS)
 OVERVIEW_A_KEYS = ("O03", "O08", "O15", "O27")
 REMOVED_A_KEYS = ("A01", "O01")
 OWNED_A_KEYS = tuple(k for k in TAB_OF_A_KEY if k not in RE_PINNED_A_KEYS)
 
 # The hosts whose terms now sit in a Glossary (this plan's Table G): their reference term rows are
 # read from the Glossary, not from the disclosures the reference had. A later cycle adds its host.
-GLOSSARY_HOSTS_DONE = ("Overview",)
+GLOSSARY_HOSTS_DONE = ("Overview", "Retirement")
 
 # The heading each description sits directly under (None: a tab or panel line with no heading).
 HEADING_OF_A_KEY = {
@@ -145,8 +148,12 @@ def format_number(value: float, decimals: int) -> str:
 
 
 def phrase_of(slot: str, copy_row: str) -> tuple[str, str]:
-    """(phrase holding the slot, whole fallback phrase) of one Values row."""
-    row = copy_fixture.slot_row(slot, copy_row)
+    """(phrase holding the slot, whole fallback phrase) of one Values row: this plan's row for a
+    description a finished cycle re-pinned, the reference's otherwise."""
+    if copy_row in RETIREMENT_A_KEYS:
+        row = copy_fixture.new_slot_row(slot, copy_row)
+    else:
+        row = copy_fixture.slot_row(slot, copy_row)
     return row["phrase"], row["fallback"]
 
 
@@ -168,11 +175,25 @@ def slot_names(record: dict) -> list[str]:
 
 def expected_row(key: str, table: str = "A", **values: str | None) -> str:
     """The text a row must show, its slots filled from ``values`` (a missing slot is a failure)."""
-    record = copy_fixture.row(key, table)
-    text = copy_fixture.text(key, table)
+    if table == "A" and key in RETIREMENT_A_KEYS:
+        record, text = copy_fixture.a_row(key), copy_fixture.a_text(key)
+    else:
+        record, text = copy_fixture.row(key, table), copy_fixture.text(key, table)
     missing = [s for s in slot_names(record) if s not in values]
     assert not missing, f"{key}: no value given for slot(s) {missing}"
     return with_slots(text, key, {s: values[s] for s in slot_names(record)})
+
+
+def expected_row_at_reference(key: str, values: dict[str, str]) -> str:
+    """The text the reference page showed for Copy table A row ``key``, its slots filled from the
+    reference's own Values rows (the text a finished cycle's row replaced)."""
+    record = copy_fixture.row(key, "A")
+    text = copy_fixture.text(key, "A")
+    for slot in slot_names(record):
+        row = copy_fixture.slot_row(slot, key)
+        assert row["phrase"] in text, f"{key}: the reference phrase for {slot} is gone"
+        text = text.replace(row["phrase"], copy_fixture.fill(row["phrase"], **{slot: values[slot]}))
+    return text
 
 
 def kept_model_note(key: str, model: str | None) -> str:

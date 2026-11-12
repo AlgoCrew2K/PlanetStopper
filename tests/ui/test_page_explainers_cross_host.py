@@ -77,7 +77,17 @@ RULED_REMOVALS = (
     "testid:autotune-shared-line",
     "class:autotune-shared-line",
     "class:liftedClasses",
+    # The Retirement tab: its two term disclosures became lines of its one Glossary, and the
+    # modifier that put its two subsections side by side is gone with the script that set it.
+    "data:data-terms=R02",
+    "data:data-terms=R22",
+    "class:retirement-pair--never-run",
 )
+
+# A token one file loses with the element or function it came from while another file keeps it:
+# the script that measured the Retirement pair carried the pair's test id, the template's wrapper
+# element may keep it.
+RULED_FILE_REMOVALS = frozenset({("static/ai_advisor.js", "testid:retirement-pair")})
 
 _CACHE: dict = {}
 
@@ -177,7 +187,8 @@ def template_rows(table: str) -> list[dict]:
 # own Glossary tests, so a definition row whose key is a Glossary line, or whose disclosure the plan
 # removed, is not read here as a disclosure of its section.
 OVERVIEW_GLOSSARY_KEYS = {line["key"] for line in copy.glossary("Overview")}
-REMOVED_OVERVIEW_DISCLOSURES = {"A01", "O01", "O03", "O08", "O15", "O27"}
+RETIREMENT_GLOSSARY_KEYS = {line["key"] for line in copy.glossary("Retirement")}
+REMOVED_OVERVIEW_DISCLOSURES = {"A01", "O01", "O03", "O08", "O15", "O27", "R02", "R22"}
 
 DEFINITION_ROWS = [
     r
@@ -185,6 +196,7 @@ DEFINITION_ROWS = [
     if r.get("placement_kind") == "D"
     and page_of(r["host"])
     and r["key"] not in OVERVIEW_GLOSSARY_KEYS
+    and r["key"] not in RETIREMENT_GLOSSARY_KEYS
     and r.get("placement_target") not in REMOVED_OVERVIEW_DISCLOSURES
 ]
 
@@ -237,11 +249,24 @@ def test_every_moved_overview_line_is_defined_once_inside_the_glossary(tmp_path,
     assert not problems, "; ".join(problems)
 
 
+def test_every_moved_retirement_line_is_defined_once_inside_the_glossary(tmp_path, monkeypatch):
+    page = adv.soup(render_hosts("full", tmp_path, monkeypatch)["/ai-advisor"])
+    problems = []
+    for key in sorted(RETIREMENT_GLOSSARY_KEYS):
+        nodes = page.select(f'#tab-panel-retirement [data-term="{key}"]')
+        if len(nodes) != 1:
+            problems.append(f"{key} is defined {len(nodes)} times on the Retirement tab")
+        elif nodes[0].find_parent("details", attrs={"data-terms": "glossary"}) is None:
+            problems.append(f"{key} is outside the Retirement Glossary")
+    assert not problems, "; ".join(problems)
+
+
 # ---------------------------------------------------------------------------
 # S-2.13: a title that defined a term at the reference stays, and the meaning is also visible
 # ---------------------------------------------------------------------------
 
-TITLED_TERMS = ("D10", "D16", "O09a", "O09b", "O09c", "R12", "S16", "A03")
+# R12 is no longer here: the plan rewrites its Glossary line, which the Retirement tests read.
+TITLED_TERMS = ("D10", "D16", "O09a", "O09b", "O09c", "S16", "A03")
 
 
 def test_a_title_the_reference_carried_stays_and_the_meaning_is_also_a_visible_line(
@@ -377,7 +402,11 @@ def test_every_attribute_id_class_and_contract_name_of_the_reference_is_still_in
     problems = []
     for path, tokens in record["files"].items():
         head = tokens_of((REPO / path).read_text(encoding="utf-8"))
-        problems += [f"{path}: {t}" for t in tokens if t not in head and t not in excluded]
+        problems += [
+            f"{path}: {t}"
+            for t in tokens
+            if t not in head and t not in excluded and (path, t) not in RULED_FILE_REMOVALS
+        ]
     assert not problems, "tokens the reference carried are gone:\n" + "\n".join(problems)
 
 
@@ -585,7 +614,9 @@ def test_a_slot_whose_authority_fails_prints_its_whole_fallback_phrase_and_nothi
     )
     patched = _element_texts(pages[host])
     baseline = _element_texts(render_hosts("full", tmp_path, monkeypatch, hosts=(host,))[host])
-    want = adv.norm(adv.with_slots(copy.text(row, table), row, {slot: None}))
+    # A description this plan shortened reads its Copy table A text and its Values row.
+    text = copy.a_text(row) if row in adv.RETIREMENT_A_KEYS else copy.text(row, table)
+    want = adv.norm(adv.with_slots(text, row, {slot: None}))
     assert patched[row] == want, f"{row} did not print the fallback phrase"
     changed = {k for k in baseline if patched.get(k) != baseline[k]}
     siblings = {r["copy_row"] for r in copy.slot_rows() if r["slot"] == slot} & set(baseline)

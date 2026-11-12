@@ -3239,37 +3239,43 @@ _POISONS = [
         "not-compared name missing",
         "watch",
         [("evidence.redundancy.not_compared.0.display_name", _GONE)],
-        _line("redundancy", "bases differ", "has"),
+        _line("redundancy", "not compared"),
+        not_recorded=False,
+        keeps=("evidence.redundancy.not_compared.0.reason",),
     ),
     _case(
         "not-compared name null",
         "watch",
         [("evidence.redundancy.not_compared.0.display_name", None)],
-        _line("redundancy", "bases differ", "has"),
+        _line("redundancy", "not compared"),
+        not_recorded=False,
+        keeps=("evidence.redundancy.not_compared.0.reason",),
     ),
     _case(
         "not-compared name a list",
         "watch",
         [("evidence.redundancy.not_compared.0.display_name", _LIST)],
-        _line("redundancy", "bases differ", "has"),
+        _line("redundancy", "not compared"),
+        not_recorded=False,
+        keeps=("evidence.redundancy.not_compared.0.reason",),
     ),
     _case(
         "not-compared reason missing",
         "watch",
         [("evidence.redundancy.not_compared.0.reason", _GONE)],
-        _line("redundancy", pb.FULL_NAMES["shadow"], "has"),
+        _line("redundancy", "not compared"),
     ),
     _case(
         "not-compared reason null",
         "watch",
         [("evidence.redundancy.not_compared.0.reason", None)],
-        _line("redundancy", pb.FULL_NAMES["shadow"], "has"),
+        _line("redundancy", "not compared"),
     ),
     _case(
         "not-compared reason a list",
         "watch",
         [("evidence.redundancy.not_compared.0.reason", _LIST)],
-        _line("redundancy", pb.FULL_NAMES["shadow"], "has"),
+        _line("redundancy", "not compared"),
     ),
     _case(
         "not-compared list is text",
@@ -3577,13 +3583,15 @@ _POISONS = [
         "not-compared name blank",
         "watch",
         [("evidence.redundancy.not_compared.0.display_name", _BLANK)],
-        _line("redundancy", "bases differ", "has"),
+        _line("redundancy", "not compared"),
+        not_recorded=False,
+        keeps=("evidence.redundancy.not_compared.0.reason",),
     ),
     _case(
         "not-compared reason blank",
         "watch",
         [("evidence.redundancy.not_compared.0.reason", _BLANK)],
-        _line("redundancy", pb.FULL_NAMES["shadow"], "has"),
+        _line("redundancy", "not compared"),
     ),
     _case(
         "verdict reason element blank",
@@ -4095,16 +4103,14 @@ class TestAnUnusedPairSaysItIsNotUsedInTheVerdict:
         node = pb.entry_node(_panel(client), symphony_id)
         return item, node.find("tenure-review-evidence-redundancy")
 
-    def test_the_box_states_the_pair_is_not_used_followed_by_the_items_reason(self, unused):
+    def test_the_box_states_the_pair_is_not_used_and_carries_no_reason_on_the_line(self, unused):
         item, block = unused
         lines = _not_used_lines(block)
         assert len(lines) == 1, [n.text() for n in lines]
-        text = lines[0].text()
-        assert re.match(rf"{_NOT_USED}:\s*\S", text, flags=re.IGNORECASE), text
+        assert lines[0].text() == _NOT_USED, lines[0].text()
         stored = item.get("reason")
-        expected = stored if isinstance(stored, str) and stored else _NOT_RECORDED
-        assert expected in text, f"the line does not carry the item's reason {expected!r}: {text!r}"
-        assert not re.search(r"\bNone\b", text)
+        if isinstance(stored, str) and stored:
+            assert stored not in block.text(), "the cell repeats the reason the missing line states"
 
     def test_the_line_sits_in_the_box_that_shows_the_pair(self, unused):
         item, block = unused
@@ -4112,7 +4118,9 @@ class TestAnUnusedPairSaysItIsNotUsedInTheVerdict:
         assert _not_used_lines(block), "the box shows a pair and does not say it decides nothing"
 
     @pytest.mark.parametrize("which", ["small", "edge"])
-    def test_the_reason_is_read_from_the_stored_item(self, client, isolated_db, which):
+    def test_the_reason_is_read_from_the_stored_item_and_printed_in_the_missing_line_only(
+        self, client, isolated_db, which
+    ):
         reason = "gates could not decide on this pair"
         victim = pb.SMALL_IDS["first"] if which == "small" else pb.EDGE_IDS["twin_one"]
 
@@ -4120,9 +4128,11 @@ class TestAnUnusedPairSaysItIsNotUsedInTheVerdict:
             _edit(pb.entry_of(record, victim), "evidence.redundancy.reason", reason)
 
         _, _, panel = _render_edited(client, which, edit)
-        block = pb.entry_node(panel, victim).find("tenure-review-evidence-redundancy")
-        lines = _not_used_lines(block)
-        assert len(lines) == 1 and reason in lines[0].text(), [n.text() for n in lines]
+        card = pb.entry_node(panel, victim)
+        block = card.find("tenure-review-evidence-redundancy")
+        assert [n.text() for n in _not_used_lines(block)] == [_NOT_USED]
+        assert reason not in block.text()
+        assert f"redundancy ({reason})" in card.find("tenure-review-missing").text()
 
     @pytest.mark.parametrize("which", ["full", "quiet"])
     def test_a_box_whose_redundancy_decided_or_says_no_sibling_carries_no_such_line(
@@ -4225,9 +4235,9 @@ class TestAUnitWordIsNotRepeatedBesideTheFigureItNames:
 # ===========================================================================
 
 
-class TestPeersNotComparedAreListedWithTheirReason:
+class TestPeersNotComparedAreCountedWithTheirReasonAndNeverNamed:
     @pytest.mark.parametrize("which", ["full", "small", "edge", "quiet"])
-    def test_every_peer_the_record_lists_is_named_with_its_reason_in_the_redundancy_box(
+    def test_every_peer_the_record_lists_is_counted_by_its_reason_and_none_is_named(
         self, client, isolated_db, which
     ):
         record = _store_record(which)
@@ -4238,14 +4248,27 @@ class TestPeersNotComparedAreListedWithTheirReason:
             block = pb.entry_node(panel, stored["symphony_id"]).find(
                 "tenure-review-evidence-redundancy"
             )
-            for peer in item.get("not_compared") or []:
-                lines = pb.leaf_nodes_containing(block, peer["display_name"])
-                where = f"{stored['display_name']} / {peer['display_name']}"
-                assert any(peer["reason"] in line.text() for line in lines), where
-                listed += 1
+            peers = [p for p in item.get("not_compared") or [] if isinstance(p, dict)]
+            counts: dict[str, int] = {}
+            for peer in peers:
+                counts[peer["reason"]] = counts.get(peer["reason"], 0) + 1
+                assert peer["display_name"] not in block.text(), (
+                    f"{stored['display_name']} names {peer['display_name']}"
+                )
+            lines = sorted(
+                n.text()
+                for n in pb.leaf_nodes_containing(block, "not compared")
+                if n.text().startswith("not compared")
+            )
+            expected = sorted(
+                f"not compared: {k} other {'symphony' if k == 1 else 'symphonies'}, {reason}"
+                for reason, k in counts.items()
+            )
+            assert lines == expected, stored["display_name"]
+            listed += len(peers)
         assert listed >= (3 if which == "full" else 0)
 
-    def test_the_list_is_read_from_the_stored_item_and_not_derived_from_the_bases(
+    def test_the_count_is_read_from_the_stored_item_and_not_derived_from_the_bases(
         self, client, isolated_db
     ):
         peer = {"display_name": "Zed Peak Rotation", "reason": "bases differ, stored for this test"}
@@ -4258,9 +4281,14 @@ class TestPeersNotComparedAreListedWithTheirReason:
         record, _, panel = _render_edited(client, "full", edit)
         watch = pb.entry_with_verdict(record, "watch")
         block = pb.entry_node(panel, watch["symphony_id"]).find("tenure-review-evidence-redundancy")
-        lines = pb.leaf_nodes_containing(block, peer["display_name"])
-        assert any(peer["reason"] in line.text() for line in lines), "the stored peer is not listed"
-        assert pb.FULL_NAMES["shadow"] not in block.text(), "a peer the record does not list"
+        lines = [
+            n.text()
+            for n in pb.leaf_nodes_containing(block, "not compared")
+            if n.text().startswith("not compared")
+        ]
+        assert lines == ["not compared: 1 other symphony, bases differ, stored for this test"]
+        assert peer["display_name"] not in block.text()
+        assert pb.FULL_NAMES["shadow"] not in block.text()
 
     @pytest.mark.parametrize("stored", [[], _GONE], ids=["empty list", "key absent"])
     def test_an_empty_or_absent_list_adds_no_line_and_no_none(self, client, isolated_db, stored):
@@ -4272,8 +4300,9 @@ class TestPeersNotComparedAreListedWithTheirReason:
         record, _, panel = _render_edited(client, "full", edit)
         watch = pb.entry_with_verdict(record, "watch")
         block = pb.entry_node(panel, watch["symphony_id"]).find("tenure-review-evidence-redundancy")
+        assert "not compared" not in block.text()
         assert pb.FULL_NAMES["shadow"] not in block.text()
-        assert not re.search(r"\bNone\b", block.text())
+        assert not re.search(r"None", block.text())
         assert watch["evidence"]["redundancy"]["pair"]["sibling_name"] in block.text()
 
 
@@ -4522,7 +4551,12 @@ class TestEveryMissingItemIsListedWithItsReason:
             for name in stored["missing_items"]:
                 item = stored["evidence"][name]
                 assert item["status"] != "available", f"{where} / {name}: fixture sanity"
-                assert item["reason"] in text, f"{where} / {name}: its reason is not listed"
+                shown = (
+                    pb.expected_redundancy_phrase(item["reason"], NEEDED)
+                    if name == "redundancy"
+                    else item["reason"]
+                )
+                assert shown in text, f"{where} / {name}: its reason is not listed"
                 if item["status"] == "not_applicable":
                     assert "not applicable" in text.lower(), f"{where} / {name}"
                     not_applicable += 1
@@ -4623,20 +4657,16 @@ def _redundancy_problems(stored: dict, block: pb.Node) -> list[str]:
         problems.append(
             "the words 'no redundant sibling' appear on an item that does not carry them"
         )
-    if not available and item["reason"] not in text:
-        problems.append("the stored reason is not shown")
+    if not available and item["reason"] in text:
+        problems.append("the cell repeats the reason the missing line states")
     if pair:
         problems += _pair_problems(block, pair)
     lines = _not_used_lines(block)
     if "redundancy" in stored["missing_items"]:
         if len(lines) != 1:
             problems.append(f"expected one 'not used in the verdict' line, got {len(lines)}")
-        else:
-            line = lines[0].text()
-            if not re.match(rf"{_NOT_USED}:\s*\S", line, flags=re.IGNORECASE):
-                problems.append(f"the line does not carry a reason: {line!r}")
-            if item["reason"] not in line:
-                problems.append("the line does not carry the item's stored reason")
+        elif lines[0].text() != _NOT_USED:
+            problems.append(f"the line carries more than its words: {lines[0].text()!r}")
     elif available and lines:
         problems.append("an item that decided carries a 'not used in the verdict' line")
     return problems
@@ -4718,7 +4748,7 @@ class TestEachNamedRedundancyStateRendersAsStored:
         )
         assert _redundancy_problems(stored, block) == []
 
-    def test_a_comparison_below_the_floor_names_the_peer_and_its_days_in_the_stored_reason(
+    def test_a_comparison_below_the_floor_names_the_peer_and_its_days_only_in_the_disclosure(
         self, client, isolated_db
     ):
         record = _store_record("state:below_floor_no_hit")
@@ -4728,15 +4758,16 @@ class TestEachNamedRedundancyStateRendersAsStored:
             item = stored["evidence"]["redundancy"]
             peer_name = pb.entry_of(record, pb.state_id("below_floor_no_hit", peer))["display_name"]
             assert f"{peer_name} ({floor_below} aligned days" in item["reason"], "fixture sanity"
-            text = (
-                pb.entry_node(_panel(client), stored["symphony_id"])
-                .find("tenure-review-evidence-redundancy")
-                .text()
-            )
-            assert f"{peer_name} ({floor_below} aligned days" in text
+            card = pb.entry_node(_panel(client), stored["symphony_id"])
+            text = card.find("tenure-review-evidence-redundancy").text()
+            assert peer_name not in text, "the cell names a peer the missing line does not"
+            assert (
+                f"{peer_name} ({floor_below} aligned days"
+                in card.find("tenure-review-undecided").text()
+            ), "the stored list is word for word in the one disclosure"
             assert _NO_SIBLING not in text.lower()
 
-    def test_the_pair_beside_an_unused_item_and_the_item_alone_read_the_same_reason(
+    def test_the_pair_beside_an_unused_item_and_the_item_alone_read_the_same_bare_line(
         self, client, isolated_db
     ):
         """One pair shown and one not: the line is in the box either way."""
@@ -4757,8 +4788,7 @@ class TestEachNamedRedundancyStateRendersAsStored:
             and not alone["evidence"]["redundancy"]["pair"]
         )
         assert len(lines_with) == 1 and len(lines_alone) == 1
-        assert with_pair["evidence"]["redundancy"]["reason"] in lines_with[0].text()
-        assert alone["evidence"]["redundancy"]["reason"] in lines_alone[0].text()
+        assert lines_with[0].text() == lines_alone[0].text() == _NOT_USED
 
 
 # ===========================================================================
@@ -5638,13 +5668,14 @@ class TestAValueThatRoundsToZeroPrintsZero:
 
 
 # ===========================================================================
-# A redundancy item that shows no pair prints its reason once, on the line that says the
-# item is not used in the verdict, beside a line that names its status.
+# A redundancy item the missing line names prints its reason once, in that line (the undecided-peer
+# list as its short phrase, with the stored list itself in the card's one disclosure); its cell
+# names only its status.
 # ===========================================================================
 
 
-class TestARedundancyItemThatShowsNoPairStatesItsReasonOnce:
-    def test_the_reason_is_on_one_line_and_the_status_is_named_on_another(
+class TestARedundancyItemStatesItsReasonOnceInTheMissingLine:
+    def test_the_reason_is_in_the_missing_line_once_and_the_cell_names_only_its_status(
         self, client, isolated_db
     ):
         checked = decided_nothing = 0
@@ -5654,40 +5685,35 @@ class TestARedundancyItemThatShowsNoPairStatesItsReasonOnce:
             panel = _panel(client)
             for stored in record["entries"]:
                 item = stored["evidence"]["redundancy"]
-                if item["status"] == "available" or item.get("pair"):
+                if item["status"] == "available":
                     continue
                 where = f"{which} / {stored['display_name']}"
-                block = pb.entry_node(panel, stored["symphony_id"]).find(
-                    "tenure-review-evidence-redundancy"
-                )
+                card = pb.entry_node(panel, stored["symphony_id"])
+                block = card.find("tenure-review-evidence-redundancy")
                 reason = item["reason"]
-                # the box label may read like the reason; it is not a line that states one
-                carrying = [
-                    n
-                    for n in pb.leaf_nodes_containing(block, reason)
-                    if not n.text().lower().startswith(("not compared", "left out"))
-                    and "retirement-rec-basis" not in n.classes()
-                ]
-                if len(carrying) != 1 or carrying[0].text().count(reason) != 1:
-                    problems.append(f"{where}: reason on {[n.text() for n in carrying]}")
-                    continue
                 status_word = "unavailable" if item["status"] == "unavailable" else "not applicable"
+                if reason in block.text():
+                    problems.append(f"{where}: the cell repeats the reason")
+                if _summary_of(block).text() != f"Redundancy {status_word}":
+                    problems.append(f"{where}: summary reads {_summary_of(block).text()!r}")
                 if "redundancy" in stored["missing_items"]:
                     decided_nothing += 1
-                    if not carrying[0].text().lower().startswith(_NOT_USED):
-                        problems.append(f"{where}: the reason is not on the not-used line")
-                    status_lines = [
-                        n for n in _leaf_lines(block, (status_word,)) if n is not carrying[0]
-                    ]
-                    if not status_lines:
-                        problems.append(f"{where}: no line names the status {status_word!r}")
-                elif not carrying[0].text().lower().startswith(status_word):
-                    problems.append(f"{where}: the status line does not carry the reason")
+                    line = card.find("tenure-review-missing").text()
+                    expected = pb.expected_redundancy_phrase(reason, NEEDED)
+                    if (
+                        line.count(
+                            f"redundancy ({status_word + ': ' if status_word == 'not applicable' else ''}{expected})"
+                        )
+                        != 1
+                    ):
+                        problems.append(f"{where}: the missing line reads {line!r}")
+                    if [n.text() for n in _not_used_lines(block)] != [_NOT_USED]:
+                        problems.append(f"{where}: the not-used line carries more than its words")
                 checked += 1
         assert problems == []
         assert checked >= 20 and decided_nothing >= 10, (checked, decided_nothing)
 
-    def test_an_item_that_shows_a_pair_still_states_its_reason_on_the_not_used_line(
+    def test_an_item_that_shows_a_pair_still_says_it_is_not_used_in_the_verdict(
         self, client, isolated_db
     ):
         record = _store_record("small")
@@ -5697,39 +5723,8 @@ class TestARedundancyItemThatShowsNoPairStatesItsReasonOnce:
         block = pb.entry_node(_panel(client), stored["symphony_id"]).find(
             "tenure-review-evidence-redundancy"
         )
-        lines = _not_used_lines(block)
-        assert len(lines) == 1 and item["reason"] in lines[0].text()
-
-    def test_an_item_that_shows_a_pair_keeps_its_reason_on_its_status_line_too(
-        self, client, isolated_db
-    ):
-        checked = 0
-        problems = []
-        for which in _REDUNDANCY_RECORDS:
-            record = _store_record(which)
-            panel = _panel(client)
-            for stored in record["entries"]:
-                item = stored["evidence"]["redundancy"]
-                if (
-                    item["status"] == "available"
-                    or not item.get("pair")
-                    or "redundancy" not in stored["missing_items"]
-                ):
-                    continue
-                where = f"{which} / {stored['display_name']}"
-                block = pb.entry_node(panel, stored["symphony_id"]).find(
-                    "tenure-review-evidence-redundancy"
-                )
-                status_word = "unavailable" if item["status"] == "unavailable" else "not applicable"
-                status_lines = _leaf_lines(block, (status_word,))
-                if len(status_lines) != 1 or item["reason"] not in status_lines[0].text():
-                    problems.append(f"{where}: status line {[n.text() for n in status_lines]}")
-                not_used = _not_used_lines(block)
-                if len(not_used) != 1 or item["reason"] not in not_used[0].text():
-                    problems.append(f"{where}: not-used line {[n.text() for n in not_used]}")
-                checked += 1
-        assert problems == []
-        assert checked >= 1, "no record holds a listed-missing redundancy item that shows a pair"
+        assert [n.text() for n in _not_used_lines(block)] == [_NOT_USED]
+        assert item["reason"] not in block.text()
 
     def test_the_stored_reason_is_the_one_printed_once(self, client, isolated_db):
         reason = "a stored reason no template carries"
@@ -5739,10 +5734,10 @@ class TestARedundancyItemThatShowsNoPairStatesItsReasonOnce:
         assert victim["evidence"]["redundancy"]["pair"] is None, "fixture sanity"
         _edit(victim, "evidence.redundancy.reason", reason)
         pb.store_run(record)
-        block = pb.entry_node(_panel(client), victim["symphony_id"]).find(
-            "tenure-review-evidence-redundancy"
-        )
-        assert block.text().count(reason) == 1, block.text()
+        card = pb.entry_node(_panel(client), victim["symphony_id"])
+        assert card.text().count(reason) == 1, card.text()
+        assert reason in card.find("tenure-review-missing").text()
+        assert reason not in card.find("tenure-review-evidence-redundancy").text()
 
 
 # ===========================================================================
@@ -6408,3 +6403,652 @@ class TestAnIdThatIsNotTextIsResolvedToNoName:
             f"a name was resolved for an id that is not text: {row.get('sibling_name')!r}"
         )
         assert row["candidate_name"] == candidate["display_name"]
+
+
+# ===========================================================================
+# A tenure card states the redundancy it is missing once, in one line that names no peer; the
+# stored list of peers whose comparison decided nothing sits in one closed disclosure after it.
+#
+# Every record comes from the real review compute (tests/app/_tenure_review_panel_builders.py,
+# ``undecided_record`` and its edge records). The number of aligned days the redundancy
+# comparison needs is the oracle ``pb.structural_gate_days()``, never typed here.
+# ===========================================================================
+
+NEEDED = pb.structural_gate_days()
+_NOT_DECIDED_LINE = f"missing: redundancy ({pb.NOT_DECIDED_PHRASE.format(n=NEEDED)})"
+_NO_RESULT_LINE = f"missing: redundancy ({pb.NO_RESULT_PHRASE})"
+_UNDECIDED_TESTID = "tenure-review-undecided"
+_UNDECIDED_SUMMARY = "Comparisons that decided nothing"
+_UNDECIDED_PREFIX = "comparison decides nothing for: "
+
+
+def _undecided_world(record: dict | None = None) -> dict:
+    record = record if record is not None else pb.undecided_record()
+    pb.seed_roster_state(record)
+    pb.store_run(record)
+    return record
+
+
+def _keep_card(client, record: dict | None = None):
+    record = _undecided_world(record)
+    sid = pb.undecided_id(pb.UNDECIDED_KEEP)
+    return record, pb.entry_of(record, sid), pb.entry_node(_panel(client), sid)
+
+
+def _summary_of(block: pb.Node) -> pb.Node:
+    return next(n for n in block.walk() if n.tag == "summary")
+
+
+def _next_element(node: pb.Node):
+    siblings = [c for c in node.parent.children if isinstance(c, pb.Node)]
+    index = siblings.index(node)
+    return siblings[index + 1] if index + 1 < len(siblings) else None
+
+
+def _redundancy_cell(card: pb.Node) -> pb.Node:
+    return card.find("tenure-review-evidence-redundancy")
+
+
+def _without(card: pb.Node, testid: str) -> str:
+    """The text of a card with one evidence cell taken out of it."""
+    cell = card.find(testid)
+    return card.text().replace(cell.text(), " ") if cell is not None else card.text()
+
+
+class TestTheMissingLineStatesTheRedundancyOnceAndNamesNoPeer:
+    def test_a_card_whose_every_comparison_was_too_short_reads_the_not_decided_form(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        peers = pb.undecided_peers(stored)
+        assert len(peers) >= 3 and all(days < NEEDED for _, days in peers), "fixture sanity"
+        assert card.find("tenure-review-missing").text() == _NOT_DECIDED_LINE
+
+    def test_the_number_printed_is_the_one_the_review_derives(self, client, isolated_db):
+        assert tenure_review._structural_needs_days() == NEEDED, "the oracle drifted"
+        _, _, card = _keep_card(client)
+        assert f"{NEEDED} are needed" in card.find("tenure-review-missing").text()
+
+    def test_the_missing_line_names_none_of_the_peers_nor_their_day_counts(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        text = card.find("tenure-review-missing").text()
+        for name, _days in pb.undecided_peers(stored):
+            assert name not in text, name
+        assert "aligned days" not in text
+
+    def test_the_list_of_peers_is_in_the_one_closed_disclosure_directly_after_the_line(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        disclosures = card.find_all(_UNDECIDED_TESTID)
+        assert len(disclosures) == 1, len(disclosures)
+        details = disclosures[0]
+        assert details.tag == "details" and "open" not in details.attrs, "it opens on load"
+        assert _summary_of(details).text() == _UNDECIDED_SUMMARY
+        assert _next_element(card.find("tenure-review-missing")) is details
+        body = details.text().replace(_UNDECIDED_SUMMARY, "", 1).strip()
+        assert body == stored["evidence"]["redundancy"]["reason"], body
+
+    def test_with_every_disclosure_closed_no_undecided_peer_is_visible_on_the_card(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        visible = pb.visible_text(card)
+        for name, _days in pb.undecided_peers(stored):
+            assert name not in visible, f"{name} shows on the closed card"
+        assert "aligned days" not in visible
+
+    def test_an_entry_that_misses_two_items_lists_each_once_in_the_one_line(
+        self, client, isolated_db
+    ):
+        record = _undecided_world()
+        sid = pb.undecided_id(pb.UNDECIDED_BACKTEST_GAP)
+        stored = pb.entry_of(record, sid)
+        card = pb.entry_node(_panel(client), sid)
+        backtest_reason = stored["evidence"]["backtest"]["reason"]
+        assert card.find("tenure-review-missing").text() == (
+            f"{_NOT_DECIDED_LINE}; backtest ({backtest_reason})"
+        )
+
+    def test_the_backtest_cell_of_that_entry_reads_unavailable_with_no_reason(
+        self, client, isolated_db
+    ):
+        record = _undecided_world()
+        sid = pb.undecided_id(pb.UNDECIDED_BACKTEST_GAP)
+        stored = pb.entry_of(record, sid)
+        cell = pb.entry_node(_panel(client), sid).find("tenure-review-evidence-backtest")
+        assert _summary_of(cell).text() == "Backtest unavailable"
+        assert stored["evidence"]["backtest"]["reason"] not in cell.text()
+
+    def test_every_card_of_the_run_follows_the_rule_and_carries_one_disclosure_each(
+        self, client, isolated_db
+    ):
+        record = _undecided_world()
+        panel = _panel(client)
+        undecided = checked = 0
+        for stored in record["entries"]:
+            card = pb.entry_node(panel, stored["symphony_id"])
+            redundancy = stored["evidence"]["redundancy"]
+            is_undecided = redundancy["status"] != "available" and redundancy.get(
+                "reason", ""
+            ).startswith(_UNDECIDED_PREFIX)
+            disclosures = card.find_all(_UNDECIDED_TESTID)
+            assert len(disclosures) == (1 if is_undecided else 0), stored["display_name"]
+            if is_undecided:
+                undecided += 1
+                assert "open" not in disclosures[0].attrs
+                missing = card.find("tenure-review-missing").text()
+                assert missing.startswith(_NOT_DECIDED_LINE), stored["display_name"]
+            checked += 1
+        assert checked == 11 and undecided == 10, (checked, undecided)
+
+
+class TestTheRedundancyCellOfAnItemTheLineNamesCarriesNoReason:
+    def test_the_summary_reads_redundancy_then_unavailable_and_nothing_else(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        assert _summary_of(_redundancy_cell(card)).text() == "Redundancy unavailable"
+
+    def test_the_not_used_in_the_verdict_line_carries_no_reason(self, client, isolated_db):
+        record, stored, card = _keep_card(client)
+        lines = _not_used_lines(_redundancy_cell(card))
+        assert [n.text() for n in lines] == ["not used in the verdict"]
+
+    def test_the_cell_holds_none_of_the_stored_reason_and_none_of_the_other_peers(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        cell = _redundancy_cell(card).text()
+        sibling = stored["evidence"]["redundancy"]["pair"]["sibling_name"]
+        assert "comparison decides nothing" not in cell
+        for name, _days in pb.undecided_peers(stored):
+            if name != sibling:
+                assert name not in cell, name
+
+    def test_the_shown_pair_still_names_its_sibling_with_its_figures(self, client, isolated_db):
+        record, stored, card = _keep_card(client)
+        pair = stored["evidence"]["redundancy"]["pair"]
+        cell = _redundancy_cell(card)
+        assert f"paired with: {pair['sibling_name']}" in cell.text()
+        assert _shows(cell, pair["correlation"]["value"])
+        assert f"aligned days: {pair['n_obs']}" in cell.text()
+
+    def test_an_entry_with_no_shown_pair_reads_unavailable_with_no_peer_list_in_the_cell(
+        self, client, isolated_db
+    ):
+        record = _undecided_world()
+        sid = pb.undecided_id(pb.UNDECIDED_BACKTEST_GAP)
+        stored = pb.entry_of(record, sid)
+        cell = _redundancy_cell(pb.entry_node(_panel(client), sid))
+        assert stored["evidence"]["redundancy"]["pair"] is None, "fixture sanity"
+        assert _summary_of(cell).text() == "Redundancy unavailable"
+        assert [n.text() for n in _not_used_lines(cell)] == ["not used in the verdict"]
+        for name, _days in pb.undecided_peers(stored):
+            assert name not in cell.text(), name
+
+
+class TestTheLineReadsItsTwoFormsFromTheStoredCounts:
+    @pytest.mark.parametrize(
+        ("kind", "first_entry_form"),
+        [
+            ("single_peer", _NOT_DECIDED_LINE),
+            ("hostile_name", _NOT_DECIDED_LINE),
+            ("uncertainty_undefined", _NO_RESULT_LINE),
+            ("structural_undefined", _NO_RESULT_LINE),
+            ("hostile_name_with_count", _NO_RESULT_LINE),
+        ],
+    )
+    def test_each_edge_record_reads_the_form_its_stored_peers_call_for(
+        self, client, isolated_db, kind, first_entry_form
+    ):
+        record = pb.undecided_edge_record(kind)
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        panel = _panel(client)
+        for position, stored in enumerate(record["entries"]):
+            reason = stored["evidence"]["redundancy"]["reason"]
+            expected = "missing: redundancy (" + pb.expected_redundancy_phrase(reason, NEEDED) + ")"
+            if position == 0:
+                assert expected == first_entry_form, "the oracle and the case disagree"
+            card = pb.entry_node(panel, stored["symphony_id"])
+            assert card.find("tenure-review-missing").text().startswith(expected), (
+                kind,
+                stored["display_name"],
+            )
+
+    def test_a_hostile_peer_name_shows_only_inside_the_disclosure_and_is_escaped(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_edge_record("hostile_name")
+        marked = pb.HOSTILE_NAME_NO_COUNT + ' <img src=x onerror="alert(1)">'
+        for stored in record["entries"]:
+            item = stored["evidence"]["redundancy"]
+            item["reason"] = item["reason"].replace(pb.HOSTILE_NAME_NO_COUNT, marked)
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        body = _page(client)
+        assert '<img src=x onerror="alert(1)">' not in body, "a stored name reached the page raw"
+        card = pb.entry_node(pb.panel_of(body), pb.undecided_edge_id("hostile_name", 0))
+        assert "Harbor" not in pb.visible_text(card)
+        assert "Harbor" in card.find(_UNDECIDED_TESTID).text()
+        assert card.find("tenure-review-missing").text() == _NOT_DECIDED_LINE
+
+    @pytest.mark.parametrize("peer_count", [1, 2, 3])
+    def test_a_stored_reason_that_names_a_peer_at_the_needed_days_alone_reads_the_second_form(
+        self, client, isolated_db, peer_count
+    ):
+        record = pb.undecided_edge_record("single_peer")
+        victim = pb.entry_of(record, pb.undecided_edge_id("single_peer", 0))
+        peers = [f"Peer {i} ({NEEDED} aligned days)" for i in range(peer_count)]
+        victim["evidence"]["redundancy"]["reason"] = _UNDECIDED_PREFIX + ", ".join(peers)
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        card = pb.entry_node(_panel(client), victim["symphony_id"])
+        assert card.find("tenure-review-missing").text().startswith(_NO_RESULT_LINE)
+
+    def test_one_peer_one_day_below_the_needed_days_still_reads_the_first_form(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_edge_record("single_peer")
+        victim = pb.entry_of(record, pb.undecided_edge_id("single_peer", 0))
+        victim["evidence"]["redundancy"]["reason"] = (
+            f"{_UNDECIDED_PREFIX}Peer ({NEEDED - 1} aligned days)"
+        )
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        card = pb.entry_node(_panel(client), victim["symphony_id"])
+        assert card.find("tenure-review-missing").text().startswith(_NOT_DECIDED_LINE)
+
+
+class TestTheResolverFailingFallsBackToTheSecondFormWithNoNumber:
+    @pytest.mark.parametrize("failure", ["raises", "never reachable"])
+    def test_the_line_reads_the_no_result_form_and_prints_no_number(
+        self, client, isolated_db, monkeypatch, failure
+    ):
+        record = pb.undecided_record()  # built before the patch: the review itself reads it
+
+        def raising():
+            raise RuntimeError("the search failed")
+
+        monkeypatch.setattr(
+            tenure_review,
+            "_structural_needs_days",
+            raising if failure == "raises" else (lambda: sys.maxsize),
+        )
+        _, _, card = _keep_card(client, record)
+        line = card.find("tenure-review-missing").text()
+        assert line == _NO_RESULT_LINE, line
+        assert not re.search(r"\d", line), line
+        assert str(sys.maxsize) not in _page(client)
+
+    def test_the_slot_reads_the_value_the_review_uses_and_none_when_it_cannot(self, monkeypatch):
+        got = app_module._page_copy_values(["redundancy_needs_days"])
+        assert got == {"redundancy_needs_days": str(NEEDED)}
+        monkeypatch.setattr(tenure_review, "_structural_needs_days", lambda: sys.maxsize)
+        assert app_module._page_copy_values(["redundancy_needs_days"]) == {
+            "redundancy_needs_days": None
+        }
+
+        def raising():
+            raise RuntimeError("the search failed")
+
+        monkeypatch.setattr(tenure_review, "_structural_needs_days", raising)
+        assert app_module._page_copy_values(["redundancy_needs_days"]) == {
+            "redundancy_needs_days": None
+        }
+
+    def test_the_slot_is_the_larger_of_the_review_s_two_floors(self, monkeypatch):
+        import advisors.retirement_recommender as recommender
+
+        monkeypatch.setattr(tenure_review, "_structural_needs_days", lambda: 10)
+        monkeypatch.setattr(recommender, "MIN_OBS_FLOOR", 37)
+        assert app_module._page_copy_values(["redundancy_needs_days"]) == {
+            "redundancy_needs_days": "37"
+        }
+        monkeypatch.setattr(tenure_review, "_structural_needs_days", lambda: 52)
+        assert app_module._page_copy_values(["redundancy_needs_days"]) == {
+            "redundancy_needs_days": "52"
+        }
+
+
+class TestTheMissingLineFilter:
+    """``tenure_redundancy_missing(reason, needed)``: None unless the reason is the undecided-peer
+    list; else the phrase inside the line's parentheses. Reasons are built with the producer's own
+    formatter and separator, so the filter reads the text the producer writes."""
+
+    @staticmethod
+    def _filter():
+        return app_module.app.jinja_env.filters["tenure_redundancy_missing"]
+
+    @staticmethod
+    def _reason(*texts: str) -> str:
+        return tenure_review._UNDECIDED_PREFIX + tenure_review._LIST_SEPARATOR.join(texts)
+
+    @staticmethod
+    def _text(name: str, days: int, *, screen_hit=False, uncertainty="passed", structural="passed"):
+        pair = {
+            "n_obs": days,
+            "screen_hit": screen_hit,
+            "uncertainty_gate": {"state": uncertainty},
+            "structural_gate": {"state": structural},
+        }
+        return tenure_review._undecided_text(name, pair)
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "this symphony has no composite",
+            "no same-basis peer has a composite",
+            "no other symphonies to compare",
+            "",
+            None,
+            7,
+            ["comparison decides nothing for: A (10 aligned days)"],
+            "  comparison decides nothing for: A (10 aligned days)",
+        ],
+    )
+    def test_a_reason_that_is_not_the_undecided_list_returns_none(self, reason):
+        assert self._filter()(reason, str(NEEDED)) is None
+
+    def test_every_count_below_the_needed_days_returns_the_not_decided_phrase(self):
+        reason = self._reason(self._text("A", NEEDED - 1), self._text("B", 40), self._text("C", 1))
+        assert self._filter()(reason, str(NEEDED)) == pb.NOT_DECIDED_PHRASE.format(n=NEEDED)
+
+    @pytest.mark.parametrize("days", [NEEDED, NEEDED + 1, NEEDED + 400])
+    def test_one_count_at_or_above_the_needed_days_returns_the_no_result_phrase(self, days):
+        reason = self._reason(self._text("A", 20), self._text("B", days))
+        assert self._filter()(reason, str(NEEDED)) == pb.NO_RESULT_PHRASE
+
+    @pytest.mark.parametrize(
+        "gates",
+        [
+            {"screen_hit": True, "uncertainty": "undefined"},
+            {"screen_hit": True, "uncertainty": "passed", "structural": "undefined"},
+        ],
+        ids=["uncertainty gate undefined", "structural gate undefined"],
+    )
+    def test_a_gate_suffix_on_any_peer_returns_the_no_result_phrase_whatever_its_count(self, gates):
+        reason = self._reason(self._text("A", 20), self._text("B", 30, **gates))
+        assert "gate undefined" in reason, "fixture sanity: the producer wrote the suffix"
+        assert self._filter()(reason, str(NEEDED)) == pb.NO_RESULT_PHRASE
+
+    @pytest.mark.parametrize("needed", [None, "", "not a number", "0.5"])
+    def test_a_needed_count_that_cannot_be_read_returns_the_no_result_phrase_with_no_number(
+        self, needed
+    ):
+        got = self._filter()(self._reason(self._text("A", 20)), needed)
+        assert got == pb.NO_RESULT_PHRASE and not re.search(r"\d", got)
+
+    def test_a_reason_with_no_stated_count_returns_the_no_result_phrase(self):
+        assert self._filter()(tenure_review._UNDECIDED_PREFIX, str(NEEDED)) == pb.NO_RESULT_PHRASE
+        assert (
+            self._filter()(tenure_review._UNDECIDED_PREFIX + "A, B", str(NEEDED))
+            == pb.NO_RESULT_PHRASE
+        )
+
+    def test_a_name_that_holds_a_count_can_only_move_the_line_to_the_no_result_phrase(self):
+        short = self._reason(self._text("Plain", 20))
+        assert self._filter()(short, str(NEEDED)) == pb.NOT_DECIDED_PHRASE.format(n=NEEDED)
+        named = self._reason(self._text("Plain (999 aligned days)", 20))
+        assert self._filter()(named, str(NEEDED)) == pb.NO_RESULT_PHRASE
+        harmless = self._reason(self._text("Comma, Name (see aligned days note)", 20))
+        assert self._filter()(harmless, str(NEEDED)) == pb.NOT_DECIDED_PHRASE.format(n=NEEDED)
+
+    def test_the_phrase_never_carries_the_reason_s_own_text(self):
+        got = self._filter()(self._reason(self._text("<b>x</b>", 20)), str(NEEDED))
+        assert "<b>" not in got and "aligned" not in got
+
+
+class TestAReasonThatIsNotTheUndecidedListPrintsOnceInTheLineAndNowhereElse:
+    @pytest.mark.parametrize("which", ["full", "lone", "solo"])
+    def test_the_reason_is_in_the_missing_line_only_and_no_disclosure_follows(
+        self, client, isolated_db, which
+    ):
+        record = _store_record(which)
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            item = stored["evidence"]["redundancy"]
+            if "redundancy" not in stored["missing_items"]:
+                continue
+            reason = item["reason"]
+            if reason.startswith(_UNDECIDED_PREFIX):
+                continue
+            card = pb.entry_node(panel, stored["symphony_id"])
+            where = f"{which} / {stored['display_name']}"
+            line = card.find("tenure-review-missing").text()
+            assert line.count(reason) == 1, where
+            cell = _redundancy_cell(card)
+            assert reason not in cell.text(), f"{where}: the cell repeats the reason"
+            assert card.find(_UNDECIDED_TESTID) is None, where
+            word = "not applicable" if item["status"] == "not_applicable" else "unavailable"
+            assert _summary_of(cell).text() == f"Redundancy {word}", where
+            checked += 1
+        assert checked >= 1, which
+
+
+class TestAnItemOutsideTheRedundancyKeepsItsCellAsStored:
+    def test_an_available_item_not_in_the_missing_list_keeps_its_summary_and_body(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        item = stored["evidence"]["performance"]
+        assert item["status"] == "available" and "performance" not in stored["missing_items"]
+        cell = card.find("tenure-review-evidence-performance")
+        first = next(iter(item["figures"]))
+        assert _summary_of(cell).text().startswith("Performance")
+        assert first.replace("_", " ") in _summary_of(cell).text()
+        assert _shows(cell, item["figures"][first]["value"])
+        assert f"subject: {item['subject']}" in cell.text()
+        assert f"source: {item['source']}" in cell.text()
+
+    def test_a_marginal_cell_still_lists_the_symphonies_it_left_out_with_their_reason(
+        self, client, isolated_db
+    ):
+        record = pb.apart_record()
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        composer = pb.entry_of(record, pb.composer_hash_like("apart", 0))
+        cell = pb.entry_node(_panel(client), composer["symphony_id"]).find(
+            "tenure-review-evidence-marginal"
+        )
+        excluded = composer["evidence"]["marginal"]["excluded"]
+        assert len(excluded) == 2
+        for other in excluded:
+            lines = pb.leaf_nodes_containing(cell, other["display_name"])
+            assert any(
+                f"left out: {other['display_name']}, {other['reason']}" in n.text() for n in lines
+            ), other
+
+
+class TestAShownPairThatHoldsNoNumberNamesNoSibling:
+    def test_a_pair_with_no_computed_figure_prints_no_paired_with_line_and_no_sibling_name(
+        self, client, isolated_db
+    ):
+        record = pb.uncomputed_pair_record("no_figure")
+        _, stored, card = _keep_card(client, record)
+        pair = stored["evidence"]["redundancy"]["pair"]
+        cell = _redundancy_cell(card)
+        assert _summary_of(cell).text() == "Redundancy unavailable"
+        assert "paired with" not in cell.text()
+        assert pair["sibling_name"] not in cell.text()
+        assert pair["sibling_name"] not in pb.visible_text(card)
+        assert f"aligned days: {pair['n_obs']}" in cell.text()
+        for label in ("aligned days", "uncertainty gate", "structural redundancy gate"):
+            for line in pb.leaf_nodes_containing(cell, label):
+                assert pair["sibling_name"] not in line.text(), label
+
+    def test_a_pair_with_only_its_holdings_overlap_computed_still_names_the_sibling(
+        self, client, isolated_db
+    ):
+        record = pb.uncomputed_pair_record("overlap_only")
+        _, stored, card = _keep_card(client, record)
+        pair = stored["evidence"]["redundancy"]["pair"]
+        cell = _redundancy_cell(card)
+        assert f"paired with: {pair['sibling_name']}" in cell.text()
+        assert _shows(cell, pair["holdings_overlap"]["value"])
+
+    @pytest.mark.parametrize(
+        "computed", ["correlation", "ci_lower", "ci_upper", "stressed_correlation"]
+    )
+    def test_any_one_of_the_correlation_figures_computed_is_enough_to_name_the_sibling(
+        self, client, isolated_db, computed
+    ):
+        record = pb.uncomputed_pair_record("no_figure")
+        pair = pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_KEEP))["evidence"]["redundancy"][
+            "pair"
+        ]
+        pair[computed] = tenure_review._figure(0.4, "correlation")
+        _, stored, card = _keep_card(client, record)
+        assert f"paired with: {pair['sibling_name']}" in _redundancy_cell(card).text(), computed
+
+
+class TestPeersOnAnotherBasisAreCountedNeverNamed:
+    @pytest.mark.parametrize(
+        ("count", "line"),
+        [
+            (1, "not compared: 1 other symphony, bases differ"),
+            (3, "not compared: 3 other symphonies, bases differ"),
+        ],
+    )
+    def test_the_redundancy_cell_reads_one_counted_line_and_no_peer_name_anywhere_else(
+        self, client, isolated_db, count, line
+    ):
+        record = pb.shadow_peers_record(count)
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        stored = pb.entry_of(record, pb.shadow_peers_composer_id(count))
+        listed = stored["evidence"]["redundancy"]["not_compared"]
+        names = [p["display_name"] for p in listed]
+        assert len(names) == count and all(p["reason"] == "bases differ" for p in listed)
+        card = pb.entry_node(_panel(client), stored["symphony_id"])
+        cell = _redundancy_cell(card)
+        counted = [
+            n.text()
+            for n in pb.leaf_nodes_containing(cell, "not compared")
+            if n.text().startswith("not compared")
+        ]
+        assert counted == [line]
+        for name in names:
+            assert name not in cell.text(), f"{name} is named in the Redundancy cell"
+            assert name not in _without(card, "tenure-review-evidence-marginal"), (
+                f"{name} is named on the card outside the Marginal cell"
+            )
+
+    def test_peers_stored_under_two_reasons_read_one_counted_line_per_reason(
+        self, client, isolated_db
+    ):
+        record = pb.shadow_peers_record(3)
+        stored = pb.entry_of(record, pb.shadow_peers_composer_id(3))
+        stored["evidence"]["redundancy"]["not_compared"][2]["reason"] = "series withheld"
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        cell = _redundancy_cell(pb.entry_node(_panel(client), stored["symphony_id"]))
+        texts = sorted(
+            n.text()
+            for n in pb.leaf_nodes_containing(cell, "not compared")
+            if n.text().startswith("not compared")
+        )
+        assert texts == [
+            "not compared: 1 other symphony, series withheld",
+            "not compared: 2 other symphonies, bases differ",
+        ]
+
+    @pytest.mark.parametrize("stored", [[], None, "bases differ", {"a": 1}])
+    def test_an_empty_absent_or_malformed_list_prints_no_not_compared_line(
+        self, client, isolated_db, stored
+    ):
+        record = pb.shadow_peers_record(3)
+        entry = pb.entry_of(record, pb.shadow_peers_composer_id(3))
+        entry["evidence"]["redundancy"]["not_compared"] = stored
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        cell = _redundancy_cell(pb.entry_node(_panel(client), entry["symphony_id"]))
+        assert "not compared" not in cell.text()
+        assert not re.search(r"\bNone\b", cell.text())
+
+    def test_a_peer_entry_that_is_not_a_mapping_is_not_counted(self, client, isolated_db):
+        record = pb.shadow_peers_record(3)
+        entry = pb.entry_of(record, pb.shadow_peers_composer_id(3))
+        entry["evidence"]["redundancy"]["not_compared"][0] = "Name As A Bare String"
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        cell = _redundancy_cell(pb.entry_node(_panel(client), entry["symphony_id"]))
+        assert "not compared: 2 other symphonies, bases differ" in cell.text()
+        assert "Name As A Bare String" not in cell.text()
+
+
+class TestTheMissingLineWhenTheStoredListIsAbsentOrWrong:
+    def test_no_key_prints_no_line_an_empty_list_none_and_a_null_reads_not_recorded(
+        self, client, isolated_db
+    ):
+        expected = {"absent": None, "empty": None, "null": "missing: not recorded"}
+        for case, line in expected.items():
+            record = pb.undecided_record()
+            stored = pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_KEEP))
+            if case == "absent":
+                stored.pop("missing_items")
+            elif case == "empty":
+                stored["missing_items"] = []
+            else:
+                stored["missing_items"] = None
+            _, _, card = _keep_card(client, record)
+            missing = card.find("tenure-review-missing")
+            assert (missing.text() if missing else None) == line, case
+
+    @pytest.mark.parametrize("wrong", ["redundancy", {"redundancy": 1}], ids=["string", "mapping"])
+    def test_a_list_of_the_wrong_type_reads_not_recorded(self, client, isolated_db, wrong):
+        record = pb.undecided_record()
+        pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_KEEP))["missing_items"] = wrong
+        _, _, card = _keep_card(client, record)
+        assert card.find("tenure-review-missing").text() == "missing: not recorded"
+
+    def test_an_item_in_the_list_with_no_stored_reason_reads_not_recorded_in_the_line(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_record()
+        gap = pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_BACKTEST_GAP))
+        gap["evidence"]["backtest"].pop("reason")
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        card = pb.entry_node(_panel(client), gap["symphony_id"])
+        assert card.find("tenure-review-missing").text().endswith("; backtest (not recorded)")
+
+    @pytest.mark.parametrize(
+        "poison",
+        [_GONE, None, 7, [_UNDECIDED_PREFIX + "A (1 aligned days)"]],
+        ids=["absent", "null", "number", "list"],
+    )
+    def test_a_redundancy_reason_that_is_missing_or_not_text_reads_not_recorded_with_no_disclosure(
+        self, client, isolated_db, poison
+    ):
+        record = pb.undecided_record()
+        stored = pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_KEEP))
+        _edit(stored, "evidence.redundancy.reason", poison)
+        _, _, card = _keep_card(client, record)
+        line = card.find("tenure-review-missing").text()
+        assert line == "missing: redundancy (not recorded)", line
+        assert card.find(_UNDECIDED_TESTID) is None
+
+
+class TestTheDisclosureFollowsARunThatIsStoredAgain:
+    def test_after_a_second_stored_run_every_card_follows_the_rule_and_every_disclosure_is_closed(
+        self, client, isolated_db
+    ):
+        first = pb.undecided_record(pb.RUN_ID_FIRST)
+        pb.seed_roster_state(first)
+        pb.store_run(first)
+        second = pb.undecided_record(pb.RUN_ID_SECOND, trigger="manual")
+        pb.store_run(second)
+        panel = _panel(client)
+        assert len(panel.find_all("tenure-review-entry")) == 11
+        disclosures = panel.find_all(_UNDECIDED_TESTID)
+        assert len(disclosures) == 10
+        assert all("open" not in d.attrs for d in disclosures)
+        for stored in second["entries"]:
+            if stored["missing_items"]:
+                card = pb.entry_node(panel, stored["symphony_id"])
+                assert card.find("tenure-review-missing").text().startswith(_NOT_DECIDED_LINE)

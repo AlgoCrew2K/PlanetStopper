@@ -24,6 +24,7 @@ from __future__ import annotations
 import pytest
 
 from tests.app import _retirement_tab_world as w
+from tests.app import _tenure_review_panel_builders as pb
 from tests.app.conftest import _reset_scheduler_run_state  # noqa: F401  (autouse, health state)
 from tests.ui import _alignment as al
 from tests.ui import _page_explainers as harness
@@ -237,7 +238,7 @@ def test_the_market_prism_description_sits_under_its_heading_and_the_stamp_follo
 def _retirement_with_production_tenure_review():
     w.seed_roster()
     adv.seed_recommendation_cards(3)
-    prod.seed_production_tenure_review(11)
+    pb.store_run(pb.undecided_record())
 
 
 @pytest.mark.parametrize("size", [PHONE, VERY_NARROW])
@@ -261,6 +262,71 @@ def test_the_evidence_items_of_a_tenure_entry_stack_in_one_column_on_a_phone(
         )
         state = opened.evaluate(prod.TABS_JS)
         assert state["pageScroll"] == state["pageClient"]
+
+
+_VISIBLE_ORDER = ("performance", "composite", "backtest", "marginal", "long_vix", "redundancy")
+
+
+def _tenure_spec(**extra) -> dict:
+    return al.spec_of(al.TABLE_GROUPS["tenure_cards"], name="tenure_cards", **extra)
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_every_tenure_cards_six_evidence_cells_start_at_one_x_in_the_visible_order(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    tmp_path,
+    monkeypatch,
+    width,
+):
+    """S-1.8: eleven cards, one of them not yet eligible, from the real review compute."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_production_tenure_review)
+    with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
+        result = al.measure(opened.page, al.FIELD_OFFSETS_JS, _tenure_spec())
+        entries = opened.evaluate(prod.TENURE_ENTRIES_JS)
+    assert result["found"] == 11, "eleven tenure cards are measured"
+    assert result["violations"] == [], result["violations"]
+    assert [f for f in result["fields"]] == [
+        "performance",
+        "composite score",
+        "backtest",
+        "marginal contribution",
+        "long vix hedge",
+        "redundancy",
+    ], "the registry names the six cells in the visible order"
+    for number, entry in enumerate(entries, start=1):
+        lefts = [item["left"] for item in entry["items"]]
+        tops = [round(item["top"]) for item in entry["items"]]
+        assert len(lefts) == 6, f"card {number} holds {len(lefts)} evidence cells"
+        assert lefts == sorted(lefts) and len(set(round(x) for x in lefts)) == 6, (
+            f"card {number}: the cells do not run left to right in the visible order: {lefts}"
+        )
+        assert max(tops) - min(tops) <= 2, f"card {number}: the cells are not on one row: {tops}"
+
+
+def test_the_not_yet_eligible_card_keeps_all_six_cells_where_the_other_cards_keep_theirs(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    tmp_path,
+    monkeypatch,
+):
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_production_tenure_review)
+    young = pb.undecided_id(pb.UNDECIDED_YOUNG)
+    with _open(firefox, advisor_server, (1440, 900), "retirement") as opened:
+        rows = opened.evaluate(
+            """(young) => [...document.querySelectorAll('[data-testid="tenure-review-entry"]')]
+              .map((card) => ({ young: card.getAttribute('data-symphony-id') === young,
+                lefts: [...card.querySelectorAll('.tenure-review-evidence')]
+                  .map((c) => c.getBoundingClientRect().left - card.getBoundingClientRect().left) }))""",
+            young,
+        )
+    assert sum(1 for r in rows if r["young"]) == 1
+    reference = next(r for r in rows if not r["young"])["lefts"]
+    for row in rows:
+        assert len(row["lefts"]) == 6
+        assert all(abs(a - b) <= 2 for a, b in zip(row["lefts"], reference, strict=True)), (
+            f"a card's cells are offset from the others': {row['lefts']} against {reference}"
+        )
 
 
 # ---------------------------------------------------------------------------

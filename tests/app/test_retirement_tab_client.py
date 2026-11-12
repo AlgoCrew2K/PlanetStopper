@@ -583,3 +583,55 @@ class TestFragment:
             if "location.hash" in p.read_text(encoding="utf-8")
         )
         assert readers == ["ai_advisor.js"]
+
+
+# ===========================================================================
+# A decision in progress on a review entry: its missing line, its disclosure and its evidence cells
+# are the ones the server rendered, before and after the script's request, and follow the plan's rule
+# (each item the line names is worded once, its cell names only its status)
+# ===========================================================================
+
+_ENTRY_WATCH = {
+    **_WATCH,
+    "missing": '[data-testid="tenure-review-missing"]',
+    "undecided": '[data-testid="tenure-review-undecided"]',
+    "summaries": '[data-testid="tenure-review-entry"] .tenure-review-evidence-summary',
+}
+_STATUS_ONLY = ("unavailable", "not applicable")
+
+
+class TestAReviewEntryWithADecisionInProgress:
+    @pytest.mark.parametrize("action", ["approve", "reject"])
+    def test_the_line_the_disclosure_and_the_cells_do_not_change_and_follow_the_rule(
+        self, client, isolated_db, tmp_path, action
+    ):
+        pb.seed_bot_state()
+        pb.store_full_run()
+        html = w.get_page(client)
+        result = run_advisor_page(
+            html,
+            tmp_path,
+            steps=[
+                {
+                    "op": "call",
+                    "fn": "retDispatchDecision",
+                    "target": f'[data-testid="retirement-{action}-btn"]',
+                    "args": [action, "$target"],
+                }
+            ],
+            routes={f"/ai-advisor/retirement/{action}": {"body": {"success": True}}},
+            watch=_ENTRY_WATCH,
+        )
+        before = result["loaded"]["watched"]
+        after = result["steps"][0]["obs"]["watched"]
+        assert before["missing"], "premise: the retire candidate's card lists missing evidence"
+        for key in ("missing", "undecided", "summaries"):
+            assert [e["text"] for e in after[key]] == [e["text"] for e in before[key]], key
+        words = {e["text"] for e in before["summaries"]}
+        statuses = [t for t in words if any(f" {s}" in t for s in _STATUS_ONLY)]
+        assert statuses, "premise: some cell of the card reads unavailable or not applicable"
+        for text in statuses:
+            assert text.rstrip().endswith(_STATUS_ONLY), (
+                f"a cell of an item the missing line names carries a reason: {text!r}"
+            )
+        assert result["errors"] == []

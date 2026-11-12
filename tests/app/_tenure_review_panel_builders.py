@@ -679,6 +679,325 @@ def state_record(kind: str, run_id: str = RUN_ID_FIRST, *, trigger: str = "night
     return _fresh(_state_base_record(kind), run_id, trigger)
 
 
+# ---------------------------------------------------------------------------
+# Records whose redundancy comparison decided nothing: the shape the producer writes when
+# every pair of a symphony shares fewer aligned days than the structural gate needs. Each
+# record is the real review compute over constructed series with invented names and ids of
+# the real shape; the one place a stored field is edited after the producer wrote it
+# (``uncomputed_pair_record``) says so in its docstring.
+# ---------------------------------------------------------------------------
+
+UNDECIDED_THRESHOLD = 60
+# Returns each eligible symphony of the production-shape roster holds, one per symphony. Every
+# pair of the roster shares the shorter of its two lengths, so the pairs hold between the fewest
+# and the most of these aligned days, all below the days the structural gate needs.
+UNDECIDED_RETURN_COUNTS = (168, 168, 170, 166, 164, 162, 160, 158, 156, 153)
+UNDECIDED_YOUNG_RETURNS = 39
+# The pair every other symphony of the roster is independent of: it is the one correlated pair,
+# so the subject's row shows it (a screen hit with too few aligned days to be decided).
+UNDECIDED_PAIR_RHO = 0.75
+UNDECIDED_DRIFT = 0.15
+# Radians a day of each independent symphony's wave, far from the pair's and from one another's,
+# so no two of them reach the correlation screen over the days they share.
+UNDECIDED_FREQUENCIES = (0.11, 1.31, 1.97, 0.29, 2.43, 0.83, 1.63, 2.89)
+UNDECIDED_NAMES = (
+    "Alder Basin Rotation",
+    "Brook Field Carry",
+    "Cinder Hill Tilt",
+    "Dune Marsh Spread",
+    "Elm Harbor Drift",
+    "Flint Ridge Swing",
+    "Grove Anchor Hedge",
+    "Heath Lantern Momentum",
+    "Iris Quarry Rotation",
+    "Juniper Dock Carry",
+    "Kestrel Moor Sprout",
+)
+UNDECIDED_KEEP = 0
+UNDECIDED_PARTNER = 1
+UNDECIDED_BACKTEST_GAP = 2
+UNDECIDED_YOUNG = 10
+
+
+def _undecided_ids(kind: str) -> list[str]:
+    return [composer_hash_like(kind, i) for i in range(len(UNDECIDED_NAMES))]
+
+
+def undecided_id(index: int) -> str:
+    """The symphony id of the roster's ``index``-th symphony (see the UNDECIDED_* indexes)."""
+    return _undecided_ids("undecided")[index]
+
+
+@lru_cache(maxsize=1)
+def _undecided_base_record() -> dict:
+    """Eleven live symphonies on the Composer basis, threshold 60, as of 2026-12-31:
+
+    * ten eligible ones whose pairs share 153 to 170 aligned days, fewer than the structural
+      gate needs, so every comparison is too short to decide and each redundancy item is
+      unavailable and lists its peers with their aligned days;
+    * the first two form the one correlated pair (a screen hit), so the first one, the subject
+      of the page tests, keeps a shown pair and its backtest and holdings are complete: redundancy
+      is the only item it misses and its verdict is keep;
+    * the third is independent of every peer, so it shows no pair, and its backtest covers other
+      dates than its realized window, so it also misses the backtest;
+    * the last is not yet eligible.
+    """
+    ids = _undecided_ids("undecided")
+    lead, partner = b.orthogonal_pair(
+        UNDECIDED_RETURN_COUNTS[0],
+        UNDECIDED_PAIR_RHO,
+        k=UNDECIDED_RETURN_COUNTS[0] // 10,
+        scale=0.3,
+    )
+    # A constant shift leaves the correlation and gives the pair a gain the portfolio keeps.
+    series = [[r + UNDECIDED_DRIFT for r in lead], [r + UNDECIDED_DRIFT for r in partner]]
+    for index, count in enumerate(UNDECIDED_RETURN_COUNTS[2:], start=2):
+        series.append(
+            b.wave_returns(
+                count, amp=0.3 + 0.01 * index, drift=0.05, freq=UNDECIDED_FREQUENCIES[index - 2]
+            )
+        )
+    last = b.last_n_nyse_days(b.AS_OF, UNDECIDED_RETURN_COUNTS[2] + 1)
+    roster = []
+    for index, returns in enumerate(series):
+        days = b.last_n_nyse_days(b.AS_OF, len(returns) + 1)
+        roster.append(b.composer_symphony(ids[index], UNDECIDED_NAMES[index], days, returns))
+    young_days = b.last_n_nyse_days(b.AS_OF, UNDECIDED_YOUNG_RETURNS + 1)
+    roster.append(
+        b.composer_symphony(
+            ids[UNDECIDED_YOUNG],
+            UNDECIDED_NAMES[UNDECIDED_YOUNG],
+            young_days,
+            b.wave_returns(UNDECIDED_YOUNG_RETURNS, amp=0.3, freq=0.71),
+        )
+    )
+    keep_window = tr.qualifying_window(roster[UNDECIDED_KEEP], b.AS_OF, UNDECIDED_THRESHOLD)
+    roster[UNDECIDED_KEEP].backtest = b.replica_backtest(
+        date.fromisoformat(keep_window["first"]),
+        date.fromisoformat(keep_window["last"]),
+        b.wave_returns(
+            len(
+                b.nyse_days(
+                    date.fromisoformat(keep_window["first"]),
+                    date.fromisoformat(keep_window["last"]),
+                )
+            )
+            - 1,
+            amp=0.2,
+            drift=0.05,
+        ),
+    )
+    gap_window = tr.qualifying_window(roster[UNDECIDED_BACKTEST_GAP], b.AS_OF, UNDECIDED_THRESHOLD)
+    gap_sessions = list(
+        b.nyse_days(date.fromisoformat(gap_window["first"]), date.fromisoformat(gap_window["last"]))
+    )
+    # Dates one session short of the realized window: the producer's own mismatch reason.
+    roster[UNDECIDED_BACKTEST_GAP].backtest = b.replica_backtest(
+        gap_sessions[1], gap_sessions[-1], b.wave_returns(len(gap_sessions) - 2, amp=0.2)
+    )
+    held = {sid: {"SPY": 100.0} for sid in ids}
+    holdings = tr.HoldingsInput(days={d.isoformat(): held for d in last})
+    record = _record_of(roster, threshold=UNDECIDED_THRESHOLD, holdings=holdings)
+    keep = _entry(record, ids[UNDECIDED_KEEP])
+    assert keep["verdict"] == "keep" and keep["missing_items"] == ["redundancy"], keep[
+        "missing_items"
+    ]
+    redundancy = keep["evidence"]["redundancy"]
+    assert redundancy["status"] == "unavailable"
+    assert redundancy["reason"].startswith(tr._UNDECIDED_PREFIX)
+    assert isinstance(redundancy["pair"], dict)
+    assert redundancy["pair"]["correlation"]["value"] >= b.SCREEN_THRESHOLD
+    gap = _entry(record, ids[UNDECIDED_BACKTEST_GAP])
+    assert gap["missing_items"] == ["redundancy", "backtest"], gap["missing_items"]
+    assert gap["evidence"]["redundancy"]["pair"] is None
+    assert (
+        gap["evidence"]["backtest"]["reason"] == "backtest dates do not match the realized window"
+    )
+    assert _entry(record, ids[UNDECIDED_YOUNG])["eligible"] is False
+    return record
+
+
+def undecided_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
+    """A fresh copy of the production-shape record whose redundancy comparisons decided nothing."""
+    return _fresh(_undecided_base_record(), run_id, trigger)
+
+
+def undecided_peers(entry: dict) -> list[tuple[str, int]]:
+    """The (display name, aligned days) pairs of the undecided peers a redundancy reason lists,
+    read with the producer's own formatter inverted: each is ``"<name> (<n> aligned days)"`` joined
+    by the producer's separator."""
+    reason = entry["evidence"]["redundancy"]["reason"]
+    assert reason.startswith(tr._UNDECIDED_PREFIX), reason
+    body = reason[len(tr._UNDECIDED_PREFIX) :]
+    found = re.findall(r"(?:^|, )(.+?) \((\d+) aligned days(?:, [a-z ]+)?\)(?=, |$)", body)
+    return [(name, int(days)) for name, days in found]
+
+
+NOT_DECIDED_PHRASE = (
+    "not decided: too few shared trading days with the other symphonies; {n} are needed"
+)
+NO_RESULT_PHRASE = "no comparison with the other symphonies reached a result"
+_COUNT_AND_SUFFIX = re.compile(
+    r"\((\d+) aligned days(, (?:uncertainty|structural) gate undefined)?\)"
+)
+
+
+def expected_redundancy_phrase(reason: str, needed: int | None) -> str:
+    """What the missing line prints for a stored redundancy reason, written from the plan's rule
+    and independent of the page code: a reason that is not the undecided-peer list prints as
+    stored; the undecided-peer list prints the "not decided" phrase when ``needed`` is readable,
+    at least one peer count is stated, every count is below it and no peer carries a gate suffix,
+    and the "no comparison reached a result" phrase otherwise."""
+    if not reason.startswith(tr._UNDECIDED_PREFIX):
+        return reason
+    found = _COUNT_AND_SUFFIX.findall(reason)
+    decided_short = (
+        needed is not None
+        and bool(found)
+        and all(int(days) < needed and not suffix for days, suffix in found)
+    )
+    return NOT_DECIDED_PHRASE.format(n=needed) if decided_short else NO_RESULT_PHRASE
+
+
+def structural_gate_days() -> int:
+    """The fewest aligned days the structural gate needs, from the oracle written from the
+    recommender's stated fraction and minimum, never from the module under test."""
+    return b.days_needed_for_structural_gate()
+
+
+# A peer name that holds a comma, parentheses and the words "aligned days" in no count form, and
+# one that holds a count at the size the structural gate needs or more (it reads as a count).
+HOSTILE_NAME_NO_COUNT = "Harbor, Ltd (see aligned days note)"
+HOSTILE_NAME_WITH_COUNT = "Harbor (999 aligned days)"
+
+_EDGE_KINDS = (
+    "single_peer",
+    "uncertainty_undefined",
+    "structural_undefined",
+    "hostile_name",
+    "hostile_name_with_count",
+)
+
+
+def _single_peer_roster():
+    return b.composite_pair(170, 0.4)
+
+
+def _uncertainty_undefined_roster():
+    wave = b.wave_returns(120, amp=0.5, freq=0.37)
+    return b.two_composer_symphonies(wave, list(wave)), b.COMPOSITE_PAIR_THRESHOLD
+
+
+def _hostile_name_roster(name: str):
+    roster, threshold = b.composite_pair(150, 0.4)
+    relabel(roster, "edge-hostile")
+    roster[1].display_name = name
+    return roster, threshold
+
+
+@cache
+def _undecided_edge_base_record(kind: str, name: str | None = None) -> dict:
+    """The edge shapes of the same producer output. ``single_peer``: two symphonies sharing 170
+    aligned days. ``uncertainty_undefined``: identical series over 120 aligned days, so the
+    correlation is exactly one and the interval cannot be computed. ``structural_undefined``: a pair
+    at exactly the days the structural gate needs whose stressed window has no variance.
+    ``hostile_name``: a peer whose display name holds a comma, parentheses and the words
+    "aligned days" (``HOSTILE_NAME_NO_COUNT``) or a count (``HOSTILE_NAME_WITH_COUNT``)."""
+    assert kind in _EDGE_KINDS, kind
+    if kind == "structural_undefined":
+        return _state_base_record("structural_undefined")
+    if kind == "single_peer":
+        roster, threshold = _single_peer_roster()
+    elif kind == "uncertainty_undefined":
+        roster, threshold = _uncertainty_undefined_roster()
+    else:
+        roster, threshold = _hostile_name_roster(name)
+    if kind != "hostile_name" and kind != "hostile_name_with_count":
+        relabel(roster, f"edge-{kind}")
+    record = _record_of(roster, threshold=threshold)
+    for stored in record["entries"]:
+        item = stored["evidence"]["redundancy"]
+        assert item["status"] == "unavailable", (kind, stored["display_name"])
+        assert item["reason"].startswith(tr._UNDECIDED_PREFIX), (kind, item["reason"])
+    return record
+
+
+def undecided_edge_record(
+    kind: str,
+    run_id: str = RUN_ID_FIRST,
+    *,
+    trigger: str = "nightly",
+) -> dict:
+    """A fresh copy of one edge record (see ``_undecided_edge_base_record``). The hostile-name
+    kinds take their peer's name from the two ``HOSTILE_NAME_*`` constants."""
+    name = {
+        "hostile_name": HOSTILE_NAME_NO_COUNT,
+        "hostile_name_with_count": HOSTILE_NAME_WITH_COUNT,
+    }.get(kind)
+    return _fresh(_undecided_edge_base_record(kind, name), run_id, trigger)
+
+
+def undecided_edge_id(kind: str, index: int) -> str:
+    """The id of the ``index``-th symphony of an edge record, in roster order."""
+    if kind == "structural_undefined":
+        return state_id("structural_undefined", index)
+    prefix = "edge-hostile" if kind.startswith("hostile") else f"edge-{kind}"
+    return composer_hash_like(prefix, index)
+
+
+def uncomputed_pair_record(kind: str, run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly"):
+    """The production-shape record with the keep entry's shown pair edited after the producer
+    wrote it, to the stored shape a pair has when its figures could not be computed (the
+    producer's own null figure: no value, its unit and a reason). ``no_figure``: the correlation,
+    both interval bounds, the stressed correlation and the holdings overlap are all null.
+    ``overlap_only``: the same, except the holdings overlap holds a number."""
+    assert kind in ("no_figure", "overlap_only"), kind
+    record = undecided_record(run_id, trigger=trigger)
+    pair = _entry(record, undecided_id(UNDECIDED_KEEP))["evidence"]["redundancy"]["pair"]
+    for name, unit in (
+        ("correlation", "correlation"),
+        ("ci_lower", "correlation"),
+        ("ci_upper", "correlation"),
+        ("stressed_correlation", "correlation"),
+        ("holdings_overlap", "ratio"),
+    ):
+        pair[name] = tr._figure(None, unit, f"{name.replace('_', ' ')} not computed")
+    if kind == "overlap_only":
+        pair["holdings_overlap"] = tr._figure(0.5, "ratio")
+    return record
+
+
+def shadow_peers_record(count: int, run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly"):
+    """One Composer symphony beside ``count`` eligible symphonies on the shadow-history
+    fallback basis (the shape ``apart_record`` has with two): the Composer one lists all of them
+    in the redundancy item's ``not_compared`` mapping for their basis."""
+    return _fresh(_shadow_peers_base_record(count), run_id, trigger)
+
+
+@cache
+def _shadow_peers_base_record(count: int) -> dict:
+    days = b.last_n_nyse_days(b.AS_OF, 41)
+    roster = [b.composer_symphony("c", "c", days, b.wave_returns(40, amp=0.4, drift=0.05))]
+    for index in range(count):
+        roster.append(
+            b.shadow_symphony(
+                f"f{index}",
+                f"f{index}",
+                days[0].isoformat(),
+                b.by_date(days[1:], b.wave_returns(40, amp=0.3 + 0.05 * index, freq=1.1 + index)),
+            )
+        )
+    relabel(roster, f"shadow-peers-{count}")
+    record = _record_of(roster, threshold=30)
+    composer = _entry(record, roster[0].symphony_id)
+    assert len(composer["evidence"]["redundancy"]["not_compared"]) == count
+    return record
+
+
+def shadow_peers_composer_id(count: int) -> str:
+    return composer_hash_like(f"shadow-peers-{count}", 0)
+
+
 def empty_record(run_id: str = RUN_ID_FIRST) -> dict:
     """A run that completed with zero live symphonies."""
     record = full_record(run_id)
@@ -976,6 +1295,23 @@ class _TreeBuilder(HTMLParser):
 
     def handle_data(self, data):
         self._stack[-1].children.append(data)
+
+
+def visible_text(node: Node) -> str:
+    """The text of ``node`` that shows with every closed disclosure left closed: a closed
+    ``details`` shows its ``summary`` and nothing else (a disclosure carrying ``open`` shows all)."""
+
+    def gather(current: Node) -> str:
+        shown_all = not (current.tag == "details" and "open" not in current.attrs)
+        parts = []
+        for child in current.children:
+            if isinstance(child, str):
+                parts.append(child)
+            elif shown_all or child.tag == "summary":
+                parts.append(gather(child))
+        return "".join(parts)
+
+    return re.sub(r"\s+", " ", gather(node)).strip()
 
 
 def parse_html(body: str) -> Node:

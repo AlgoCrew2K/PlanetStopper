@@ -15,8 +15,11 @@ Contract pinned (the plan's AC-1, AC-2, AC-6, AC-7 and AC-8 for the Advisor page
 * A description is visible text in the browser, exactly as the Copy table A row reads it, and a
   disclosure keeps its term lines hidden until it is opened and shows each one afterwards.
 * Choosing tabs twice leaves each description on the page once.
-* At 1440 and 1240 the Retirement tab's two subsections share one row while each is no taller than
-  320 px in one column, and stack when they are taller.
+* The Retirement tab's two subsections stack at every width, each taking the panel's full content
+  width, whatever their heights; its five run tiles start at one height with equal gaps and the
+  Blocked breakdown is a line of its own below them; the tenure run line and a tenure card's head
+  and decision row sit with even gaps; the undecided-peers disclosure opens and closes by click,
+  Enter and Space and is closed after a reload.
 * At 375 and 320 the tab strip shows a cue at each edge past which a tab lies out of view and at no
   other edge; every tab is reached by scrolling the strip and chosen by a tap (a mouse click at the
   tab's centre: Firefox has no touch emulation here, so the gesture itself is the live phone check),
@@ -26,12 +29,15 @@ Contract pinned (the plan's AC-1, AC-2, AC-6, AC-7 and AC-8 for the Advisor page
 
 from __future__ import annotations
 
+import pathlib
 from contextlib import contextmanager
 
 import pytest
 
 from tests.app import _retirement_tab_world as w
+from tests.app import _tenure_review_panel_builders as pb
 from tests.app.conftest import _reset_scheduler_run_state  # noqa: F401  (autouse, health state)
+from tests.ui import _alignment as al
 from tests.ui import _page_copy as copy_fixture
 from tests.ui import _page_explainers as harness
 from tests.ui import _page_explainers_advisor as adv
@@ -61,11 +67,12 @@ TABS = (
 PHONE = (375, 812)
 VERY_NARROW = (320, 812)
 DESKTOPS = [(1440, 900), (1240, 900)]
-PAIR_MAX_HEIGHT = 320
+PAIR_MAX_HEIGHT = 320  # the height under which the reference put the two subsections side by side
 EDGE_TOLERANCE = 0.5
 
 A_KEYS_OF_TAB = {tab: [k for k in adv.OWNED_A_KEYS if adv.TAB_OF_A_KEY[k] == tab] for tab in TABS}
 A_KEYS_OF_TAB["overview"] = list(adv.OVERVIEW_A_KEYS)
+A_KEYS_OF_TAB["retirement"] = list(adv.RETIREMENT_A_KEYS)
 TERM_KEYS = [k for k in adv.OWNED_A_KEYS if adv.b_rows_for(k)]
 
 _TEXT_JS = """(selector) => [...document.querySelectorAll(selector)].map((el) => ({
@@ -145,9 +152,13 @@ _PAIR_JS = """() => {
     return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, height: r.height }; };
   const a = document.querySelector('[data-testid="retirement-recommender-section"]');
   const b = document.querySelector('[data-testid="tenure-review-section"]');
-  const pair = a.closest('.retirement-pair');
-  return { a: rect(a), b: rect(b),
-           pair: pair ? { cls: pair.className, shared: pair === b.closest('.retirement-pair') } : null };
+  const panel = document.querySelector('[data-testid="retirement-recommendations-panel"]');
+  const cs = getComputedStyle(panel), pr = panel.getBoundingClientRect();
+  const content = {
+    left: pr.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft),
+    right: pr.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight),
+  };
+  return { a: rect(a), b: rect(b), content };
 }"""
 
 
@@ -310,7 +321,9 @@ def test_a_description_is_whole_on_a_phone_and_the_page_does_not_scroll_sideways
 
 
 # ---------------------------------------------------------------------------
-# AC-6: the Retirement pair and the Frontrunner grid (S-6.3 .. S-6.5)
+# The Retirement tab: its two subsections stack, its run tiles and tenure run line sit on one
+# line with even gaps, and the tenure disclosure opens by click and by keys
+# (the plan's AC-2, AC-6 and AC-8 for the tab)
 # ---------------------------------------------------------------------------
 
 
@@ -325,9 +338,16 @@ def _retirement_with_cards_and_long_review():
     adv.seed_long_tenure_review(11)
 
 
-def _side_by_side(read: dict) -> bool:
-    a, b = read["a"], read["b"]
-    return abs(a["top"] - b["top"]) <= 2 and a["right"] <= b["left"] + 1
+def _retirement_with_one_small_review():
+    w.seed_roster()
+    w.store_captured_summary()
+    pb.store_run(pb.solo_record())
+
+
+def _retirement_with_the_undecided_review():
+    w.seed_roster()
+    w.store_captured_summary()
+    pb.store_run(pb.undecided_record())
 
 
 def _stacked(read: dict) -> bool:
@@ -335,45 +355,53 @@ def _stacked(read: dict) -> bool:
     return b["top"] >= a["bottom"] - 1 and abs(a["left"] - b["left"]) <= 2
 
 
-@pytest.mark.parametrize("size", DESKTOPS)
-def test_two_short_retirement_subsections_share_one_row(
+def _is_full_width(read: dict, part: str) -> bool:
+    box, content = read[part], read["content"]
+    return abs(box["left"] - content["left"]) <= 2 and abs(box["right"] - content["right"]) <= 2
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_two_short_retirement_subsections_each_take_the_panels_full_width_one_above_the_other(
     firefox,
     advisor_server,
     tmp_path,
     monkeypatch,
-    size,  # noqa: F811
+    width,  # noqa: F811
 ):
-    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_without_cards)
-    with _open(firefox, advisor_server, size, "retirement") as opened:
+    """S-2.18: the reference put two subsections of 320 px or less in one row; each now takes the
+    whole content width, the recommender above the tenure review."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_one_small_review)
+    with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
         read = opened.evaluate(_PAIR_JS)
-        assert read["pair"] is not None and read["pair"]["shared"], (
-            "the two subsections are not wrapped in one .retirement-pair"
+    for part in ("a", "b"):
+        assert read[part]["height"] <= PAIR_MAX_HEIGHT, (
+            f"premise: the {part} subsection is {read[part]['height']:.0f} px tall, so the "
+            f"reference would have paired it"
         )
-        assert "retirement-pair--side" in read["pair"]["cls"], read["pair"]
-        assert _side_by_side(read), f"the subsections do not share a row: {read}"
+    assert _stacked(read), f"the subsections share a row or are offset: {read}"
+    for part in ("a", "b"):
+        assert _is_full_width(read, part), f"{part} does not span the content width: {read}"
+    assert read["a"]["top"] < read["b"]["top"], "Correlated pairs is not above the tenure review"
 
 
-@pytest.mark.parametrize("size", DESKTOPS)
-def test_two_tall_retirement_subsections_stack(
+@pytest.mark.parametrize("width", [1440, 1920])
+def test_two_tall_retirement_subsections_also_each_take_the_full_width(
     firefox,
     advisor_server,
     tmp_path,
     monkeypatch,
-    size,  # noqa: F811
+    width,  # noqa: F811
 ):
     _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_cards_and_long_review)
-    with _open(firefox, advisor_server, size, "retirement") as opened:
+    with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
         read = opened.evaluate(_PAIR_JS)
-        for part in ("a", "b"):
-            assert read[part]["height"] > PAIR_MAX_HEIGHT, (
-                f"premise: the {part} subsection is {read[part]['height']:.0f} px tall"
-            )
-        assert _stacked(read), f"tall subsections must stack: {read}"
-        assert read["pair"] is not None and "retirement-pair--side" not in read["pair"]["cls"]
+    assert _stacked(read), read
+    for part in ("a", "b"):
+        assert _is_full_width(read, part), f"{part} does not span the content width: {read}"
 
 
 @pytest.mark.parametrize("size", [PHONE, VERY_NARROW])
-def test_the_retirement_subsections_always_stack_on_a_phone_even_when_short(
+def test_the_retirement_subsections_stack_on_a_phone_and_the_page_does_not_scroll_sideways(
     firefox,
     advisor_server,
     tmp_path,
@@ -386,6 +414,295 @@ def test_the_retirement_subsections_always_stack_on_a_phone_even_when_short(
         assert _stacked(read), f"the subsections share a row at {size[0]} px: {read}"
         state = opened.evaluate(_STRIP_JS)
         assert state["pageScroll"] == state["pageClient"]
+
+
+def test_no_script_and_no_rule_sets_a_side_by_side_modifier_on_the_retirement_subsections():
+    """The pairing code is deleted, not left unused: neither the script nor the template names the
+    modifier classes, the measuring function or its two size constants."""
+    root = pathlib.Path(__file__).resolve().parents[2]
+    script = (root / "static" / "ai_advisor.js").read_text(encoding="utf-8")
+    template = (root / "templates" / "ai_advisor.html").read_text(encoding="utf-8")
+    for needle in (
+        "refreshRetirementPair",
+        "RETIREMENT_PAIR_MAX_HEIGHT_PX",
+        "RETIREMENT_PAIR_STACK_MAX_WIDTH_PX",
+        "retirement-pair--side",
+        "retirement-pair--never-run",
+    ):
+        assert needle not in script, f"static/ai_advisor.js still holds {needle}"
+        assert needle not in template, f"templates/ai_advisor.html still holds {needle}"
+
+
+_TILE_TESTIDS = (
+    "retirement-last-run-symphonies",
+    "retirement-last-run-depth",
+    "retirement-last-run-pairs",
+    "retirement-last-run-blocked",
+    "retirement-last-run-recommendations",
+)
+
+# Where the five tiles' figures sit: the box of each tile's label and value (its breakdown line
+# excluded), and where the Blocked breakdown (the one note of the block that is neither the run
+# time nor the series date) sits.
+_TILES_JS = """(ids) => {
+  const box = (el) => {
+    let out = null;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!n.nodeValue.trim()) continue;
+      const r = document.createRange();
+      r.selectNodeContents(n);
+      for (const g of r.getClientRects()) {
+        if (g.width <= 1 || g.height <= 1) continue;
+        out = out
+          ? { left: Math.min(out.left, g.left), right: Math.max(out.right, g.right),
+              top: Math.min(out.top, g.top), bottom: Math.max(out.bottom, g.bottom) }
+          : { left: g.left, right: g.right, top: g.top, bottom: g.bottom };
+      }
+    }
+    return out;
+  };
+  const tiles = ids.map((id) => {
+    const tile = document.querySelector('[data-testid="' + id + '"]');
+    const value = tile && tile.querySelector('.mini-stat-value');
+    const label = tile && tile.querySelector('.mini-stat-label');
+    const v = value && box(value), l = label && box(label);
+    const both = v && l ? { left: Math.min(v.left, l.left), right: Math.max(v.right, l.right),
+                            top: Math.min(v.top, l.top), bottom: Math.max(v.bottom, l.bottom) } : null;
+    return { id, value: v, label: l, figure: both };
+  });
+  const note = document.querySelector(
+    '.retirement-last-run .adv-note:not([data-testid="retirement-last-run-time"])'
+    + ':not([data-testid="retirement-last-run-series-through"])');
+  const block = document.querySelector('[data-testid="retirement-last-run"]');
+  const bs = getComputedStyle(block);
+  const br = block.getBoundingClientRect();
+  return {
+    tiles, note: note ? box(note) : null,
+    blockLeft: br.left + parseFloat(bs.paddingLeft) + parseFloat(bs.borderLeftWidth),
+  };
+}"""
+
+
+def _tiles(opened) -> dict:
+    return opened.evaluate(_TILES_JS, list(_TILE_TESTIDS))
+
+
+@pytest.mark.parametrize("width", [1001, 1440, 1920, 2560])
+def test_the_five_run_tiles_start_at_one_height_with_equal_gaps_and_the_breakdown_is_its_own_line(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    width,  # noqa: F811
+):
+    """S-2.9."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_without_cards)
+    with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
+        read = _tiles(opened)
+    tiles = read["tiles"]
+    assert all(t["value"] and t["label"] for t in tiles), f"a tile has no figure: {tiles}"
+    tops = [t["value"]["top"] for t in tiles]
+    assert max(tops) - min(tops) <= 2, f"the tiles' values start at different heights: {tops}"
+    ordered = sorted(tiles, key=lambda t: t["figure"]["left"])
+    assert [t["id"] for t in ordered] == list(_TILE_TESTIDS), "the tiles are out of order"
+    gaps = [b["figure"]["left"] - a["figure"]["right"] for a, b in zip(ordered, ordered[1:])]
+    assert max(gaps) <= 48, f"a gap between tiles is {max(gaps):.0f} px: {gaps}"
+    assert max(gaps) - min(gaps) <= 2, f"the gaps between tiles are not equal: {gaps}"
+    note = read["note"]
+    assert note is not None, "the Blocked breakdown is not on the page"
+    lowest = max(max(t["value"]["bottom"], t["label"]["bottom"]) for t in tiles)
+    assert note["top"] >= lowest - 1, "the breakdown is not below every tile"
+    assert abs(note["left"] - read["blockLeft"]) <= 2, (
+        f"the breakdown does not begin its line at the block's left edge: {note} {read['blockLeft']}"
+    )
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_the_tenure_run_line_items_sit_with_equal_gaps_from_the_rows_left_edge(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    width,  # noqa: F811
+):
+    """S-2.10."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
+    entry = al.FIGURE_LINES["tenure_run_line"]
+    with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
+        gaps = al.measure(
+            opened.page, al.LINE_GAPS_JS, {"name": "tenure_run_line", **_line_spec(entry, width)}
+        )
+        start = al.measure(
+            opened.page,
+            al.ROW_START_JS,
+            {"name": "tenure_run_line", "row": entry["line"], "max_gap": al.MAX_COLUMN_GAP_PX},
+        )
+    assert gaps["found"] == 1 and gaps["lines"][0]["items"] >= 3, gaps
+    assert gaps["violations"] == [], gaps["violations"]
+    assert start["violations"] == [], start["violations"]
+
+
+def _line_spec(entry: dict, width: int) -> dict:
+    """The registry entry's line and items; from 1440 px no figure may break across lines."""
+    return {"line": entry["line"], "items": entry["items"], "no_wrap": width >= 1440}
+
+
+@pytest.mark.parametrize("width", [1440, 1920])
+def test_a_tenure_cards_head_and_lifecycle_items_sit_within_48_px_of_each_other(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    width,  # noqa: F811
+):
+    """S-2.19 for the tenure card (the card's head and its decision row)."""
+
+    def seed():
+        w.seed_roster()
+        pb.seed_bot_state()
+        pb.store_full_run()
+
+    _prepare(tmp_path, monkeypatch, world="empty", seed=seed)
+    head = al.FIGURE_LINES["tenure_card_head"]
+    with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
+        heads = al.measure(
+            opened.page, al.LINE_GAPS_JS, {"name": "tenure_card_head", **_line_spec(head, width)}
+        )
+        lifecycle = al.measure(
+            opened.page,
+            al.LINE_GAPS_JS,
+            {
+                "name": "tenure_lifecycle",
+                "line": ".tenure-review-lifecycle",
+                "items": ":scope > *",
+                "tolerance": al.MAX_COLUMN_GAP_PX,
+            },
+        )
+    assert heads["found"] >= 3 and heads["violations"] == [], heads["violations"]
+    assert lifecycle["found"] >= 1, "premise: a card carries a decision row"
+    assert lifecycle["violations"] == [], lifecycle["violations"]
+
+
+_UNDECIDED = '[data-testid="tenure-review-undecided"]'
+
+
+def test_the_undecided_disclosure_is_closed_on_load_and_opens_and_closes_by_click_enter_and_space(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,  # noqa: F811
+):
+    """S-6.3 in a browser: closed on load, shows the stored reason when open, and the keys work."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
+    keep = pb.undecided_record()["entries"][pb.UNDECIDED_KEEP]
+    reason = keep["evidence"]["redundancy"]["reason"]
+    with _open(firefox, advisor_server, (1440, 900), "retirement") as opened:
+        card = f'[data-testid="tenure-review-entry"][data-symphony-id="{keep["symphony_id"]}"]'
+        details = opened.page.locator(f"{card} {_UNDECIDED}")
+        summary = details.locator(":scope > summary")
+        assert summary.inner_text().strip() == "Comparisons that decided nothing"
+        assert details.evaluate("(d) => d.open") is False, "it is open on load"
+        closed_text = opened.page.locator(card).inner_text()
+        for name, _days in pb.undecided_peers(keep):
+            assert name not in closed_text, f"{name} shows while the disclosure is closed"
+        summary.click()
+        assert details.evaluate("(d) => d.open") is True
+        assert " ".join(details.inner_text().split()).endswith(" ".join(reason.split()))
+        summary.click()
+        assert details.evaluate("(d) => d.open") is False
+        for key in ("Enter", "Space"):
+            summary.focus()
+            opened.page.keyboard.press(key)
+            assert details.evaluate("(d) => d.open") is True, f"{key} did not open it"
+            opened.page.keyboard.press(key)
+            assert details.evaluate("(d) => d.open") is False, f"{key} did not close it"
+
+
+def test_the_undecided_disclosure_is_closed_again_after_a_reload(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,  # noqa: F811
+):
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
+    with _open(firefox, advisor_server, (1440, 900), "retirement") as opened:
+        first = opened.page.locator(_UNDECIDED).first
+        first.locator(":scope > summary").click()
+        assert first.evaluate("(d) => d.open") is True
+        opened.page.reload()
+        opened.page.wait_for_selector(_UNDECIDED, state="attached")
+        opened.page.click('[role="tab"][data-tab="retirement"]')
+        states = opened.page.eval_on_selector_all(_UNDECIDED, "(ds) => ds.map((d) => d.open)")
+        assert states and not any(states), f"a disclosure is open after a reload: {states}"
+
+
+def test_a_peer_name_is_not_visible_on_the_closed_tenure_cards(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,  # noqa: F811
+):
+    """The tenure cards state N and name no peer while every disclosure is closed."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
+    record = pb.undecided_record()
+    with _open(firefox, advisor_server, (1440, 900), "retirement") as opened:
+        for stored in record["entries"]:
+            card = (
+                f'[data-testid="tenure-review-entry"][data-symphony-id="{stored["symphony_id"]}"]'
+            )
+            shown = opened.evaluate(
+                """(sel) => {
+                  const card = document.querySelector(sel);
+                  return card.innerText;
+                }""",
+                card,
+            )
+            for name, _days in pb.undecided_peers(stored):
+                assert name not in shown, f"{stored['display_name']} shows {name} while closed"
+
+
+def test_the_run_tiles_and_the_evidence_headings_carry_their_glossary_line_as_their_title(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,  # noqa: F811
+):
+    """TG3-13 in a browser: each tile label and each evidence heading has, as its title, the full
+    text of its Glossary line (the Pairs tile reads "Pairs screened at 0.65 or above", which is not
+    the line's lead term, so only the key reaches it)."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
+    lines = {line["key"]: line["text"] for line in copy_fixture.glossary("Retirement")}
+    wanted = {
+        '[data-testid="retirement-last-run-symphonies"] .mini-stat-label': "R06",
+        '[data-testid="retirement-last-run-depth"] .mini-stat-label': "R07",
+        '[data-testid="retirement-last-run-pairs"] .mini-stat-label': "R08",
+        '[data-testid="retirement-last-run-blocked"] .mini-stat-label': "R09",
+        **{
+            f'[data-testid="tenure-review-entry"] [data-testid="tenure-review-evidence-{name}"]'
+            ' [data-testid="tenure-review-evidence-heading"]': key
+            for name, key in (
+                ("performance", "R29a"),
+                ("composite", "R29b"),
+                ("redundancy", "R29c"),
+                ("backtest", "R29d"),
+                ("marginal", "R29e"),
+                ("long_vix", "R29f"),
+            )
+        },
+    }
+    with _open(firefox, advisor_server, (1440, 900), "retirement") as opened:
+        problems = []
+        for selector, key in wanted.items():
+            titles = opened.page.eval_on_selector_all(
+                selector, "(els) => els.map((e) => e.getAttribute('title'))"
+            )
+            if not titles:
+                problems.append(f"{key}: no element at {selector}")
+            for title in titles:
+                if title is None or " ".join(title.split()) != " ".join(lines[key].split()):
+                    problems.append(f"{key}: title is {title!r}")
+        assert not problems, "; ".join(problems)
 
 
 def _card_rows(layout: dict) -> list[list[dict]]:

@@ -213,8 +213,11 @@ def test_a_tab_whose_dot_carries_a_title_keeps_the_title_and_names_its_meaning_i
 def test_a_page_with_nothing_stored_describes_only_the_sections_it_renders(advisor):
     shown = advisor.open("empty", key=False)
     present = {k for k in adv.OWNED_A_KEYS if adv.explainer_nodes(shown.page, k)}
-    for key in ("C01", "R01", "R02", "R22"):
-        assert key in present, f"{key}: a rendered section lost its description"
+    assert "C01" in present, "C01: a rendered section lost its description"
+    for key in adv.RETIREMENT_A_KEYS:
+        assert adv.explainer_nodes(shown.page, key), (
+            f"{key}: a rendered section lost its description"
+        )
     for key in ("W01", "L01", "B00", "T02", "X01"):
         assert key in present, f"{key} is a tab line and always shows"
     for key in ("B07", "B10", "X05"):
@@ -1151,3 +1154,209 @@ def test_the_numeric_verification_header_names_its_glossary_line(advisor):
     if header is None:
         pytest.fail("premise: the stored verification row renders its header")
     assert header.get("data-glossary") == "O24"
+
+
+# ---------------------------------------------------------------------------
+# The Retirement tab: descriptions, other texts and the Glossary
+# (the plan's AC-3 and AC-4 for the tab; its tiles and evidence headings carry their lines as titles)
+# ---------------------------------------------------------------------------
+
+OLD_R12 = (
+    "Run recommender: runs the nightly analysis now; it takes a minute or two and is refused "
+    "while the market is open."
+)
+
+
+def _retirement(shown: Opened):
+    return adv.panel_of(shown.page, "retirement")
+
+
+@pytest.mark.parametrize("key", adv.RETIREMENT_A_KEYS)
+def test_a_retirement_description_shows_its_new_text_once_under_its_heading(advisor, key):
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    values = _full_world_values()
+    nodes = adv.explainer_nodes(shown.page, key)
+    assert len(nodes) == 1, f"{key}: {len(nodes)} elements carry data-explainer={key!r}"
+    node = nodes[0]
+    assert adv.norm(node.get_text(" ")) == adv.norm(adv.expected_a(key, values)), key
+    assert adv.visible_in_markup(node), f"{key} is hidden by the markup"
+    panel = _retirement(shown)
+    assert node in panel.select(f'[data-explainer="{key}"]'), f"{key} is not inside its panel"
+    before = adv.nearest_heading_before(panel, node)
+    assert before.startswith(adv.HEADING_OF_A_KEY[key]), (
+        f"{key} sits under {before!r}, not directly under {adv.HEADING_OF_A_KEY[key]!r}"
+    )
+
+
+@pytest.mark.parametrize("world", ["empty", "full"])
+def test_the_retirement_descriptions_show_with_nothing_stored_too(advisor, world):
+    shown = advisor.open(world, key=False)
+    for key in adv.RETIREMENT_A_KEYS:
+        assert len(adv.explainer_nodes(shown.page, key)) == 1, f"{key} is not shown in {world}"
+
+
+def test_each_retirement_description_is_directly_followed_by_what_the_section_holds_not_a_disclosure(
+    advisor,
+):
+    """A term disclosure no longer follows R02 or R22: their terms are Glossary lines."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    for key in adv.RETIREMENT_A_KEYS:
+        node = adv.explainer_nodes(shown.page, key)[0]
+        following = adv.next_element(node)
+        assert (
+            following is None or following.name != "details" or not following.get("data-terms")
+        ), f"{key} is followed by a term disclosure"
+        assert not adv.disclosure_nodes(shown.page, key), f"{key} still has its own disclosure"
+
+
+def test_every_old_text_the_retirement_tab_dropped_is_in_no_section_body(advisor):
+    """S-3.3 for the tab: the reference text of each shortened row and each old sentence its
+    new text drops appears in no section body; a sentence a Glossary line took over lives there."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    body = _without_glossaries(shown.page)
+    values = _full_world_values()
+    problems = []
+    for key in adv.RETIREMENT_A_KEYS:
+        old = adv.norm(adv.expected_row_at_reference(key, values))
+        kept = set(_sentences(adv.expected_a(key, values)))
+        if old in body:
+            problems.append(f"{key}: the whole old text is on the page")
+        for sentence in _sentences(old):
+            if sentence not in kept and sentence in body:
+                problems.append(f"{key}: the old sentence {sentence!r} is on the page")
+    assert not problems, "\n".join(problems)
+    assert OLD_R12 not in adv.norm(shown.page.get_text(" ")), "the old R12 sentence is on the page"
+
+
+def test_the_retirement_tab_ends_with_one_closed_glossary_holding_table_gs_lines_in_order(
+    advisor,
+):
+    """S-4.1 and S-4.2 for the tab: one disclosure, closed, summary Glossary, the last element of
+    the tab panel, one paragraph per line in order with exactly the line's text (slots filled)."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    values = _full_world_values()
+    panel = _retirement(shown)
+    glossary = _glossary_of(panel)
+    assert "hp-more" in glossary.get("class", []) and not glossary.has_attr("open")
+    assert glossary.has_attr("data-glossary-host") and glossary.get("data-testid") == "glossary"
+    summary = glossary.find("summary", recursive=False)
+    assert summary is not None and adv.norm(summary.get_text(" ")) == "Glossary"
+    assert [c for c in panel.find_all(recursive=False)][-1] is glossary, (
+        "the Glossary is not the last element of the Retirement panel"
+    )
+    lines = [c for c in glossary.find_all(recursive=False) if c.name != "summary"]
+    expected = copy_fixture.glossary("Retirement")
+    assert [c.name for c in lines] == ["p"] * len(expected)
+    assert [c.get("data-term") for c in lines] == [line["key"] for line in expected]
+    for node, line in zip(lines, expected, strict=True):
+        text = line["text"]
+        for slot in line["slots"]:
+            phrase, _ = adv.phrase_of(slot, line["key"])
+            assert "{" + slot + "}" in text
+            text = text.replace("{" + slot + "}", values[slot])
+        assert adv.norm(node.get_text(" ")) == adv.norm(text), line["key"]
+
+
+def test_the_run_recommender_line_reads_its_g2_text_and_the_others_equal_the_reference(advisor):
+    """S-4.5 and S-4.7 for the tab: R12 is the line Table G2 rewrites; every other line reads the
+    reference fixture's text."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    values = _full_world_values()
+    glossary = _glossary_of(_retirement(shown))
+    g2 = [x for x in copy_fixture.glossary("Retirement") if x["source"] == "G2"]
+    assert [x["key"] for x in g2] == ["R12"]
+    found = glossary.select('p[data-term="R12"]')
+    assert len(found) == 1 and adv.norm(found[0].get_text(" ")) == adv.norm(g2[0]["text"])
+    for line in copy_fixture.glossary("Retirement"):
+        if line["source"] != "ref":
+            continue
+        node = glossary.select_one(f'p[data-term="{line["key"]}"]')
+        assert node is not None, line["key"]
+        assert adv.norm(node.get_text(" ")) == adv.norm(
+            adv.expected_row(line["key"], "B", **values)
+        ), line["key"]
+
+
+@pytest.mark.parametrize("world", ["empty", "full"])
+def test_the_retirement_glossary_holds_every_line_whatever_sections_render(advisor, world):
+    shown = advisor.open(world, key=False)
+    glossary = _glossary_of(_retirement(shown))
+    keys = [c.get("data-term") for c in glossary.find_all("p", recursive=False)]
+    assert keys == [line["key"] for line in copy_fixture.glossary("Retirement")]
+
+
+def test_the_retirement_tab_carries_no_what_the_terms_mean_disclosure(advisor):
+    """S-4.3 for the tab: no such summary, no data-terms but the Glossary, each term defined once."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    panel = _retirement(shown)
+    summaries = [adv.norm(s.get_text(" ")) for s in panel.select("summary")]
+    assert adv.DISCLOSURE_SUMMARY not in summaries, summaries
+    others = [
+        d["data-terms"] for d in panel.select("[data-terms]") if d["data-terms"] != "glossary"
+    ]
+    assert others == [], others
+    for line in copy_fixture.glossary("Retirement"):
+        found = shown.page.select(f'#tab-panel-retirement [data-term="{line["key"]}"]')
+        assert len(found) == 1, f"{line['key']} is defined {len(found)} times in the tab"
+
+
+def test_the_retirement_tab_hint_and_the_run_buttons_title_keep_their_words(advisor):
+    """CX-12 (the hint stays) and S-4.9 (the button's own title stays)."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    hint = shown.page.select_one('[data-testid="retirement-run-now-hint"]')
+    assert hint is not None and adv.norm(hint.get_text(" ")) == (
+        "Run recommender is available outside market hours only — the Composer API is shared "
+        "with the live engine."
+    )
+    button = shown.page.select_one('[data-testid="retirement-run-now-btn"]')
+    assert button["title"] == (
+        "Runs the same analysis as the nightly 03:45 UTC job; takes a minute or two."
+    )
+
+
+_TILE_LINES = (
+    ("retirement-last-run-symphonies", "R06"),
+    ("retirement-last-run-depth", "R07"),
+    ("retirement-last-run-pairs", "R08"),
+    ("retirement-last-run-blocked", "R09"),
+)
+_EVIDENCE_LINES = (
+    ("performance", "R29a"),
+    ("composite", "R29b"),
+    ("redundancy", "R29c"),
+    ("backtest", "R29d"),
+    ("marginal", "R29e"),
+    ("long_vix", "R29f"),
+)
+
+
+def test_the_run_tiles_and_the_evidence_headings_name_their_glossary_lines(advisor):
+    """TG3-13 in the server render: each of the four tile labels and the six evidence headings
+    carries the key of its line (a tile label such as 'Pairs screened at 0.65 or above' is not
+    its line's lead term, so the match by text could not reach it)."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    panel = _retirement(shown)
+    problems = []
+    for testid, key in _TILE_LINES:
+        label = panel.select_one(f'[data-testid="{testid}"] .mini-stat-label')
+        if label is None:
+            problems.append(f"{testid}: no label element")
+        elif label.get("data-glossary") != key:
+            problems.append(f"{testid}: data-glossary is {label.get('data-glossary')!r}, not {key}")
+    assert not problems, "\n".join(problems)
+    glossary = _glossary_of(panel)
+    for _, key in (*_TILE_LINES, *_EVIDENCE_LINES):
+        assert glossary.select_one(f'p[data-term="{key}"]') is not None, key
+
+
+def test_every_evidence_heading_of_a_tenure_card_names_its_glossary_line(advisor):
+    shown = advisor.open("empty", key=False, seed=lambda: pb.store_run(pb.full_record()))
+    cards = shown.page.select('[data-testid="tenure-review-entry"]')
+    assert cards, "premise: a stored review renders cards"
+    for card in cards:
+        for name, key in _EVIDENCE_LINES:
+            heading = card.select_one(
+                f'[data-testid="tenure-review-evidence-{name}"] [data-testid="tenure-review-evidence-heading"]'
+            )
+            assert heading is not None, name
+            assert heading.get("data-glossary") == key, (name, heading.get("data-glossary"))

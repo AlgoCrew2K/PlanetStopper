@@ -85,43 +85,24 @@ def test_no_comment_sits_inside_a_selector_list(path):
     )
 
 
-def _three_to_four_rules() -> list[str]:
-    uncommented = re.sub(r"/\*.*?\*/", "", _style_text(ADVISOR_TEMPLATE), flags=re.S)
-    return re.findall(r"([^{}]*)\{[^{}]*grid-template-columns:\s*3fr 4fr[^{}]*\}", uncommented)
+def _uncommented_style() -> str:
+    return re.sub(r"/\*.*?\*/", "", _style_text(ADVISOR_TEMPLATE), flags=re.S)
 
 
-def _pair_classes(html: str) -> set[str]:
-    node = adv.soup(html).select_one('[data-testid="retirement-pair"]')
-    assert node is not None, "the Retirement tab renders no pair"
-    return set(node.get("class") or [])
+def test_no_rule_sets_columns_for_a_pair_of_retirement_subsections():
+    """The two Retirement subsections stack: the reference's 4fr 3fr and 3fr 4fr column rules, and
+    every rule whose selector names a pair of them, are gone with the script that set the modifier."""
+    css = _uncommented_style()
+    paired = re.findall(r"([^{}]*)\{[^{}]*grid-template-columns:\s*[34]fr [34]fr[^{}]*\}", css)
+    assert not paired, f"a rule still gives the subsections two columns: {paired}"
+    named = re.findall(r"([^{}]*retirement-pair[^{}]*)\{", css)
+    assert not named, f"a rule still names the pair of subsections: {named}"
 
 
-def _never_run_classes() -> tuple[str, set[str]]:
-    selectors = _three_to_four_rules()
-    assert len(selectors) == 1, f"premise: one rule gives the never-run columns: {selectors}"
-    selector = selectors[0]
-    assert ":only-child" not in selector and ":has(" not in selector, (
-        f"the rule is keyed to the DOM shape of one copy line: {selector.strip()}"
-    )
-    keyed = set(re.findall(r"\.([\w-]+)", selector)) - {"retirement-pair", "retirement-pair--side"}
-    assert keyed, f"the rule names no class the template sets: {selector.strip()}"
-    return selector, keyed
-
-
-def test_the_never_run_columns_are_keyed_to_a_class_the_never_run_pair_carries(advisor):
-    _, keyed = _never_run_classes()
-    never_run = _pair_classes(advisor.open("empty").html)
-    assert keyed <= never_run, (
-        f"the rule keys to {sorted(keyed)} but the never-run pair carries {sorted(never_run)}"
-    )
-
-
-def test_the_never_run_class_is_absent_once_a_run_is_stored(advisor):
-    _, keyed = _never_run_classes()
-    ran = _pair_classes(advisor.open("full").html)
-    assert not (keyed & ran), (
-        f"a pair after a run carries the never-run class {sorted(keyed & ran)}"
-    )
+def test_the_retirement_tab_renders_no_pair_class_on_any_state(advisor):
+    for world in ("empty", "full"):
+        html = advisor.open(world).html
+        assert "retirement-pair--" not in html, f"a pair modifier is rendered in the {world} world"
 
 
 def test_no_retirement_rule_is_keyed_to_the_shape_of_a_copy_line():

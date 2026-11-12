@@ -8033,6 +8033,11 @@ def _tenure_text(value: object) -> str:
     return value if isinstance(value, str) and value.strip() else _NOT_RECORDED_TEXT
 
 
+@app.template_filter("tenure_redundancy_missing")
+def _tenure_redundancy_missing(reason: object, needed: object) -> str | None:
+    raise NotImplementedError
+
+
 @app.template_filter("tenure_number")
 def _tenure_number(value: object) -> str:
     """A finite stored number to two decimals, else "not recorded" (never nan, inf or True)."""

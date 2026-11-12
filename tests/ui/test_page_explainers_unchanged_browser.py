@@ -113,6 +113,8 @@ REWRITTEN_FIGURE_KEYS = frozenset(
         "testid:suggestions-placeholder",
         "testid:autotune-shared-line",
         "id:autotune-older-summary",
+        # The tenure card's missing line states the redundancy once, without peer names.
+        "testid:tenure-review-missing",
     }
 )
 REWRITTEN_CONTROL_TESTIDS = frozenset({"retirement-pointer", "autotune-older-summary"})
@@ -120,7 +122,19 @@ REWRITTEN_CONTROL_TESTIDS = frozenset({"retirement-pointer", "autotune-older-sum
 # Term disclosures the plan removes from a host, as (host, tag, text) -> how many: the Overview's
 # five (its tab line, O03, O08, O15 and O27) became lines of its one Glossary. A later cycle adds
 # its host's. At most this many may be missing, so a sixth lost disclosure is still reported.
-REMOVED_DISCLOSURES = {("/ai-advisor", "summary", "What the terms mean"): 5}
+REMOVED_DISCLOSURES = {("/ai-advisor", "summary", "What the terms mean"): 7}
+
+# The summary of a tenure evidence cell of an item the missing line names reads its heading and its
+# status only: the reason moved to the line. The reference's summary carried "<heading> unavailable:
+# <reason>" (or "not applicable: <reason>"), which the plan rewrites.
+_REWRITTEN_EVIDENCE_SUMMARY = re.compile(
+    r"^(Performance|Composite score|Redundancy|Backtest|Marginal contribution|Long VIX hedge) "
+    r"(unavailable|not applicable)"
+)
+
+
+def _is_rewritten_evidence_summary(control: dict) -> bool:
+    return control["tag"] == "summary" and bool(_REWRITTEN_EVIDENCE_SUMMARY.match(control["text"]))
 
 
 def _relabelled_by_a_copy_row(key: str) -> bool:
@@ -197,6 +211,7 @@ def control_differences(
             _is_removed_control(control)
             or _is_relabelled(control["text"], matchers)
             or control["testid"] in REWRITTEN_CONTROL_TESTIDS
+            or _is_rewritten_evidence_summary(control)
         ):
             continue
         key = _control_key(control)

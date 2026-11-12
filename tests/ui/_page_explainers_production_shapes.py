@@ -11,13 +11,10 @@ Provenance of each seed:
   the captured ``autotune_run_reverted_to_fallback.json`` fixture. The shape (every symphony's
   latest run stamped by one weekly batch, so the run-time cell is identical in every row, and a
   streak of 4 or 5 runs) is the shape the production capture showed; the stamps are synthetic.
-* ``production_tenure_record``: the captured full run record of
-  ``tests/app/_tenure_review_panel_builders.py`` extended to ``entries`` entries by
-  ``tests/ui/_page_explainers_advisor.py`` (copies, labelled synthetic), with each eligible entry's
-  redundancy item set unavailable and its reason the real producer's phrase
-  (``advisors.tenure_review._UNDECIDED_PREFIX``) followed by the other symphonies' names from the
-  captured state and an aligned-days count, as the production capture showed. The names are the
-  captured state's; the day counts are synthetic.
+* the tenure review of the production shape is ``undecided_record`` of
+  ``tests/app/_tenure_review_panel_builders.py``: the real review compute over constructed series,
+  so the undecided peers are joined as the producer joins them (this module held a hand-edited
+  record that joined them with a semicolon, which the producer never writes; it is gone).
 * ``seed_long_prism_rationale``: the captured Market Prism row of
   ``tests/fixtures/ai_advisor/market_prism_summary_full.json`` with ``sentiment_rationale``
   replaced by a synthetic paragraph of the length a nightly council writes (about 1,000
@@ -42,8 +39,6 @@ WIDER_TAB_TEXT_CSS = ".cap-tab { letter-spacing: 0.03em; }"
 
 # The weekly batch every symphony's latest run belongs to (synthetic stamp, shared by all rows).
 LATEST_BATCH = datetime(2026, 11, 6, 19, 8, 0)
-
-UNDECIDED_ALIGNED_DAYS = (170, 162, 160, 153, 163, 160, 170, 162, 153, 160)
 
 # A council-length rationale (synthetic text, about 1,000 characters).
 LONG_RATIONALE = (
@@ -75,41 +70,6 @@ def seed_same_batch_autotune_runs(weeks: int = 4) -> list[str]:
             stamp = LATEST_BATCH - timedelta(weeks=runs - 1 - week)
             adv.save_run_like("reverted", key, stamp.strftime("%Y-%m-%dT%H:%M:%S"))
     return keys
-
-
-def production_tenure_record(entries: int = 11) -> dict:
-    """The full tenure record at ``entries`` entries, redundancy long-winded as in production."""
-    record = adv.long_tenure_record(entries)
-    names = [name for _, name in captured_symphonies()]
-    for index, entry in enumerate(record["entries"]):
-        entry["display_name"] = names[index % len(names)]
-        evidence = entry.get("evidence") or {}
-        redundancy = evidence.get("redundancy")
-        if (
-            not entry.get("eligible")
-            or entry.get("verdict") == "retire_candidate"
-            or not isinstance(redundancy, dict)
-            or redundancy.get("status") != "available"
-        ):
-            continue
-        peers = [
-            f"{name} ({UNDECIDED_ALIGNED_DAYS[i % len(UNDECIDED_ALIGNED_DAYS)]} aligned days)"
-            for i, name in enumerate(n for n in names if n != entry["display_name"])
-        ]
-        redundancy["status"] = "unavailable"
-        # The producer joins the undecided peers with a semicolon and a space.
-        redundancy["reason"] = tenure_review._UNDECIDED_PREFIX + "; ".join(peers)
-        missing = list(entry.get("missing_items") or [])
-        if "redundancy" not in missing:
-            missing.append("redundancy")
-        entry["missing_items"] = missing
-    return record
-
-
-def seed_production_tenure_review(entries: int = 11) -> dict:
-    record = production_tenure_record(entries)
-    pb.store_run(record)
-    return record
 
 
 def seed_long_prism_rationale() -> None:
