@@ -971,18 +971,6 @@
             border-top: 1px solid var(--studio-rule);
         }
         .retirement-subsection > .section-header { margin-top: 0; }
-        /* Two short subsections share one row; the script adds --side when both fit in 320px or less
-           (it measures them stacked) and the 700px breakpoint always stacks them. */
-        @media (min-width: 701px) {
-            .retirement-pair--side { display: grid; grid-template-columns: 4fr 3fr; gap: 0 24px; align-items: stretch; }
-            .retirement-pair--side > .retirement-subsection + .retirement-subsection {
-                margin-top: 0;
-                padding-top: 0;
-                border-top: 0;
-                padding-left: 24px;
-                border-left: 1px solid var(--studio-rule);
-            }
-        }
         .retirement-rec-pair { margin-bottom: 4px; }
         .retirement-rec-meta, .retirement-rec-gates {
             display: flex;
@@ -1039,11 +1027,10 @@
         .retirement-subsection[data-testid="tenure-review-section"] { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0 16px; }
         .retirement-subsection[data-testid="tenure-review-section"] > * { flex: 1 1 100%; min-width: 0; }
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { flex: 0 0 auto; margin: 2px 0; }
-        .retirement-pair--side > .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-header { margin: 30px 0 12px; }
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-run,
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-notice,
         .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-empty-line { flex: 1 1 12rem; margin-bottom: 0; }
-        .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-run { justify-content: space-between; }
+        .retirement-subsection[data-testid="tenure-review-section"] > .tenure-review-run { flex: 1 1 100%; }
         /* The Run recommender control shares the heading's row, so the section stays short. */
         .retirement-subsection[data-testid="retirement-recommender-section"] { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 0 16px; }
         .retirement-subsection[data-testid="retirement-recommender-section"] > * { flex: 1 1 100%; order: 2; min-width: 0; }
@@ -1056,14 +1043,11 @@
         .retirement-last-run { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 20px; }
         .retirement-last-run > .retirement-last-run-state { flex: 1 1 100%; }
         .retirement-last-run > .retirement-tiles { flex: 1 1 100%; }
-        /* Stacked, the tiles join the run's own row in equal parts; the Blocked tile and the excluded list then
-           share the next row, so no tile leaves a wide gap beside a taller one. */
-        @media (min-width: 701px) {
-            .retirement-pair:not(.retirement-pair--side) .retirement-last-run > .retirement-tiles { display: contents; }
-            .retirement-pair:not(.retirement-pair--side) .retirement-last-run .mini-stat { flex: 1 1 12rem; min-width: 0; }
-            .retirement-pair:not(.retirement-pair--side) .retirement-last-run .mini-stat:has(> .adv-note) { flex: 1 1 45%; order: 2; }
-            .retirement-pair:not(.retirement-pair--side) .retirement-last-run > .retirement-last-run-excluded { flex: 1 1 45%; order: 2; }
-        }
+        /* The five tiles share one row at their own widths with equal gaps. A tile has no box of its
+           own: its figure (value and label) is the flex item and its note is a line below every figure. */
+        .retirement-tiles > .mini-stat { display: contents; }
+        .retirement-tile-figure { border-top: 1px solid var(--studio-rule); padding: 8px 0 0; }
+        .retirement-tiles > .mini-stat > .adv-note { flex: 1 0 100%; order: 1; }
         .retirement-last-run > .retirement-last-run-excluded { flex: 1 1 14rem; min-width: 0; }
 
         /* Symphony tenure review */
@@ -1084,28 +1068,29 @@
         .tenure-review-entry { margin-bottom: 4px; font-size: 13px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 16px; }
         /* The lifecycle's explanation, status and actions share a row. */
         .tenure-review-entry > .tenure-review-entry-head,
-        .tenure-review-lifecycle { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; }
+        .tenure-review-lifecycle { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
         .tenure-review-entry > .tenure-review-evidence-grid,
         .tenure-review-entry > .tenure-review-lifecycle { flex: 1 1 100%; min-width: 0; }
         .tenure-review-entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
         .tenure-review-line { color: var(--studio-ink-dim); font-size: 12px; margin-bottom: 4px; }
         .tenure-verdict-chip--none { --dot: var(--studio-ink-dim); }
-        /* The evidence items wrap in one flex row: a short item shares a row with the others, and the
-           redundancy item (which lists every sibling it was compared with) is as wide as its text, so a
-           long one takes a row of its own, where its text leaves no empty block beside it, and a short
-           one sits in the row with the rest. One column on a phone. */
-        .tenure-review-evidence-grid { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 16px; margin-top: 8px; }
-        .tenure-review-evidence { flex: 1 1 8rem; min-width: 0; }
+        /* From 1001 px the six evidence items sit in six equal columns, in the order they are written,
+           so every card's items start at the same x. Narrower, they wrap in one flex row and stack on a
+           phone, the redundancy item as wide as its text. */
+        .tenure-review-evidence-grid { margin-top: 8px; }
+        .tenure-review-evidence { min-width: 0; }
+        @media (min-width: 1001px) {
+            .tenure-review-evidence-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0 16px; align-items: start; }
+        }
+        @media (max-width: 1000px) {
+            .tenure-review-evidence-grid { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 16px; }
+            .tenure-review-evidence { flex: 1 1 8rem; }
+            .tenure-review-evidence[data-testid="tenure-review-evidence-redundancy"] { order: 1; flex: 1 1 auto; }
+            .tenure-review-evidence[data-testid="tenure-review-evidence-composite"] { flex: 3 1 14rem; }
+        }
         @media (max-width: 700px) { .tenure-review-evidence { flex-basis: 100%; } }
-        .tenure-review-evidence[data-testid="tenure-review-evidence-redundancy"] { order: 1; flex: 1 1 auto; }
-        /* The composite score's line is the longest of the others, so it gets a wider share. */
-        .tenure-review-evidence[data-testid="tenure-review-evidence-composite"] { flex: 3 1 14rem; }
         /* The explanation takes the free width, so the status and the actions sit together at the end. */
-        .tenure-review-lifecycle > .retirement-rec-explanation { flex: 1 1 auto; }
         .tenure-review-entry > .tenure-review-line[data-testid="tenure-review-missing"] { flex: 1 1 100%; }
-        /* Across the full width its heading and headline share one line. */
-        .tenure-review-evidence[data-testid="tenure-review-evidence-redundancy"] .tenure-review-evidence-summary > .tenure-review-evidence-meta,
-        .tenure-review-evidence[data-testid="tenure-review-evidence-redundancy"] .tenure-review-evidence-summary > .tenure-review-evidence-figure { display: inline; margin-left: 12px; }
 
         .tenure-review-evidence { border-top: 1px solid var(--studio-rule); padding: 0; break-inside: avoid; margin-bottom: 2px; }
         /* An item is a closed disclosure: the summary is its heading and one headline line; the rest of
@@ -1276,12 +1261,6 @@
             .obs-table th:nth-child(4), .obs-table td:nth-child(4) { width: 20%; }
         }
 
-        /* Side by side, the tenure column's terms disclosure shares the row of its Run button and the line
-           after it, so no wide empty band forms beside the short lines of its stack. */
-        .retirement-pair--side.retirement-pair--never-run > .retirement-subsection[data-testid="tenure-review-section"] > details.hp-more { flex: 0 0 auto; }
-        /* Before any run both columns hold short stacks; the wider column goes to the tenure side, whose
-           explainer then wraps to fewer lines. */
-        .retirement-pair--side.retirement-pair--never-run { grid-template-columns: 3fr 4fr; }
 
         /* From 1440 px the tab bar takes the left and the description the right, so the description's
            one line does not leave the right of the panel empty. */
@@ -2083,21 +2062,23 @@
         {% macro tenure_evidence_item(name, item, missing_items) %}
             {% set item = item if item is mapping else {} %}
             {% set headings = {'performance': 'Performance', 'composite': 'Composite score', 'redundancy': 'Redundancy', 'backtest': 'Backtest', 'marginal': 'Marginal contribution', 'long_vix': 'Long VIX hedge'} %}
+            {% set heading_keys = {'performance': 'R29a', 'composite': 'R29b', 'redundancy': 'R29c', 'backtest': 'R29d', 'marginal': 'R29e', 'long_vix': 'R29f'} %}
             {% set lbl = item.get('label') %}
             {% set w = item.get('window') %}
             {% set status = item.get('status') %}
             {% set pair = item.get('pair') %}
             {% set figs = item.get('figures') %}
-            {% set reason_on_not_used_line = name == 'redundancy' and pair is not mapping and missing_items is sequence and missing_items is not string and missing_items is not mapping and 'redundancy' in missing_items %}
+            {# The missing line states a reason once, so an item's cell reads only its status (and says when no reason was recorded). #}
+            {% set pair_figured = pair is mapping and (pair.get('correlation') is mapping and pair.get('correlation').get('value') is finite_number or pair.get('ci_lower') is mapping and pair.get('ci_lower').get('value') is finite_number or pair.get('ci_upper') is mapping and pair.get('ci_upper').get('value') is finite_number or pair.get('stressed_correlation') is mapping and pair.get('stressed_correlation').get('value') is finite_number or pair.get('holdings_overlap') is mapping and pair.get('holdings_overlap').get('value') is finite_number) %}
             {% set first_fig = (figs.keys() | list | first) if status == 'available' and figs is mapping and figs else none %}
             {% set paired_with = ((pair.get('sibling_name') if pair.get('sibling_name') is string and pair.get('sibling_name').strip() else (pair.get('sibling_id') | tenure_text)) if pair is mapping else '') %}
-            {% set headline_kind = 'status' if status != 'available' else ('figure' if first_fig is not none else ('pair' if pair is mapping else ('nofig' if figs is not mapping else 'none'))) %}
+            {% set headline_kind = 'status' if status != 'available' else ('figure' if first_fig is not none else ('pair' if pair_figured else ('nofig' if figs is not mapping else 'none'))) %}
             {% set headline %}
                 {%- if headline_kind == 'status' -%}
                     {%- if status == 'not_applicable' -%}
-                    <span class="tenure-review-evidence-meta retirement-rec-meta">not applicable{% if not reason_on_not_used_line %}: {{ item.get('reason') | tenure_text }}{% endif %}</span>
+                    <span class="tenure-review-evidence-meta retirement-rec-meta">not applicable{% if not (item.get('reason') is string and item.get('reason').strip()) %}: not recorded{% endif %}</span>
                     {%- else -%}
-                    <span class="tenure-review-evidence-meta retirement-rec-meta">unavailable{% if not reason_on_not_used_line %}: {{ item.get('reason') | tenure_text }}{% endif %}</span>
+                    <span class="tenure-review-evidence-meta retirement-rec-meta">unavailable{% if not (item.get('reason') is string and item.get('reason').strip()) %}: not recorded{% endif %}</span>
                     {%- endif -%}
                 {%- elif headline_kind == 'figure' -%}
                     {{ tenure_figure(first_fig, figs.get(first_fig), item.get('population_size'), name == 'composite', 'span') }}
@@ -2110,7 +2091,7 @@
             <div class="tenure-review-evidence" data-testid="tenure-review-evidence-{{ name }}">
                 <details class="tenure-review-evidence-details">
                 <summary class="tenure-review-evidence-summary">
-                    <span class="tenure-review-evidence-heading" data-testid="tenure-review-evidence-heading">{{ headings.get(name, name) }}</span>
+                    <span class="tenure-review-evidence-heading" data-testid="tenure-review-evidence-heading" data-glossary="{{ heading_keys.get(name, '') }}">{{ headings.get(name, name) }}</span>
                     {{ headline }}
                 </summary>
                 <div class="tenure-review-evidence-body">
@@ -2132,7 +2113,7 @@
                 {% if pair is mapping %}
                 {% set ugate = pair.get('uncertainty_gate') if pair.get('uncertainty_gate') is mapping else {} %}
                 {% set sgate = pair.get('structural_gate') if pair.get('structural_gate') is mapping else {} %}
-                {% if headline_kind != 'pair' %}
+                {% if pair_figured and headline_kind != 'pair' %}
                 <div class="tenure-review-evidence-figure retirement-rec-gates">paired with: {{ paired_with }}</div>
                 {% endif %}
                 {% for fig_name in ('correlation', 'ci_lower', 'ci_upper', 'stressed_correlation', 'holdings_overlap') %}
@@ -2148,12 +2129,18 @@
                 <div class="tenure-review-evidence-meta retirement-rec-meta">{{ item.get('summary') }}</div>
                 {% endif %}
                 {% if name == 'redundancy' and missing_items is sequence and missing_items is not string and missing_items is not mapping and 'redundancy' in missing_items %}
-                <div class="tenure-review-evidence-meta retirement-rec-meta">not used in the verdict: {{ item.get('reason') | tenure_text }}</div>
+                <div class="tenure-review-evidence-meta retirement-rec-meta">not used in the verdict</div>
                 {% endif %}
                 {% set not_compared = item.get('not_compared') %}
                 {% if not_compared is sequence and not_compared is not string and not_compared is not mapping %}
+                {# One line per distinct stored reason with how many symphonies it covers; no peer is named. #}
+                {% set not_compared_counts = {} %}
                 {% for peer in not_compared if peer is mapping %}
-                    <div class="tenure-review-evidence-meta retirement-rec-meta">not compared: {{ peer.get('display_name') | tenure_text }}, {{ peer.get('reason') | tenure_text }}</div>
+                    {% set peer_reason = peer.get('reason') | tenure_text %}
+                    {% set _ = not_compared_counts.update({peer_reason: not_compared_counts.get(peer_reason, 0) + 1}) %}
+                {% endfor %}
+                {% for peer_reason, peer_count in not_compared_counts.items() %}
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">not compared: {{ peer_count }} other {{ 'symphony' if peer_count == 1 else 'symphonies' }}, {{ peer_reason }}</div>
                 {% endfor %}
                 {% endif %}
                 {% set excluded = item.get('excluded') %}
@@ -2169,28 +2156,14 @@
 
         <section class="hero-section matrix-card adv-panel" data-testid="retirement-recommendations-panel">
             <div class="section-header matrix-card-header adv-heading">Retirement recommendations</div>
-            <p class="adv-explainer" data-explainer="R01">Suggestions to retire a symphony that duplicates another or no longer earns its place. Nothing is retired for you: approving records your decision and gives you a checklist to wind the symphony down yourself in Composer.</p>
+            <p class="adv-explainer" data-explainer="R01">Suggestions to retire a symphony that duplicates another live symphony and scores lower; approving only records your decision.</p>
 
-            <div class="retirement-pair{% if not retirement_last_run %} retirement-pair--never-run{% endif %}" data-testid="retirement-pair">
+            <div class="retirement-pair" data-testid="retirement-pair">
 
             {# The recommender first: the card to act on is at the top, then the run it came from. #}
             <section class="retirement-subsection" data-testid="retirement-recommender-section">
                 <div class="section-header adv-heading">Correlated pairs</div>
-                <p class="adv-explainer" data-explainer="R02">A symphony is flagged when, over enough shared days, its daily returns track another live symphony's {% if page_copy.screen_threshold is not none %}at a correlation of {{ page_copy.screen_threshold }} or more,{% else %}at or above the correlation screen,{% endif %} even at the low end of the estimate's range and on the worst days, and it has the lower combined return and risk score. Each card names the symphony to retire, then the one to keep after the arrow.</p>
-                <details class="hp-more" data-terms="R02">
-                    <summary>What the terms mean</summary>
-                    <p data-term="R04">Deposit-adjusted: the series Composer names deposit-adjusted, which the recommender uses instead of the raw account value series.</p>
-                    <p data-term="R06">Analysed: symphonies with a usable daily series, of all live symphonies.</p>
-                    <p data-term="R07">History: the shortest and longest daily series, in days.</p>
-                    <p data-term="R08">Pairs screened: pairs whose correlation reached the screen, of all pairs compared.</p>
-                    <p data-term="R09">Blocked: screened pairs that did not become a recommendation, counted by the check that stopped them.</p>
-                    <p data-term="R12">Run recommender: runs the nightly analysis now; it takes a minute or two and is refused while the market is open.</p>
-                    <p data-term="R17">kept: the symphony of the pair that stays; the one before the arrow is the one suggested for retirement.</p>
-                    <p data-term="R18">Composite gap: how far the kept symphony's combined return and risk score is ahead of the flagged one's.</p>
-                    <p data-term="R19a">Uncertainty gate: passes only if the correlation is still at or above the screen at the low end of its confidence range, so a high reading from a short history does not count.</p>
-                    <p data-term="R19b">Structural-redundancy gate: passes only if the two still move together {% if page_copy.stress_fraction_pct is not none %}on the worst {{ page_copy.stress_fraction_pct }} percent of days,{% else %}on their worst days,{% endif %} when diversification matters most.</p>
-                    <p data-term="R20">Approve retirement: records your decision and shows a wind-down checklist; it sells nothing and changes nothing in Composer.</p>
-                </details>
+                <p class="adv-explainer" data-explainer="R02">Flags the lower-scoring symphony of a pair whose returns stay correlated {% if page_copy.screen_threshold is not none %}at {{ page_copy.screen_threshold }} or more{% else %}past the screen{% endif %}, even at the estimate's low end and on worst days.</p>
             {# Cycle 2e AC-5b: the cards below are scoped to the latest SUCCESSFUL #}
             {# run, so when the most recent run (shown in the block above) was    #}
             {# not that run -- it failed -- say which run the cards come from.    #}
@@ -2274,11 +2247,14 @@
                         {% endif %}
                         {# Five tiles from _build_retirement_summary_tiles, in its order; the ids are the ones the lines carried. #}
                         {% set _tile_ids = ['retirement-last-run-symphonies', 'retirement-last-run-depth', 'retirement-last-run-pairs', 'retirement-last-run-blocked', 'retirement-last-run-recommendations'] %}
+                        {% set _tile_glossary = ['R06', 'R07', 'R08', 'R09', none] %}
                         <div class="mini-stats retirement-tiles adv-figs">
                             {% for _tile in retirement_summary_tiles %}
                             <div class="mini-stat adv-fig" data-testid="{{ _tile_ids[loop.index0] }}">
-                                <div class="mini-stat-value adv-fig-value">{{ _tile.value }}</div>
-                                <div class="mini-stat-label adv-fig-label">{{ _tile.label }}</div>
+                                <div class="retirement-tile-figure">
+                                    <div class="mini-stat-value adv-fig-value">{{ _tile.value }}</div>
+                                    <div class="mini-stat-label adv-fig-label"{% if _tile_glossary[loop.index0] %} data-glossary="{{ _tile_glossary[loop.index0] }}"{% endif %}>{{ _tile.label }}</div>
+                                </div>
                                 {% if _tile.detail %}<div class="legend-as-of adv-note">{{ _tile.detail }}</div>{% endif %}
                             </div>
                             {% endfor %}
@@ -2345,24 +2321,7 @@
 
             <section class="retirement-subsection" data-testid="tenure-review-section">
                 <div class="section-header adv-heading">Symphony tenure review</div>
-                <p class="adv-explainer" data-explainer="R22">{% if page_copy.tenure_threshold is not none %}Once a symphony has been invested for {{ page_copy.tenure_threshold }} trading days,{% else %}Once a symphony has been invested for the configured minimum number of trading days,{% endif %} this review asks whether it still earns its place: its real results against its own backtest, its effect on the whole portfolio, and whether it duplicates another symphony. Each eligible symphony gets keep, watch, retire-candidate or no verdict; the review only advises, and approving a retirement records your decision without changing anything in Composer.</p>
-                <details class="hp-more" data-terms="R22">
-                    <summary>What the terms mean</summary>
-                    <p data-term="R23">Run tenure review: runs the review now instead of waiting for the nightly run; it is refused while the market is open.</p>
-                    <p data-term="R26">trigger: whether the run was the nightly one or one you started. threshold in effect: the trading days a symphony needs before it gets a verdict.</p>
-                    <p data-term="R27a">keep: no evidence against it.</p>
-                    <p data-term="R27b">watch: it trails its own backtest {% if page_copy.watch_trail_pp is not none %}by more than {{ page_copy.watch_trail_pp }} percentage points of total return,{% else %}by more than the set margin of total return,{% endif %} or the portfolio would have a higher return and no deeper drawdown without it.</p>
-                    <p data-term="R27c">retire-candidate: it duplicates another live symphony and scores lower, as under Correlated pairs.</p>
-                    <p data-term="R27d">no verdict: there is not yet enough evidence to judge.</p>
-                    <p data-term="R28">basis: which series the figures use, Composer's realized one or the bot's shadow history. missing: evidence items that could not be computed, with the reason.</p>
-                    <p data-term="R30">not applicable: the item does not apply to this symphony, for the reason shown. paired with: the live symphony this one is compared against. normalized across N symphonies: the score is ranked among that many symphonies.</p>
-                    <p data-term="R29a">Performance: the symphony's realized return and risk over its tenure.</p>
-                    <p data-term="R29b">Composite score: its return and risk score ranked against the other live symphonies.</p>
-                    <p data-term="R29c">Redundancy: its return correlation with the other live symphonies.</p>
-                    <p data-term="R29d">Backtest: Composer's backtest of its current rules, against what it really earned.</p>
-                    <p data-term="R29e">Marginal contribution: the portfolio of eligible symphonies with and without it.</p>
-                    <p data-term="R29f">Long VIX hedge: its long-volatility holdings beside the rest of the portfolio, shown for context and not used in the verdict.</p>
-                </details>
+                <p class="adv-explainer" data-explainer="R22">{% if page_copy.tenure_threshold is not none %}Once invested for {{ page_copy.tenure_threshold }} trading days,{% else %}Once past the configured minimum tenure,{% endif %} a symphony gets keep, watch, retire-candidate or no verdict from its redundancy, its backtest and its portfolio effect.</p>
             {# Symphony tenure review: header, run state, then one entry per live symphony. #}
             <div class="tenure-review-header">
                 <button type="button"
@@ -2428,10 +2387,14 @@
                 {% set missing = e.get('missing_items') %}
                 {% set missing_list = missing is sequence and missing is not string and missing is not mapping %}
                 {% if 'missing_items' in e and (missing or not missing_list) %}
-                <div class="tenure-review-line" data-testid="tenure-review-missing">missing: {% if not missing_list %}not recorded{% endif %}{% for m in (missing if missing_list else []) %}{% set mi = ev.get(m) if m is string else none %}{% if not loop.first %}; {% endif %}{{ (m | replace('_', ' ')) if m is string and m.strip() else 'not recorded' }} ({% if mi is mapping and mi.get('status') == 'not_applicable' %}not applicable: {% endif %}{{ (mi.get('reason') if mi is mapping else none) | tenure_text }}){% endfor %}</div>
+                <div class="tenure-review-line" data-testid="tenure-review-missing">missing: {% if not missing_list %}not recorded{% endif %}{% for m in (missing if missing_list else []) %}{% set mi = ev.get(m) if m is string else none %}{% if not loop.first %}; {% endif %}{{ (m | replace('_', ' ')) if m is string and m.strip() else 'not recorded' }} ({% set redundancy_phrase = (mi.get('reason') | tenure_redundancy_missing(page_copy.redundancy_needs_days)) if m == 'redundancy' and mi is mapping else none %}{% if redundancy_phrase is not none %}{{ redundancy_phrase }}{% else %}{% if mi is mapping and mi.get('status') == 'not_applicable' %}not applicable: {% endif %}{{ (mi.get('reason') if mi is mapping else none) | tenure_text }}{% endif %}){% endfor %}</div>
+                {% set redundancy_item = ev.get('redundancy') %}
+                {% if missing_list and 'redundancy' in missing and redundancy_item is mapping and (redundancy_item.get('reason') | tenure_redundancy_missing(page_copy.redundancy_needs_days)) is not none %}
+                <details class="hp-more" data-testid="tenure-review-undecided"><summary>Comparisons that decided nothing</summary><div class="tenure-review-line">{{ redundancy_item.get('reason') | tenure_text }}</div></details>
+                {% endif %}
                 {% endif %}
                 <div class="tenure-review-evidence-grid">
-                    {% for name in ('performance', 'composite', 'redundancy', 'backtest', 'marginal', 'long_vix') %}
+                    {% for name in ('performance', 'composite', 'backtest', 'marginal', 'long_vix', 'redundancy') %}
                     {{ tenure_evidence_item(name, ev.get(name), e.get('missing_items')) }}
                     {% endfor %}
                 </div>
@@ -2457,6 +2420,34 @@
             </section>
             </div>{# /retirement-pair #}
         </section>{# /retirement-recommendations-panel #}
+
+        {% call glossary("Retirement") %}
+            <p data-term="R04">Deposit-adjusted: the series Composer names deposit-adjusted, which the recommender uses instead of the raw account value series.</p>
+            <p data-term="R06">Analysed: symphonies with a usable daily series, of all live symphonies.</p>
+            <p data-term="R07">History: the shortest and longest daily series, in days.</p>
+            <p data-term="R08">Pairs screened: pairs whose correlation reached the screen, of all pairs compared.</p>
+            <p data-term="R09">Blocked: screened pairs that did not become a recommendation, counted by the check that stopped them.</p>
+            <p data-term="R12">Run recommender: runs the nightly analysis now; it takes a minute or two.</p>
+            <p data-term="R17">kept: the symphony of the pair that stays; the one before the arrow is the one suggested for retirement.</p>
+            <p data-term="R18">Composite gap: how far the kept symphony's combined return and risk score is ahead of the flagged one's.</p>
+            <p data-term="R19a">Uncertainty gate: passes only if the correlation is still at or above the screen at the low end of its confidence range, so a high reading from a short history does not count.</p>
+            <p data-term="R19b">Structural-redundancy gate: passes only if the two still move together {% if page_copy.stress_fraction_pct is not none %}on the worst {{ page_copy.stress_fraction_pct }} percent of days,{% else %}on their worst days,{% endif %} when diversification matters most.</p>
+            <p data-term="R20">Approve retirement: records your decision and shows a wind-down checklist; it sells nothing and changes nothing in Composer.</p>
+            <p data-term="R23">Run tenure review: runs the review now instead of waiting for the nightly run; it is refused while the market is open.</p>
+            <p data-term="R26">trigger: whether the run was the nightly one or one you started. threshold in effect: the trading days a symphony needs before it gets a verdict.</p>
+            <p data-term="R27a">keep: no evidence against it.</p>
+            <p data-term="R27b">watch: it trails its own backtest {% if page_copy.watch_trail_pp is not none %}by more than {{ page_copy.watch_trail_pp }} percentage points of total return,{% else %}by more than the set margin of total return,{% endif %} or the portfolio would have a higher return and no deeper drawdown without it.</p>
+            <p data-term="R27c">retire-candidate: it duplicates another live symphony and scores lower, as under Correlated pairs.</p>
+            <p data-term="R27d">no verdict: there is not yet enough evidence to judge.</p>
+            <p data-term="R28">basis: which series the figures use, Composer's realized one or the bot's shadow history. missing: evidence items that could not be computed, with the reason.</p>
+            <p data-term="R30">not applicable: the item does not apply to this symphony, for the reason shown. paired with: the live symphony this one is compared against. normalized across N symphonies: the score is ranked among that many symphonies.</p>
+            <p data-term="R29a">Performance: the symphony's realized return and risk over its tenure.</p>
+            <p data-term="R29b">Composite score: its return and risk score ranked against the other live symphonies.</p>
+            <p data-term="R29c">Redundancy: its return correlation with the other live symphonies.</p>
+            <p data-term="R29d">Backtest: Composer's backtest of its current rules, against what it really earned.</p>
+            <p data-term="R29e">Marginal contribution: the portfolio of eligible symphonies with and without it.</p>
+            <p data-term="R29f">Long VIX hedge: its long-volatility holdings beside the rest of the portfolio, shown for context and not used in the verdict.</p>
+        {% endcall %}
 
         </div>{# /tab-panel-retirement #}
 

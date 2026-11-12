@@ -2695,6 +2695,17 @@ def _copy_tenure_threshold(tenure_review: dict | None) -> str:
     return str(_tenure_module.parse_threshold(configured).value)
 
 
+def _copy_redundancy_needs_days() -> str | None:
+    """The aligned days a redundancy comparison needs, as the review's own floor reads them:
+    the larger of its structural-gate search and the recommender minimum. None when the
+    search finds no such day count."""
+    from advisors import retirement_recommender as _recommender
+    from advisors import tenure_review as _tenure_module
+
+    needed = max(_tenure_module._structural_needs_days(), _recommender.MIN_OBS_FLOOR)
+    return None if needed >= sys.maxsize else str(needed)
+
+
 def _copy_screen_threshold(retirement_last_run: dict | None) -> str | None:
     """The correlation screen threshold the last ok run used, else the module constant.
     None when the constant is not a finite number (the phrase then reads its fallback)."""
@@ -2759,6 +2770,7 @@ def _page_copy_values(
     resolvers = {
         "tenure_threshold": lambda: _copy_tenure_threshold(tenure_review),
         "screen_threshold": lambda: _copy_screen_threshold(retirement_last_run),
+        "redundancy_needs_days": _copy_redundancy_needs_days,
         "stress_fraction_pct": _copy_stress_fraction_pct,
         "watch_trail_pp": _copy_watch_trail_pp,
         "friction_pct": _copy_friction_pct,
@@ -8033,9 +8045,39 @@ def _tenure_text(value: object) -> str:
     return value if isinstance(value, str) and value.strip() else _NOT_RECORDED_TEXT
 
 
+# One peer's day count in the review's list of comparisons that decided nothing, with the
+# gate suffix the review adds when a gate could not be computed.
+_ALIGNED_DAYS_IN_REASON = re.compile(
+    r"\((\d+) aligned days(, (uncertainty|structural) gate undefined)?\)"
+)
+
+
 @app.template_filter("tenure_redundancy_missing")
 def _tenure_redundancy_missing(reason: object, needed: object) -> str | None:
-    raise NotImplementedError
+    """The words inside the parentheses of the missing line for a redundancy item whose stored
+    reason is the review's list of comparisons that decided nothing, else None.
+
+    The first form states the day count the review needs when every listed peer was short of
+    it and none had an undefined gate; any other list reads the second form, with no number."""
+    from advisors import tenure_review as _tenure_module
+
+    if not isinstance(reason, str) or not reason.startswith(_tenure_module._UNDECIDED_PREFIX):
+        return None
+    try:
+        needed_days = int(needed) if isinstance(needed, str) else 0
+    except ValueError:
+        needed_days = 0
+    matches = _ALIGNED_DAYS_IN_REASON.findall(reason)
+    if (
+        needed_days > 0
+        and matches
+        and all(not gate and int(days) < needed_days for days, gate, _ in matches)
+    ):
+        return (
+            "not decided: too few shared trading days with the other symphonies; "
+            f"{needed_days} are needed"
+        )
+    return "no comparison with the other symphonies reached a result"
 
 
 @app.template_filter("tenure_number")
@@ -11127,7 +11169,13 @@ def ai_advisor_tab():
     advisor_suggestion_model_known = _suggestion_choice.source != "unavailable"
     advisor_synthesis_model_known = _synthesis_choice.source != "unavailable"
     page_copy = _page_copy_values(
-        ("tenure_threshold", "screen_threshold", "stress_fraction_pct", "watch_trail_pp"),
+        (
+            "tenure_threshold",
+            "screen_threshold",
+            "redundancy_needs_days",
+            "stress_fraction_pct",
+            "watch_trail_pp",
+        ),
         tenure_review=tenure_review_run,
         retirement_last_run=retirement_last_run,
     )

@@ -1182,29 +1182,6 @@
         if (endCue) { endCue.hidden = !(hiddenAfter > TAB_CUE_EDGE_PX); }
     }
 
-    // The Retirement tab's two subsections share one row while each is no taller than this when
-    // laid out in one column; at or below the stacking breakpoint they always stack.
-    var RETIREMENT_PAIR_MAX_HEIGHT_PX = 320;
-    var RETIREMENT_PAIR_STACK_MAX_WIDTH_PX = 700;
-
-    function refreshRetirementPair() {
-        var pair = document.querySelector('[data-testid="retirement-pair"]');
-        if (!pair) { return; }
-        var first = pair.querySelector('[data-testid="retirement-recommender-section"]');
-        var second = pair.querySelector('[data-testid="tenure-review-section"]');
-        if (!first || !second) { return; }
-        // Measured stacked, so the side layout never changes what is measured.
-        pair.classList.remove('retirement-pair--side');
-        if (window.innerWidth <= RETIREMENT_PAIR_STACK_MAX_WIDTH_PX) { return; }
-        var firstHeight = first.getBoundingClientRect().height;
-        var secondHeight = second.getBoundingClientRect().height;
-        // A hidden panel has no height: nothing to decide until the tab is open.
-        if (firstHeight > 0 && secondHeight > 0 &&
-            firstHeight <= RETIREMENT_PAIR_MAX_HEIGHT_PX && secondHeight <= RETIREMENT_PAIR_MAX_HEIGHT_PX) {
-            pair.classList.add('retirement-pair--side');
-        }
-    }
-
     function activateTabByName(name) {
         document.querySelectorAll('[role="tab"][data-tab]').forEach(function (btn) {
             var isActive = btn.getAttribute('data-tab') === name;
@@ -1228,7 +1205,6 @@
             }
         });
         if (name === 'overview') { refreshPrismLensClamp(); }
-        if (name === 'retirement') { refreshRetirementPair(); }
         updateTabCues();
     }
 
@@ -1259,21 +1235,14 @@
         // The first paint follows the URL: no fragment, or one naming no tab, is the Overview.
         activateTabByName(tabNameFromHash(window.location.hash, renderedTabNames()));
 
-        // The edge cues and the Retirement pair follow the strip's scroll and the window's width.
+        // The edge cues follow the strip's scroll and the window's width.
         // Passive listeners only: no timer, no request.
         tabs[0].parentNode.addEventListener('scroll', updateTabCues, { passive: true });
-        window.addEventListener('resize', function () {
-            updateTabCues();
-            refreshRetirementPair();
-        }, { passive: true });
+        window.addEventListener('resize', updateTabCues, { passive: true });
         if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
-            document.fonts.ready.then(function () {
-                updateTabCues();
-                refreshRetirementPair();
-            });
+            document.fonts.ready.then(updateTabCues);
         }
         updateTabCues();
-        refreshRetirementPair();
     }
 
     // ---------------------------------------------------------------------------
