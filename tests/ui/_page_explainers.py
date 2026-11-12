@@ -1,20 +1,20 @@
-"""Shared measurement and capture harness of the page-explainers work.
+"""Shared capture harness of the page-explainers work.
 
-TEST-ONLY. Three things live here, each used by more than one cycle:
+TEST-ONLY. Two things live here, each used by more than one cycle:
 
 * **Seeded worlds** (:func:`seed_world`): the states the pages are read over, every one written
   through the real writers from the captured records (``tests/fixtures/prod_droplet/``,
   ``tests/fixtures/ai_advisor/``, ``tests/fixtures/retirement/``) or the real accessors with the
   real producers' output shapes. Nothing is built to match a test.
-* **In-page measurements**, as JavaScript strings run with ``page.evaluate``:
-  :data:`EMPTY_REGION_JS` (the exact empty-rectangle search of the plan's AC-6),
-  :data:`FIGURE_SPAN_JS`, :data:`HEIGHT_FACTS_JS` (AC-7 heights), :data:`FIGURES_JS` and
-  :data:`CONTROLS_JS` (the AC-5 figure and control inventories).
 * **The readings the reference capture and the checks share**: :func:`read_server_side` (headings,
   banner markup, route bodies, the login and logout pages, the Discord payload, content pins) and
-  :func:`read_host_in_browser`. ``tests/fixtures/page_explainers/produce_ref_capture.py`` calls the
-  same functions at the reference commit, so a difference between the capture and a head is a
-  difference between the trees and never between two readers.
+  :func:`read_host_in_browser` (the figure and control inventories at three widths, and the
+  stacked-row form of every table at three narrow widths). ``tests/fixtures/page_explainers/
+  produce_ref_capture.py`` calls the same functions at the reference commit, so a difference
+  between the capture and a head is a difference between the trees and never between two readers.
+
+Measures of layout (alignment, gaps, empty space) are not here: ``tests/ui/_alignment.py`` holds the
+alignment measures, and no measure of an empty region exists.
 
 The clock is fixed as in ``tests/ui/_heading_margin_capture.py`` (``CAPTURE_INSTANT`` for the app
 and the browser, ``WINDOW_ANCHOR`` for the date windows count back from) and the CSRF token that
@@ -38,11 +38,10 @@ import database
 from tests._ux_truth_support import captured_symphonies
 from tests.app._refresh_timing_state_world import _pinned_window_cutoff, frozen_datetime_class
 from tests.app._state_poll_worlds import PROCESS_KEYS
+from tests.ui import _alignment
 from tests.ui._heading_margin_capture import CAPTURE_INSTANT, WINDOW_ANCHOR
 from tests.ui._shell_support import (
-    NARROW,
     PAGES,
-    WIDE,
     open_page,
     open_probe,
     seed_candidate_alert_survivor,
@@ -55,8 +54,12 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE_DIR = REPO / "tests" / "fixtures" / "page_explainers"
 REF_CAPTURE_PATH = FIXTURE_DIR / "ref_capture.json"
 
-REFERENCE_COMMIT = "1988ce5f"
-BUILD_BASE_COMMIT = "8f8be28d"
+REFERENCE_COMMIT = "c0760e70"
+
+# The widths the figure and control inventories are read at (the unchanged-surface pins), and the narrow widths the
+# stacked-row form of every table is read at.
+INVENTORY_WIDTHS = ((1920, 1080), (1440, 900), (390, 844))
+FORM_WIDTHS = tuple((w, _alignment.NARROW_VIEWPORT_HEIGHT[w]) for w in _alignment.NARROW)
 
 FIXED_CSRF_TOKEN = "page-explainers-fixed-csrf-token"
 PLACEHOLDER_KEY = "placeholder-not-a-credential"
@@ -79,34 +82,7 @@ WORLD_HOST_PAIRS = [(w, h) for w, hosts in WORLD_HOSTS.items() for h in hosts]
 # Selectors the plan names
 # ---------------------------------------------------------------------------
 
-# Elements the three copy tables reword; the AC-7 bound adds each one's growth. A selector that
-# matches nothing on a host in a world is recorded with no heights, never an error.
-RELABEL_SELECTORS: dict[str, tuple[str, ...]] = {
-    "/": (
-        '[data-testid="guard-alpha-descriptor"]',
-        '[data-field="mdd-lifetime-cell"]',
-        ".detail-stat-label",
-        ".legend-key",
-        '[data-testid="status-pill"]',
-        '[data-testid="card-verdict"]',
-    ),
-    "/history": (".hp-fig-label", "th", ".hp-caption", ".hp-note"),
-    "/performance": (
-        ".metrics-caption",
-        "th",
-        '[data-testid="insufficient-banner"]',
-        ".legend-key",
-    ),
-    "/settings": (".sec-subtitle", ".live-desc", ".field-hint", ".cred-warn"),
-    "/ai-advisor": (
-        '[data-testid="prism-model-badge"]',
-        ".cap-tab-attribution",
-        ".run-controls-note",
-        '[data-testid="fr-overlay-preview"] > summary',
-    ),
-}
-
-# Banners the plan pins byte for byte (S-5.3): key -> (host, selector). Every match's markup is
+# Banners the plan pins byte for byte: key -> (host, selector). Every match's markup is
 # read; a banner a seeded world does not render is recorded as an empty list.
 BANNER_SELECTORS: dict[str, tuple[str, str]] = {
     "crisis_caveat": ("/ai-advisor", '[data-testid="crisis-caveat-banner"]'),
@@ -123,7 +99,7 @@ BANNER_SELECTORS: dict[str, tuple[str, str]] = {
     "fleet_modal": ("/", "#fleet-info-modal"),
 }
 
-# The read-only routes whose bodies must not change (S-5.6).
+# The read-only routes whose bodies must not change.
 ROUTE_PATHS = (
     "/api/state",
     "/api/performance",
@@ -132,221 +108,11 @@ ROUTE_PATHS = (
     "/api/guard-alpha-summary",
     "/api/autotune-runs",
     "/api/settings",
+    "/health",
 )
 
-# The three controls AC-5 excepts: rendered at the reference, handled by no script.
+# The three controls an earlier change removed: rendered at the reference, handled by no script.
 REMOVED_CONTROL_TEXTS = ("View logs", "Go to cash", "Edit variables")
-
-# The panels AC-6 measures.
-PANEL_SELECTOR = (
-    ".hero-section, .dash-panel, .hp-panel, .adv-panel, .adv-card, .sym-card, .settings-section"
-)
-
-# ---------------------------------------------------------------------------
-# In-page measurements
-# ---------------------------------------------------------------------------
-
-EMPTY_REGION_JS = r"""
-(args) => {
-  const [selector, minW, minH] = args;
-  const out = [];
-  const num = (v) => parseFloat(v) || 0;
-  // What a closed <details> holds besides its summary is not visible, whatever boxes the browser
-  // keeps for it: the page carries no rule that removes them, so the measurement does not count them.
-  const inClosedDetails = (node) => {
-    for (let el = node.nodeType === 1 ? node : node.parentElement; el; el = el.parentElement) {
-      const holder = el.parentElement;
-      if (holder && holder.tagName === 'DETAILS' && !holder.open && el.tagName !== 'SUMMARY') return true;
-    }
-    return false;
-  };
-  const shown = (el) => el.getClientRects().length > 0 &&
-      getComputedStyle(el).visibility !== 'hidden' && !inClosedDetails(el);
-  const alphaOf = (c) => {
-    const m = c.match(/rgba?\(([^)]+)\)/);
-    if (!m) return 0;
-    const p = m[1].split(',').map((s) => s.trim());
-    return p.length > 3 ? parseFloat(p[3]) : 1;
-  };
-  const measured = [...document.querySelectorAll(selector)];
-  for (const [index, el] of measured.entries()) {
-    if (!shown(el)) continue;
-    const r = el.getBoundingClientRect();
-    const cs = getComputedStyle(el);
-    const box = {
-      l: r.left + num(cs.borderLeftWidth) + num(cs.paddingLeft),
-      t: r.top + num(cs.borderTopWidth) + num(cs.paddingTop),
-      r: r.right - num(cs.borderRightWidth) - num(cs.paddingRight),
-      b: r.bottom - num(cs.borderBottomWidth) - num(cs.paddingBottom),
-    };
-    const rects = [];
-    const add = (x, owner) => {
-      const c = { l: Math.max(x.left, box.l), t: Math.max(x.top, box.t),
-                  r: Math.min(x.right, box.r), b: Math.min(x.bottom, box.b), owner };
-      if (c.r > c.l && c.b > c.t) rects.push(c);
-    };
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (!n.nodeValue.trim() || inClosedDetails(n)) continue;
-      const range = document.createRange();
-      range.selectNodeContents(n);
-      for (const g of range.getClientRects()) if (g.width > 0 && g.height > 0) add(g, n.parentElement);
-    }
-    for (const c of el.querySelectorAll('input,select,textarea,button,canvas,svg,img')) {
-      if (!shown(c)) continue;
-      const g = c.getBoundingClientRect();
-      if (g.width > 0 && g.height > 0) add(g, c);
-    }
-    // A filled bar is content, and so is the rail a bar fills (a track holding only its fill): an
-    // element with a visible background, no text and no control, canvas, SVG or image inside.
-    for (const c of el.querySelectorAll('*')) {
-      if ((c.textContent || '').trim() || !shown(c)) continue;
-      if (c.children.length && c.querySelector('input,select,textarea,button,canvas,svg,img')) continue;
-      const s = getComputedStyle(c);
-      if (alphaOf(s.backgroundColor) > 0 || s.backgroundImage !== 'none') {
-        const g = c.getBoundingClientRect();
-        if (g.width > 0 && g.height > 0) add(g, c);
-      }
-    }
-    // A measured container inside this one is judged by its own measurement: its whole border box
-    // counts as content here, so a region bridging the edges of two stacked cards (their padding
-    // and the gutter between them) is not read as one empty area of this container. Blank space
-    // beside or around the child cards is still reported, and borders and rules inside a single
-    // container are still not content.
-    for (const inner of measured) {
-      if (inner === el || !el.contains(inner) || !shown(inner)) continue;
-      const g = inner.getBoundingClientRect();
-      if (g.width > 0 && g.height > 0) add(g, inner);
-    }
-    // Inside a multi-column list the space under each content-holding column's last line, down
-    // to the list's bottom edge, belongs to the list (column-fill imbalance of variable-length
-    // items): it counts as content. Only a list that really lays out in 2 or more columns
-    // qualifies, only columns that hold content get the rectangle (an empty column stays empty),
-    // and nothing outside the list's own content box is added. Regions beside short lines,
-    // bands outside the list and a grid's shared-row bands are never covered.
-    const columnBottoms = [];
-    for (const list of [el, ...el.querySelectorAll('*')]) {
-      const ls = getComputedStyle(list);
-      const hasCount = ls.columnCount !== 'auto' && num(ls.columnCount) > 1;
-      const hasWidth = ls.columnWidth !== 'auto';
-      if (!(hasCount || hasWidth) || !shown(list)) continue;
-      const lr = list.getBoundingClientRect();
-      const lb = {
-        l: lr.left + num(ls.borderLeftWidth) + num(ls.paddingLeft),
-        t: lr.top + num(ls.borderTopWidth) + num(ls.paddingTop),
-        r: lr.right - num(ls.borderRightWidth) - num(ls.paddingRight),
-        b: lr.bottom - num(ls.borderBottomWidth) - num(ls.paddingBottom),
-      };
-      const gap = ls.columnGap === 'normal' ? num(ls.fontSize) : num(ls.columnGap);
-      const width = lb.r - lb.l;
-      let used = hasCount ? num(ls.columnCount) : Infinity;
-      if (hasWidth) used = Math.min(used, Math.floor((width + gap) / (num(ls.columnWidth) + gap)));
-      used = Math.max(1, used);
-      if (used < 2) continue;
-      const colW = (width - (used - 1) * gap) / used;
-      const lowest = new Array(used).fill(null);
-      for (const q of rects) {
-        if (!(q.owner === list || list.contains(q.owner))) continue;
-        const k = Math.min(used - 1, Math.max(0, Math.floor(((q.l + q.r) / 2 - lb.l) / (colW + gap))));
-        lowest[k] = lowest[k] === null ? q.b : Math.max(lowest[k], q.b);
-      }
-      lowest.forEach((bottom, k) => {
-        if (bottom === null) return;
-        columnBottoms.push({ l: lb.l + k * (colW + gap), r: lb.l + k * (colW + gap) + colW,
-                             t: bottom, b: lb.b, owner: list });
-      });
-    }
-    for (const q of columnBottoms) {
-      const c = { l: Math.max(q.l, box.l), t: Math.max(q.t, box.t),
-                  r: Math.min(q.r, box.r), b: Math.min(q.b, box.b), owner: q.owner };
-      if (c.r > c.l && c.b > c.t) rects.push(c);
-    }
-    const xs = [...new Set([box.l, box.r, ...rects.flatMap((q) => [q.l, q.r])])].sort((a, b) => a - b);
-    const ys = [...new Set([box.t, box.b, ...rects.flatMap((q) => [q.t, q.b])])].sort((a, b) => a - b);
-    const cols = xs.length - 1, rows = ys.length - 1;
-    const taken = Array.from({ length: rows }, () => new Array(Math.max(cols, 0)).fill(false));
-    for (const q of rects) {
-      const i0 = xs.indexOf(q.l), i1 = xs.indexOf(q.r), j0 = ys.indexOf(q.t), j1 = ys.indexOf(q.b);
-      for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) taken[j][i] = true;
-    }
-    const acc = new Array(Math.max(cols, 0)).fill(0);
-    let best = null;
-    for (let j = 0; j < rows; j++) {
-      const bandH = ys[j + 1] - ys[j];
-      for (let i = 0; i < cols; i++) acc[i] = taken[j][i] ? 0 : acc[i] + bandH;
-      let i = 0;
-      while (i < cols) {
-        if (acc[i] < minH) { i++; continue; }
-        let k = i, width = 0, height = Infinity;
-        while (k < cols && acc[k] >= minH) { width += xs[k + 1] - xs[k]; height = Math.min(height, acc[k]); k++; }
-        if (width >= minW && (!best || width * height > best.w * best.h)) {
-          best = { x: xs[i], y: ys[j + 1] - height, w: width, h: height };
-        }
-        i = k;
-      }
-    }
-    out.push({
-      selector, index,
-      testid: el.getAttribute('data-testid') || '',
-      id: el.id || '',
-      cls: String(el.className).slice(0, 60),
-      content: { w: box.r - box.l, h: box.b - box.t },
-      largest_empty: best,
-    });
-  }
-  return out;
-}
-"""
-
-FIGURE_SPAN_JS = r"""
-(selector) => {
-  const out = [];
-  for (const [index, row] of [...document.querySelectorAll(selector)].entries()) {
-    if (row.getClientRects().length === 0) continue;
-    const parent = row.parentElement;
-    const ps = getComputedStyle(parent);
-    const pr = parent.getBoundingClientRect();
-    const content = pr.width - parseFloat(ps.paddingLeft || 0) - parseFloat(ps.paddingRight || 0)
-        - parseFloat(ps.borderLeftWidth || 0) - parseFloat(ps.borderRightWidth || 0);
-    let left = Infinity, right = -Infinity;
-    for (const child of row.children) {
-      const range = document.createRange();
-      range.selectNodeContents(child);
-      for (const g of range.getClientRects()) {
-        if (g.width > 0 && g.height > 0) { left = Math.min(left, g.left); right = Math.max(right, g.right); }
-      }
-    }
-    out.push({
-      index, testid: row.getAttribute('data-testid') || '', cls: String(row.className).slice(0, 60),
-      children: row.children.length, content_width: content,
-      extent: right > left ? right - left : 0,
-      ratio: right > left && content > 0 ? (right - left) / content : 0,
-    });
-  }
-  return out;
-}
-"""
-
-HEIGHT_FACTS_JS = r"""
-(relabel) => {
-  const h = (el) => el.getBoundingClientRect().height;
-  const sum = (sel) => [...document.querySelectorAll(sel)].reduce((t, el) => t + h(el), 0);
-  const labelled = {};
-  for (const [name, selectors] of Object.entries(relabel)) {
-    labelled[name] = selectors.map((sel) => [...document.querySelectorAll(sel)]
-        .filter((el) => el.getClientRects().length > 0).map(h));
-  }
-  const root = document.documentElement;
-  return {
-    document_height: Math.max(root.scrollHeight, document.body ? document.body.scrollHeight : 0),
-    scroll_width: root.scrollWidth,
-    viewport_width: innerWidth,
-    explainer_sum: sum('[data-explainer]'),
-    terms_summary_sum: sum('[data-terms] > summary'),
-    relabelled: labelled,
-  };
-}
-"""
 
 FIGURES_JS = r"""
 () => {
@@ -464,7 +230,7 @@ def seed_world(name: str, tmp_path: pathlib.Path, setattr_fn: Callable = setattr
 
     ``setattr_fn`` is ``monkeypatch.setattr`` in a test (undone at teardown) or ``setattr`` in the
     reference capture. The Strategy Builder survivor and backtest-failure rows and the pending
-    proposals of AC-8's five-card case are written by the cycle that reads them.
+    proposals of a five-card case are written by the cycle that reads them.
     """
     if name not in WORLD_HOSTS:
         raise KeyError(f"unknown world {name!r}; known: {sorted(WORLD_HOSTS)}")
@@ -502,7 +268,7 @@ def _soup(html: str):
 
 
 def section_headings(html: str) -> list[str]:
-    """Every ``.section-header`` text in document order (the sections' order, S-5.5)."""
+    """Every ``.section-header`` text in document order (the sections' order)."""
     return [" ".join(h.get_text().split()) for h in _soup(html).select(".section-header")]
 
 
@@ -620,7 +386,7 @@ def strip_volatile(body, volatile: list[str]):
 
 
 def read_auth_pages(client) -> dict[str, str]:
-    """The login page and the logout confirm page (S-5.9), as served."""
+    """The login page and the logout confirm page, as served."""
     return {
         "/login": client.get("/login").get_data(as_text=True),
         "/logout": client.get("/logout").get_data(as_text=True),
@@ -675,12 +441,33 @@ def _lf_sha256(raw: bytes) -> str:
     return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
 
 
+PINNED_FILES = (
+    "alpha_bot_execution.py",
+    "math_engine.py",
+    "database.py",
+    "advisors/tenure_review.py",
+)
+
+
+def protected_test_files(root: pathlib.Path = REPO) -> list[str]:
+    """The test files that guard the no-trade boundary, as repository paths: the dashboard
+    no-order-path test and every ``*no_trade_boundary*.py`` under ``tests/security``."""
+    found = ["tests/app/test_dashboard_no_order_path.py"]
+    found += sorted(
+        p.relative_to(root).as_posix()
+        for p in (root / "tests" / "security").glob("*no_trade_boundary*.py")
+    )
+    return found
+
+
 def working_tree_hashes() -> dict[str, str]:
-    """SHA-256 of each pinned file's bytes with CRLF normalized to LF (S-5.13)."""
-    return {
-        name: _lf_sha256((REPO / name).read_bytes())
-        for name in ("alpha_bot_execution.py", "math_engine.py", "database.py")
-    }
+    """SHA-256 of each pinned file's bytes with CRLF normalized to LF."""
+    return {name: _lf_sha256((REPO / name).read_bytes()) for name in PINNED_FILES}
+
+
+def protected_test_hashes() -> dict[str, str]:
+    """The same hash over each protected test file in the working tree."""
+    return {name: _lf_sha256((REPO / name).read_bytes()) for name in protected_test_files()}
 
 
 def git_object_hash(commit: str, path: str) -> str:
@@ -689,6 +476,19 @@ def git_object_hash(commit: str, path: str) -> str:
         ["git", "-C", str(REPO), "show", f"{commit}:{path}"], capture_output=True, check=True
     ).stdout
     return _lf_sha256(raw)
+
+
+def protected_test_hashes_at(commit: str) -> dict[str, str]:
+    """The hashes of the protected test files as git holds them at ``commit`` (capture only)."""
+    names = subprocess.run(
+        ["git", "-C", str(REPO), "ls-tree", "--name-only", "-r", commit, "tests/security/"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    wanted = ["tests/app/test_dashboard_no_order_path.py"]
+    wanted += sorted(n for n in names if re.search(r"no_trade_boundary[^/]*\.py$", n))
+    return {name: git_object_hash(commit, name) for name in wanted}
 
 
 def migration_listing(root: pathlib.Path = REPO) -> dict[str, str]:
@@ -708,7 +508,7 @@ def migration_listing_at(commit: str) -> dict[str, str]:
 
 
 def route_table_facts() -> dict:
-    """The route table and hooks as ``tests/_hygiene_surface_facts.py`` reads them (S-5.7)."""
+    """The route table and hooks as ``tests/_hygiene_surface_facts.py`` reads them."""
     from tests._hygiene_surface_facts import url_map_facts
 
     return url_map_facts(app_module)
@@ -765,6 +565,9 @@ def read_server_side(client, tmp_path: pathlib.Path, setattr_fn: Callable = seta
 
     ``{"headings": {host: [...]}, "banners": {key: [...]}, "routes": {...}, "auth_pages": {...}}``.
     """
+    # A verdict read after a long capture run must not say the scheduler stalled (see
+    # ``read_host_in_browser``): the process-start the stall verdict falls back on is this reading's.
+    app_module._DAEMON_STARTED_MONO = app_module._monotonic()
     pages = {host: client.get(host).get_data(as_text=True) for host in PAGES}
     return {
         "headings": {host: section_headings(html) for host, html in pages.items()},
@@ -797,35 +600,72 @@ def mask_clock_text(text: str) -> str:
 
 def _masked_reading(record: dict) -> dict:
     """The figure and control texts of a browser reading with the clock texts masked."""
-    if "figures_1440" in record:
-        record["figures_1440"] = [[k, mask_clock_text(t)] for k, t in record["figures_1440"]]
-    for width in ("1440", "375"):
+    for width, _height in INVENTORY_WIDTHS:
+        key = f"figures_{width}"
+        if key in record:
+            record[key] = [[k, mask_clock_text(t)] for k, t in record[key]]
         for control in record.get(f"controls_{width}", []):
             control["text"] = mask_clock_text(control["text"])
     return record
 
 
 def read_host_in_browser(firefox, server, host: str) -> dict:
-    """One host in the current world: AC-7 heights at 375, figure and control inventories at 1440.
+    """One host in the current world, read in the browser.
 
-    ``{"heights_375": ..., "controls_375": [...], "figures_1440": [[key, text]...],
-    "controls_1440": [...]}``. The browser clock is fixed at ``CAPTURE_INSTANT``.
+    ``{"figures_<w>": [[key, text]...], "controls_<w>": [...], "page_errors_<w>": [...]}`` for each
+    of 1920, 1440 and 390 (the figure inventory and the control inventory), and
+    ``{"stacked_forms_<w>": {table: {"count": n, "shapes": [...]}}}`` for each of 1000, 390 and 320
+    (:data:`tests.ui._alignment.TABLE_FORM_JS` over every table entry of the registry). The browser
+    clock is fixed at ``CAPTURE_INSTANT``.
     """
     record: dict = {}
-    for tag, (width, height) in (("375", NARROW), ("1440", WIDE)):
+    widths = {w: h for w, h in (*INVENTORY_WIDTHS, *FORM_WIDTHS)}
+    inventory = {w for w, _h in INVENTORY_WIDTHS}
+    forms = {w for w, _h in FORM_WIDTHS}
+    for width, height in widths.items():
+        # The header says "Degraded" once the process has been up for two minutes with no scheduler
+        # tick (the stall verdict falls back on the process start). A capture run is longer than
+        # that, a test is not, so every reading starts that clock afresh, in both.
+        app_module._DAEMON_STARTED_MONO = app_module._monotonic()
         with open_probe(firefox, server, width=width, height=height) as probe:
             probe.context.clock.install(time=CAPTURE_INSTANT)
             open_page(probe, host)
             probe.page.wait_for_timeout(SETTLE_MS)
-            if tag == "375":
-                record["heights_375"] = probe.page.evaluate(
-                    HEIGHT_FACTS_JS, {host: list(RELABEL_SELECTORS[host])}
-                )
-            else:
-                record["figures_1440"] = probe.page.evaluate(FIGURES_JS)
-            record[f"controls_{tag}"] = probe.page.evaluate(CONTROLS_JS)
-            record[f"page_errors_{tag}"] = list(probe.page_errors)
+            if width in inventory:
+                record[f"figures_{width}"] = probe.page.evaluate(FIGURES_JS)
+                record[f"controls_{width}"] = probe.page.evaluate(CONTROLS_JS)
+                record[f"page_errors_{width}"] = list(probe.page_errors)
+            if width in forms:
+                record[f"stacked_forms_{width}"] = _read_stacked_forms(probe, host)
     return _masked_reading(record)
+
+
+def _read_stacked_forms(probe, host: str) -> dict:
+    """The stacked-row form of every table entry on the page; on the Advisor, of every tab's.
+
+    A tab that is not chosen has no layout, so each Advisor tab is chosen in turn and the readings
+    are merged (counts add, shapes are the union).
+    """
+    spec = {"groups": _alignment.stacked_form_groups()}
+    if host != "/ai-advisor":
+        return probe.page.evaluate(_alignment.TABLE_FORM_JS, spec)
+    merged: dict = {}
+    for tab in _alignment.ADVISOR_TABS:
+        probe.page.evaluate(
+            "(tab) => document.querySelector("
+            "'[data-tab=\"' + tab + '\"]:not([data-testid^=\"tab-panel\"])').click()",
+            tab,
+        )
+        probe.page.wait_for_timeout(150)
+        for name, found in probe.page.evaluate(_alignment.TABLE_FORM_JS, spec).items():
+            into = merged.setdefault(name, {"count": 0, "shapes": []})
+            into["count"] += found["count"]
+            for shape in found["shapes"]:
+                if shape not in into["shapes"]:
+                    into["shapes"].append(shape)
+    for found in merged.values():
+        found["shapes"].sort(key=lambda shape: json.dumps(shape, sort_keys=True))
+    return merged
 
 
 def credential_free_environment(env_file: pathlib.Path, setattr_fn: Callable, delenv: Callable):

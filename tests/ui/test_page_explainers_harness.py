@@ -206,4 +206,129 @@ def test_the_fixture_names_the_plan_commit_it_was_read_at():
     assert re.fullmatch(r"[0-9a-f]{40}", document["plan_sha"])
     assert document["plan_sha"][:8] in provenance
     assert document["plan_path"].startswith("feature-plans/")
-    assert "ref_capture.json" in provenance and "1988ce5f" in provenance
+    assert "ref_capture.json" in provenance and "c0760e70" in provenance
+    assert document["reference_commit"].startswith("c0760e70")
+    # The tables were last changed at this commit; the approved commit the fixture was read at
+    # follows it. Both are named, so a later revision of the plan is a visible re-extraction.
+    assert "ac4563cb" in provenance and document["plan_sha"][:8] in provenance
+
+
+# ---------------------------------------------------------------------------
+# The regenerated fixture: this plan's rows, Glossary lines, titles and slot phrases
+# ---------------------------------------------------------------------------
+
+GLOSSARY_HOSTS = (
+    "/",
+    "detail panel",
+    "Performance",
+    "History",
+    "Settings",
+    "settings modal",
+    "Overview",
+    "Correlations",
+    "Retirement",
+    "Asset Swaps",
+    "Logic Changes",
+    "Chat",
+    "Strategy Builder",
+    "Frontrunner Builder",
+)
+
+
+def test_the_fixture_holds_a_row_for_every_description_and_every_other_changed_text():
+    a_keys = [r["key"] for r in copy.a_rows()]
+    x_keys = [r["key"] for r in copy.x_rows()]
+    assert len(a_keys) == len(set(a_keys)) and len(x_keys) == len(set(x_keys))
+    assert x_keys == [f"CX-{n}" for n in range(1, 15)]
+    for key in ("D01", "A01", "O01", "B03", "X05", "D20"):
+        assert copy.a_row(key)["kind"] in {"removed", "moved"} and copy.a_text(key) is None, key
+    assert copy.a_row("dp.lead")["unchanged"] and copy.a_text("dp.lead"), (
+        "a kept row carries its text"
+    )
+    assert copy.x_row("CX-1")["new_text"] == "No suggestions yet."
+    assert copy.x_row("CX-5")["new_text"] == "Show all checks"
+    assert copy.x_row("CX-11")["new_text"] == "Proposals appear here after a build."
+    for key in ("CX-4", "CX-6", "CX-7"):
+        assert copy.x_row(key)["new_text"] is None and copy.x_row(key)["new_text_note"]
+
+
+def test_the_glossary_lists_every_host_in_the_plans_order_with_the_lines_it_names():
+    assert tuple(copy.glossary_hosts()) == GLOSSARY_HOSTS
+    for host in GLOSSARY_HOSTS:
+        lines = copy.glossary(host)
+        keys = [line["key"] for line in lines]
+        assert lines and len(keys) == len(set(keys)), host
+        assert all(line["text"].strip() for line in lines), host
+    assert [line["key"] for line in copy.glossary("Frontrunner Builder")] == [
+        "X06",
+        "X08",
+        "X09",
+        "X11",
+        "X12",
+    ]
+    assert [line["key"] for line in copy.glossary("Chat")] == ["A04"]
+    assert [line["key"] for line in copy.glossary("settings modal")] == ["M01", "M08"]
+    removed = {line["key"] for host in GLOSSARY_HOSTS for line in copy.glossary(host)}
+    assert "D40t" not in removed, "the Standby definition is dropped"
+
+
+def test_a_glossary_line_reads_the_referenced_row_or_the_changed_text():
+    for host in GLOSSARY_HOSTS:
+        for line in copy.glossary(host):
+            if line["source"] == "ref":
+                assert line["text"] == copy.row(line["key"], "B")["new_text"], line["key"]
+            else:
+                assert line["source"] == "G2"
+            lead = line["text"].split(": ", 1)[0] if ": " in line["text"] else None
+            assert line["lead_term"] == lead, line["key"]
+    starred = {"D02", "D20t", "D50e", "F15h", "F17a", "F17h", "Y16", "S14s", "S14p", "R12"}
+    seen = {
+        line["key"]
+        for host in GLOSSARY_HOSTS
+        for line in copy.glossary(host)
+        if line["source"] == "G2"
+    }
+    assert starred <= seen and {"O31a", "O31b", "O31c"} <= seen
+
+
+def test_the_three_guardrail_lines_drop_only_the_term_name_and_its_is():
+    lines = {line["key"]: line["text"] for line in copy.glossary("Overview")}
+    assert lines["O31a"].startswith("Spec Critic: an active guardrail checking the shared")
+    assert lines["O31b"].startswith(
+        "Overfitting Conscience: checks one narrow overfitting-risk source"
+    )
+    assert lines["O31c"].startswith("Divergence Explainer: disabled by default and its rows")
+    for text in (lines["O31a"], lines["O31b"], lines["O31c"]):
+        assert "Per-symphony recommendations" not in text, "the fourth sentence is dropped"
+        assert text.count(": ") >= 1 and text.rstrip().endswith("."), text
+
+
+def test_every_title_row_names_lines_its_host_holds():
+    titles = copy.title_rows()
+    assert len(titles) == 16
+    for row in titles:
+        hosts = [h.strip() for h in row["host"].split(",")]
+        held = {line["key"] for h in hosts for line in copy.glossary(h)}
+        assert row["line_keys"] and set(row["line_keys"]) <= held, (row["key"], row["line_keys"])
+    keys = {t["key"]: t["line_keys"] for t in titles}
+    assert keys["TG3-9"] == [f"F15{c}" for c in "abcdefgh"], keys["TG3-9"]
+    assert keys["TG3-5"] == ["O09a", "O09c"]
+
+
+def test_the_two_retirement_phrases_change_and_the_reference_keeps_the_old_ones():
+    new_screen = copy.new_slot_row("screen_threshold", "R02")
+    new_tenure = copy.new_slot_row("tenure_threshold", "R22")
+    assert new_screen["phrase"] == "at {screen_threshold} or more"
+    assert new_screen["fallback"] == "past the screen"
+    assert new_tenure["phrase"] == "Once invested for {tenure_threshold} trading days,"
+    assert new_tenure["fallback"] == "Once past the configured minimum tenure,"
+    assert copy.slot_row("screen_threshold", "R02")["phrase"] != new_screen["phrase"]
+    for slot, row in (("stress_fraction_pct", "R19b"), ("watch_trail_pp", "R27b")):
+        assert copy.new_slot_row(slot, row) == copy.slot_row(slot, row), "an unchanged phrase"
+
+
+def test_the_reference_rows_are_served_unchanged_to_every_test_not_yet_re_pinned():
+    assert copy.text("D01", "A").startswith("This page shows how the bot")
+    assert copy.row("H02", "B")["states"]
+    assert len(copy.rows("A")) == 55 and len(copy.rows("C")) == 46
+    assert copy.a_text("D01") is None, "this plan removes the line the reference rows still hold"

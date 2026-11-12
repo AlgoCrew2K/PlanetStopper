@@ -1,7 +1,2556 @@
 {
- "plan_path": "feature-plans/page-explainers-and-density.md",
- "plan_sha": "2681e6935d46c6b159d71f040ba92753bc87376a",
+ "plan_path": "feature-plans/aligned-tables-and-quiet-copy.md",
+ "plan_sha": "f1d07c75f9c1f26f298c94791bb5f6e3632394e9",
+ "reference_commit": "c0760e70eb6f8c6620002570b493bb9ca4ec6b1e",
  "rows": [
+  {
+   "key": "D01",
+   "host_place": "/, the page line above the hero (templates/index.html:1241)",
+   "builder": "server render",
+   "disposition": "removed: a page-level line; the hero and Active descriptions say what it says",
+   "new_text": null,
+   "true_of": "n/a",
+   "table": "A",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "dash.hero",
+   "host_place": "/, under \"Guard effect on portfolio\" (templates/index.html:1253)",
+   "builder": "server render",
+   "disposition": "shortened; its definition sentence becomes Glossary D02",
+   "new_text": "Above zero the bot's exits did better than holding every symphony through; below zero, holding would have done better.",
+   "true_of": "`analytics.py:2113-2126`; `templates/index.html:1272-1276`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "dash.rows",
+   "host_place": "/, top of the comparison rows (templates/index.html:1338)",
+   "builder": "server render",
+   "disposition": "shortened; its α sentence is Glossary D12",
+   "new_text": "The same bot-against-holding comparison as single figures: today, the Composer lifetime, the window's deepest drop and its daily swings.",
+   "true_of": "`templates/index.html:1425`, `:1466`, `:1499`, `:1545`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "D20",
+   "host_place": "/, above Tracked, Armed and Triggered (templates/index.html:1598)",
+   "builder": "server render",
+   "disposition": "moved: it defines three labels, so it becomes Glossary D20t",
+   "new_text": null,
+   "true_of": "n/a",
+   "table": "A",
+   "kind": "moved",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "D21",
+   "host_place": "/, top of the dollar-saved panel (templates/index.html:1628)",
+   "builder": "server render",
+   "disposition": "shortened; the other three lines are Glossary D24 to D26",
+   "new_text": "The dollars the exits saved or lost against holding, added across the exits in the window you pick.",
+   "true_of": "`reporting.py:85-95`; `templates/index.html:1637-1669`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "D28",
+   "host_place": "/, under the Active header (templates/index.html:1681)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Symphonies with a stop armed and any the bot has exited; the engine checks armed stops every minute while the market is open.",
+   "true_of": "`app.py:3752-3756`, `:3072`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "D40",
+   "host_place": "/, under the Standby header (templates/index.html:1818)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Symphonies the bot watches with no stop armed; one moves up to Active when a stop arms or the bot exits it.",
+   "true_of": "`app.py:3757-3761`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "D41",
+   "host_place": "/, under the CVaR title (templates/index.html:1996)",
+   "builder": "server render",
+   "disposition": "shortened; its not-a-signal clause is said by the two CVaR notes",
+   "new_text": "The average of the first symphony's worst outcomes, a measure of how bad its bad days could get.",
+   "true_of": "`math_engine.py:1699-1701`; `templates/index.html:1993-2050`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "D47",
+   "host_place": "/, under \"Managed sleeves\" (templates/index.html:2064)",
+   "builder": "server render",
+   "disposition": "shortened; the Arm Paper clause becomes Glossary D50e",
+   "new_text": "Slices of your Alpaca account run by rules you write; a new rule starts in shadow, which places no order.",
+   "true_of": "`database.py:4217-4221`; `templates/index.html:1929`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "D48",
+   "host_place": "/, the sleeves empty line (templates/index.html:2075)",
+   "builder": "server render",
+   "disposition": "shortened to one sentence",
+   "new_text": "No sleeves configured yet, and this page has no form for creating one.",
+   "true_of": "`templates/index.html:2075`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "dp.lead",
+   "host_place": "detail panel, under \"Symphony detail\" (templates/index.html:2105)",
+   "builder": "server render",
+   "disposition": "kept",
+   "new_text": null,
+   "true_of": "`templates/index.html:2095-2270`",
+   "table": "A",
+   "kind": "kept",
+   "new_text_note": null,
+   "unchanged": true,
+   "ref_text": "One symphony up close: where its stop sits, what the engine recorded in the session and how its risk compares with holding.",
+   "slots": []
+  },
+  {
+   "key": "D57",
+   "host_place": "detail panel, under \"Intraday tape\" (templates/index.html:2152)",
+   "builder": "server render",
+   "disposition": "shortened; the toggle sentence is Glossary D58c and D58d",
+   "new_text": "The symphony's return minute by minute through the session, drawn against its stop and breakeven lines.",
+   "true_of": "`templates/index.html:2141-2178`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "dp.events",
+   "host_place": "detail panel, under the events heading (templates/index.html:2180)",
+   "builder": "server render",
+   "disposition": "kept",
+   "new_text": null,
+   "true_of": "static/index.js event list",
+   "table": "A",
+   "kind": "kept",
+   "new_text_note": null,
+   "unchanged": true,
+   "ref_text": "Each event the engine recorded for this symphony in the session, so you can see what it did.",
+   "slots": []
+  },
+  {
+   "key": "D59",
+   "host_place": "detail panel, under \"Risk math\" (templates/index.html:2189)",
+   "builder": "server render",
+   "disposition": "shortened; the hint sentence restates the hints",
+   "new_text": "The figures the engine weighs when it decides whether to exit this symphony, from its latest check.",
+   "true_of": "`templates/index.html:2186-2248`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "D66",
+   "host_place": "detail panel, under \"Risk Profile\" (templates/index.html:2252)",
+   "builder": "server render",
+   "disposition": "kept",
+   "new_text": null,
+   "true_of": "`templates/index.html:2250-2256`",
+   "table": "A",
+   "kind": "kept",
+   "new_text_note": null,
+   "unchanged": true,
+   "ref_text": "This symphony's risk figures with the bot's exits and when held through, the same figures the Performance page shows for one symphony.",
+   "slots": []
+  },
+  {
+   "key": "D67",
+   "host_place": "detail panel, under \"Symphony variables\" (templates/index.html:2263)",
+   "builder": "server render",
+   "disposition": "shortened; \"locked\" is Glossary D67t",
+   "new_text": "The stop settings this symphony runs with.",
+   "true_of": "`templates/index.html:2258-2270`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "F01",
+   "host_place": "Performance, top of the first panel (templates/performance.html:566)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Risk-adjusted results of the bot's exits against holding, for the whole portfolio or one symphony, over the window you pick.",
+   "true_of": "`templates/performance.html:570-640`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "F11",
+   "host_place": "Performance, under \"Cumulative returns\" (templates/performance.html:658)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "The two return paths day by day: the solid line is the bot with its exits, the dashed line is holding through.",
+   "true_of": "`templates/performance.html:646-664`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "F13",
+   "host_place": "Performance, under \"Risk metrics\" (templates/performance.html:668-672)",
+   "builder": "server render",
+   "disposition": "shortened; its delta sentences become Glossary F15h",
+   "new_text": "Each risk figure for holding and for the bot over the window, side by side with their delta.",
+   "true_of": "`templates/performance.html:684-730`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "F16",
+   "host_place": "Performance, under \"Stop-justification preconditions\" (templates/performance.html:739)",
+   "builder": "server render",
+   "disposition": "shortened; its condition becomes Glossary F17h and its Replay and Shadow honesty sentence moves into Glossary F17a word for word",
+   "new_text": "Whether each symphony's daily returns behave in the way that makes a trailing stop pay off on average (Kaminski and Lo, 2014).",
+   "true_of": "`guard_preconditions.py:150-158`, `:166-190`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "F21",
+   "host_place": "Performance, under the turnover heading (templates/performance.html:792)",
+   "builder": "server render",
+   "disposition": "shortened; \"retained\" is Glossary F23",
+   "new_text": "How often each symphony's exits fired over three windows, and an estimate of the yearly return those exits cost in trading.",
+   "true_of": "`autotuner.py:1444`; `templates/performance.html:799-810`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "Y01",
+   "host_place": "History, top of the first panel (templates/history.html:407)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Whether the bot's exits paid for themselves against holding over the window you pick, and which rules did the work.",
+   "true_of": "`analytics.py:2586-2690`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "Y10",
+   "host_place": "History, under the daily chart heading (templates/history.html:477)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Each bar is one day's exit alpha added up; above zero the exits beat holding that day.",
+   "true_of": "`analytics.py:2640-2660`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "Y12",
+   "host_place": "History, under \"By exit reason\" (templates/history.html:490)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "The same totals split by the rule that fired each exit, so you can see which rules earn their keep.",
+   "true_of": "`analytics.py:2652-2660`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "Y15",
+   "host_place": "History, under the exits heading (templates/history.html:564)",
+   "builder": "server render",
+   "disposition": "shortened; Detail becomes Glossary Y16",
+   "new_text": "Each exit of the day in the heading: when it fired, the symphony and the rule.",
+   "true_of": "static/history.js triggers rows",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "S01",
+   "host_place": "Settings, the actions caption (templates/settings.html:965)",
+   "builder": "server render",
+   "disposition": "shortened; its next-minute clause is said by the side-nav note S02 (`:989`)",
+   "new_text": "Global settings and per-symphony overrides",
+   "true_of": "`templates/settings.html:985-1150`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "S03",
+   "host_place": "Settings, Master controls (templates/settings.html:999)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "The mode and the start time that govern real-money execution, so treat both with care.",
+   "true_of": "`templates/settings.html:1001-1033`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "S08",
+   "host_place": "Settings, Algorithm parameters (templates/settings.html:1039)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Global defaults for every symphony; a per-symphony override in the next section takes precedence.",
+   "true_of": "static/settings.js algorithm grid",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "S11",
+   "host_place": "Settings, Credentials (templates/settings.html:1046)",
+   "builder": "server render",
+   "disposition": "shortened; the not-saved fact is said by the credentials warning S12r",
+   "new_text": "The keys, account ids and webhook address the bot uses for Composer, Alpaca, Discord and Anthropic, shown masked.",
+   "true_of": "`app.py:9684`, `:9749-9752`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "S14",
+   "host_place": "Settings, Per-symphony overrides (templates/settings.html:1132)",
+   "builder": "server render",
+   "disposition": "shortened; its storage and pinned-value sentences become Glossary S14s and S14p",
+   "new_text": "Override a global setting or lock a parameter against autotune changes, for one symphony at a time.",
+   "true_of": "static/settings.js symphony detail",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "S17",
+   "host_place": "Settings, Maintenance (templates/settings.html:1143)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Data operations that cannot be undone, so use each with care.",
+   "true_of": "`templates/settings.html:1145-1188`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "M04",
+   "host_place": "settings modal, Execution mode (static/settings-modal.js:471)",
+   "builder": "page script",
+   "disposition": "shortened to one sentence",
+   "new_text": "Whether this symphony may send real sell orders; it trades live only when this switch and the server's global live switch are both on.",
+   "true_of": "`static/settings-modal.js:471-472`; `alpha_bot_execution.py:76`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "M05",
+   "host_place": "settings modal, Locked tuning variables (static/settings-modal.js:483)",
+   "builder": "page script",
+   "disposition": "kept",
+   "new_text": null,
+   "true_of": "`autotuner.py:3104-3121`",
+   "table": "A",
+   "kind": "kept",
+   "new_text_note": null,
+   "unchanged": true,
+   "ref_text": "Checked variables keep their value when the weekly autotune runs; the autotune may change the rest.",
+   "slots": []
+  },
+  {
+   "key": "M06",
+   "host_place": "settings modal, Autotuner parameters (static/settings-modal.js:490)",
+   "builder": "page script",
+   "disposition": "shortened to one sentence",
+   "new_text": "The values the autotune set for this symphony, read-only here.",
+   "true_of": "`static/settings-modal.js:490`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "M07",
+   "host_place": "settings modal, AI advisor (static/settings-modal.js:494-495)",
+   "builder": "page script",
+   "disposition": "shortened to one sentence",
+   "new_text": "What the advisor said about this symphony; to act on it, lock a variable above or accept a suggestion on the Advisor page.",
+   "true_of": "`static/settings-modal.js:494-500`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "A01",
+   "host_place": "Advisor, the caption beside the tab bar (templates/ai_advisor.html:1341)",
+   "builder": "server render",
+   "disposition": "removed: a page-level description beside the tab bar; its autotune fact moves into O08 and its tab-dot and model definitions into the Glossaries (A03, A04)",
+   "new_text": null,
+   "true_of": "n/a",
+   "table": "A",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "O01",
+   "host_place": "Overview, top of the tab (templates/ai_advisor.html:1442)",
+   "builder": "server render",
+   "disposition": "removed: a tab-level line that lists what each section below says",
+   "new_text": null,
+   "true_of": "n/a",
+   "table": "A",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "O03",
+   "host_place": "Overview, above the toolbar (templates/ai_advisor.html:1443)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Run Claude advisor suggests stop-setting changes for one symphony; you can accept one only if it holds up on history the tuning never saw.",
+   "true_of": "`ai_advisor.py:99-105`, `:2080`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "O08",
+   "host_place": "Overview, under \"Recent autotune runs\" (templates/ai_advisor.html:1500)",
+   "builder": "server render",
+   "disposition": "shortened; takes A01's autotune fact",
+   "new_text": "Each symphony's latest weekly autotune, the one advisor tool that applies new stop settings itself, only when they beat the current ones on held-back data.",
+   "true_of": "`autotuner.py:3085-3121`; `alpha_bot_execution.py:1179-1180`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "O15",
+   "host_place": "Overview, under \"Market Prism\" (templates/ai_advisor.html:1567)",
+   "builder": "server render",
+   "disposition": "shortened; the lens names are Glossary O19",
+   "new_text": "An overnight read of the market through five lenses; it is background for your decisions and changes nothing by itself.",
+   "true_of": "`templates/ai_advisor.html:1545-1760`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "O27",
+   "host_place": "Overview, under \"Advisor observations\" (templates/ai_advisor.html:1793)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "The latest verdict from each advisor check and the last retirement run; each checks something different, so a Clear covers only its own check.",
+   "true_of": "`templates/ai_advisor.html:1808-1815`, `:1820-1880`; the Retirement row of AC-2",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "C01",
+   "host_place": "Correlations, top of the tab (templates/ai_advisor.html:1898)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "How closely your symphonies' daily returns move together, from the latest successful retirement run; the Retirement tab uses it to suggest a symphony to drop.",
+   "true_of": "`advisors/retirement_recommender.py:58`; `templates/ai_advisor.html:1939-1990`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "R01",
+   "host_place": "Retirement, under \"Retirement recommendations\" (templates/ai_advisor.html:2211)",
+   "builder": "server render",
+   "disposition": "shortened; the wind-down checklist is Glossary R20",
+   "new_text": "Suggestions to retire a symphony that duplicates another live symphony and scores lower; approving only records your decision.",
+   "true_of": "`advisors/retirement_recommender.py:316`; `advisors/tenure_review.py:1179`; `app.py:12378` (`_dispatch_retirement_decision`, a status-only write)",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "R02",
+   "host_place": "Retirement, under \"Correlated pairs\" (templates/ai_advisor.html:2218)",
+   "builder": "server render",
+   "disposition": "shortened; the gates are defined in Glossary R19a and R19b, the arrow in R17",
+   "new_text": "Flags the lower-scoring symphony of a pair whose returns stay correlated at {screen_threshold} or more, even at the estimate's low end and on worst days.",
+   "true_of": "`advisors/retirement_recommender.py:58`, `:65-69`, `:316`, `:376-378`; `advisors/tenure_review.py:1436-1440`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": [
+    "screen_threshold"
+   ]
+  },
+  {
+   "key": "R22",
+   "host_place": "Retirement, under \"Symphony tenure review\" (templates/ai_advisor.html:2387)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Once invested for {tenure_threshold} trading days, a symphony gets keep, watch, retire-candidate or no verdict from its redundancy, its backtest and its portfolio effect.",
+   "true_of": "`advisors/tenure_review.py:39-44`, `:228`, `:1155-1214`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": [
+    "tenure_threshold"
+   ]
+  },
+  {
+   "key": "W01",
+   "host_place": "Asset Swaps, top of the tab (templates/ai_advisor.html:2512)",
+   "builder": "server render",
+   "disposition": "shortened; the gate is Glossary W02, the manual step the advise-only banner",
+   "new_text": "Test whether swapping one ticker in a symphony for another would have helped; leave both tickers blank and the advisor proposes swaps.",
+   "true_of": "`app.py:11182` (`ai_advisor_asset_swaps_evaluate`, both-blank reasoned mode)",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "L01",
+   "host_place": "Logic Changes, top of the tab (templates/ai_advisor.html:2589)",
+   "builder": "server render",
+   "disposition": "shortened; the model line already says it reasons over the current rules and the FDR banner names the gate",
+   "new_text": "Test a change to one of a symphony's rules, such as a different lookback, before you make it yourself in Composer.",
+   "true_of": "`app.py:11537` (`ai_advisor_logic_changes_evaluate`, advisory, no Composer write)",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "T02",
+   "host_place": "Chat, the default body (templates/ai_advisor.html:2683)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Chat explains and changes nothing; the Discuss this proposal and Chat about this buttons on proposal and suggestion cards open it.",
+   "true_of": "`templates/ai_advisor.html:2671-2690`; `static/ai_advisor.js` `openChatWithArtifact`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "B00",
+   "host_place": "Strategy Builder, under the model line (templates/ai_advisor.html:2712)",
+   "builder": "server render",
+   "disposition": "shortened; takes the one-per-run fact of the removed B03 note",
+   "new_text": "Ask for new strategies toward one goal; the strongest candidate that clears the gate, at most one per run, is promoted as a suggestion.",
+   "true_of": "`templates/ai_advisor.html:2802-2808` (the ref's own note); `advisors/strategy_builder_engine.py` (`propose_strategies`)",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "B03",
+   "host_place": "Strategy Builder, the run note under \"Propose new strategies\" (templates/ai_advisor.html:2802-2808)",
+   "builder": "server render",
+   "disposition": "removed: it restates the model line, B00 and the banner; MU5 retires with it",
+   "new_text": null,
+   "true_of": "n/a",
+   "table": "A",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "B07",
+   "host_place": "Strategy Builder, under \"Strategy proposals\" (templates/ai_advisor.html:2945)",
+   "builder": "server render",
+   "disposition": "shortened",
+   "new_text": "Strategies that cleared the gate; to use one, build it in Composer yourself from the rules on its card.",
+   "true_of": "`templates/ai_advisor.html:2942-3086`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "B10",
+   "host_place": "Strategy Builder, under \"Backtest failures\" (templates/ai_advisor.html:3090)",
+   "builder": "server render",
+   "disposition": "shortened to one sentence",
+   "new_text": "Candidates Composer could not backtest, with the error it returned; the gate never judged them.",
+   "true_of": "`templates/ai_advisor.html:3088-3104`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "X01",
+   "host_place": "Frontrunner Builder, top of the tab (templates/ai_advisor.html:3191)",
+   "builder": "server render",
+   "disposition": "shortened; the overlay is Glossary X06",
+   "new_text": "Proposes copies of your symphonies with one frontrunner overlay added, for you to approve or reject.",
+   "true_of": "`advisors/frontrunner_builder.py:667`, `:816-827`",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "X03",
+   "host_place": "Frontrunner Builder, the run note (templates/ai_advisor.html:3237-3241)",
+   "builder": "server render",
+   "disposition": "shortened to one sentence of at most 25 words with no dash",
+   "new_text": "Runs over every live symphony in the background, which can take several minutes, and also runs on the weekly schedule; reload this tab afterward.",
+   "true_of": "`templates/ai_advisor.html:3237-3241` (the ref's own note); `advisors/strategy_builder_scheduler.py` (`run_weekly_build`)",
+   "table": "A",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "X05",
+   "host_place": "Frontrunner Builder, under \"Pending approval (N)\" (templates/ai_advisor.html:3265)",
+   "builder": "server render",
+   "disposition": "removed: the risk banner says approving creates an undeployed symphony and to review the deltas first",
+   "new_text": null,
+   "true_of": "n/a",
+   "table": "A",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-1",
+   "host_place": "Overview, the suggestions placeholder (templates/ai_advisor.html:1490-1492)",
+   "builder": "server render",
+   "disposition": "reworded",
+   "new_text": "No suggestions yet.",
+   "why": "the ref text restates O03",
+   "table": "X",
+   "kind": "reworded",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-2",
+   "host_place": "Overview, the Retirement pointer (templates/ai_advisor.html:1454)",
+   "builder": "server render",
+   "disposition": "moved to the last row of Advisor observations",
+   "new_text": null,
+   "why": "G-12, G-24",
+   "table": "X",
+   "kind": "moved",
+   "new_text_note": "label \"Retirement\"; verdict cell: the pointer text without \"Retirement: \"; link \"Open tab\"",
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-3",
+   "host_place": "Overview, the guardrail paragraph (templates/ai_advisor.html:1808-1818)",
+   "builder": "server render",
+   "disposition": "removed; its first three sentences become Glossary O31a, O31b and O31c word for word",
+   "new_text": null,
+   "why": "G-8 (EV-O8); its fourth sentence restates O03",
+   "table": "X",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-4",
+   "host_place": "Overview, the verification count line (app.py:10378-10402, shown at templates/ai_advisor.html:1726-1728)",
+   "builder": "server render",
+   "disposition": "reworded per AC-5",
+   "new_text": null,
+   "why": "G-10",
+   "table": "X",
+   "kind": "reworded",
+   "new_text_note": "per AC-5",
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-5",
+   "host_place": "Overview, the verification disclosure summary (templates/ai_advisor.html:1740)",
+   "builder": "server render",
+   "disposition": "reworded",
+   "new_text": "Show all checks",
+   "why": "the count is on the pill or the count line",
+   "table": "X",
+   "kind": "reworded",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-6",
+   "host_place": "Overview, the autotune shared line (static/ai_advisor.js:869-872)",
+   "builder": "page script",
+   "disposition": "reworded per AC-5",
+   "new_text": null,
+   "why": "G-10",
+   "table": "X",
+   "kind": "reworded",
+   "new_text_note": "per AC-5",
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-7",
+   "host_place": "Overview, the older-runs summary (static/ai_advisor.js:895-905)",
+   "builder": "page script",
+   "disposition": "reworded per AC-5",
+   "new_text": null,
+   "why": "EV-O9",
+   "table": "X",
+   "kind": "reworded",
+   "new_text_note": "per AC-5",
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-8",
+   "host_place": "History, the caption Y02 (templates/history.html:426-428)",
+   "builder": "server render",
+   "disposition": "shortened to its basis",
+   "new_text": "Totals from the bot's daily exit records",
+   "why": "its second clause restates Y01",
+   "table": "X",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-9",
+   "host_place": "Strategy Builder, the risk banner text (templates/ai_advisor.html:2725-2731)",
+   "builder": "server render",
+   "disposition": "shortened: the multiple-testing sentence is dropped (it is Glossary B02); the bold lead, the sound-but-unprovable sentence and the from-scratch sentence stay word for word",
+   "new_text": "Strategy Builder proposals carry the highest overfitting risk. Survivors are sound-but-unprovable: a clean gate pass is not proof of a live edge. Strategy Builder proposals are built entirely from scratch, maximising selection-bias exposure.",
+   "why": "G-14 (meaning kept, shortened)",
+   "table": "X",
+   "kind": "shortened",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-10",
+   "host_place": "Strategy Builder, the model sentence of the run note (copy.json row MU5)",
+   "builder": "server render",
+   "disposition": "removed with B03",
+   "new_text": null,
+   "why": "B03 is removed; MU4 still names the model",
+   "table": "X",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-11",
+   "host_place": "Frontrunner Builder, the empty-state body (templates/ai_advisor.html:3257-3259)",
+   "builder": "server render",
+   "disposition": "reworded",
+   "new_text": "Proposals appear here after a build.",
+   "why": "the ref text restates X03's weekly schedule",
+   "table": "X",
+   "kind": "reworded",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-12",
+   "host_place": "Retirement, Run recommender hint (templates/ai_advisor.html:2378-2380)",
+   "builder": "server render",
+   "disposition": "kept; Glossary R12 no longer restates it",
+   "new_text": null,
+   "why": "G-8",
+   "table": "X",
+   "kind": "kept",
+   "new_text_note": null,
+   "unchanged": true,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-13",
+   "host_place": "/, the hero descriptor (templates/index.html:1279)",
+   "builder": "server render",
+   "disposition": "kept: honesty text (window, basis and cost basis); dash.hero no longer restates it",
+   "new_text": null,
+   "why": "G-14",
+   "table": "X",
+   "kind": "kept",
+   "new_text_note": null,
+   "unchanged": true,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-14",
+   "host_place": "every host, each \"What the terms mean\" disclosure",
+   "builder": "server render and page scripts",
+   "disposition": "removed; its lines move to the host's Glossary",
+   "new_text": null,
+   "why": "G-9",
+   "table": "X",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  }
+ ],
+ "glossary": {
+  "/": [
+   {
+    "key": "D02",
+    "text": "Guard effect: how the bot's exits compare with holding every symphony through, over the window you pick.",
+    "lead_term": "Guard effect",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "D04",
+    "text": "Windows: 30d to 1Y are calendar days counted back from the session shown. YTD starts on 1 January; All time uses every recorded day.",
+    "lead_term": "Windows",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D06a",
+    "text": "Bot: the return with the bot's exits applied. While live trading is off it is a simulation that places no order, and the headline then says Simulated.",
+    "lead_term": "Bot",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D06b",
+    "text": "If held: what the same symphonies would have returned with no exit, held as Composer runs them.",
+    "lead_term": "If held",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D07",
+    "text": "Shadow history: the bot's own daily record of both paths, kept for the last {shadow_retention_days} days.",
+    "lead_term": "Shadow history",
+    "slots": [
+     "shadow_retention_days"
+    ],
+    "source": "ref"
+   },
+   {
+    "key": "D05",
+    "text": "Account · all-time: Composer's own total return for the whole account since it was opened; it does not change with the window.",
+    "lead_term": "Account · all-time",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D03",
+    "text": "At their latest values: each symphony is weighted by its current value; before trading costs: no cost of trading is taken off.",
+    "lead_term": "At their latest values",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D10",
+    "text": "The first row's Held figure is for the whole account, uninvested cash included; a card's Held figure leaves cash out.",
+    "lead_term": null,
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D12",
+    "text": "α: the bot's edge over holding on that row. Positive is good for the bot: a higher return, a shallower fall or calmer swings.",
+    "lead_term": "α",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D13",
+    "text": "Bars: the highlighted bar and label mark the better side on that row.",
+    "lead_term": "Bars",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D14",
+    "text": "Value-weighted floor: Composer's account totals could not be read, so the row weights each symphony by its value instead.",
+    "lead_term": "Value-weighted floor",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D15",
+    "text": "Stale account data: Composer's account totals could not be refreshed, so the row uses the last totals read, from the time shown.",
+    "lead_term": "Stale account data",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D16",
+    "text": "Cumulative · lifetime: Composer's Total return since each symphony was invested, which counts deposits and withdrawals; it is not a time-weighted return.",
+    "lead_term": "Cumulative · lifetime",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D17",
+    "text": "Max DD: maximum drawdown, the largest fall from a high to a later low in the window, shown as a size. The row waits until the window holds enough trading days for a stable figure.",
+    "lead_term": "Max DD",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D18",
+    "text": "Ann. vol: annualized volatility, how widely daily returns swing, scaled to a year; lower is calmer.",
+    "lead_term": "Ann. vol",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D19",
+    "text": "Lifetime Max DD · since inception: the deepest fall of your symphonies held through, from Composer's records since each was invested, weighted by value.",
+    "lead_term": "Lifetime Max DD · since inception",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D20t",
+    "text": "Tracked, Armed, Triggered: Tracked counts every symphony the bot watches. Armed counts those with a stop set and waiting, and Triggered counts those the bot has exited.",
+    "lead_term": "Tracked, Armed, Triggered",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "D22",
+    "text": "Exit: one time the bot sold a symphony out. Saved or lost: the symphony's value times the gap between its exit return and its held return, added over the exits.",
+    "lead_term": "Exit",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D23",
+    "text": "Snapshot-time basis: each exit valued at the bot's afternoon check of that day.",
+    "lead_term": "Snapshot-time basis",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D24",
+    "text": "Gross of trading costs: before any cost of trading the exit.",
+    "lead_term": "Gross of trading costs",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D25",
+    "text": "Net of trading costs: after taking {friction_pct} percentage points off every exit, the cost the autotune assumes for each exit. With many exits the net result sits well below the gross one: fewer dollars saved, or more lost.",
+    "lead_term": "Net of trading costs",
+    "slots": [
+     "friction_pct"
+    ],
+    "source": "ref"
+   },
+   {
+    "key": "D26",
+    "text": "Realized (marks basis): each exit valued at its day's end-of-day prices instead of the afternoon check; the count says how many exits have those prices.",
+    "lead_term": "Realized (marks basis)",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D28a",
+    "text": "N locked: how many tuning variables are locked across your symphonies; the weekly autotune leaves those alone.",
+    "lead_term": "N locked",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D28b",
+    "text": "A date after the heading: the figures below belong to that session, not today.",
+    "lead_term": "A date after the heading",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29a",
+    "text": "Trailing stop: the exit fired because the symphony fell further below its peak than its volatility-scaled stop allows.",
+    "lead_term": "Trailing stop",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29b",
+    "text": "Take-profit: the exit fired to keep a gain the Monte Carlo check judged likely to fade.",
+    "lead_term": "Take-profit",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29c",
+    "text": "VWAP breakdown: the exit fired after the symphony had gained enough to arm this check, its holdings then traded below their volume-weighted average price, and its return stayed under the session high for several checks in a row.",
+    "lead_term": "VWAP breakdown",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29d",
+    "text": "VWAP bleed: the exit fired after the symphony's own return stayed at or below a volatility-scaled loss line for several checks in a row; despite the name, this check does not look at the volume-weighted average price.",
+    "lead_term": "VWAP bleed",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29e",
+    "text": "Armed: the trailing stop is set and following the symphony's peak.",
+    "lead_term": "Armed",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29f",
+    "text": "TP-armed: the take-profit is set and waiting for its confirmation.",
+    "lead_term": "TP-armed",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29g",
+    "text": "Para-armed: the symphony rose fast enough that its stop has been pulled in closer.",
+    "lead_term": "Para-armed",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D30",
+    "text": "Exit beat or trailed holding: the exit's return minus the symphony's held return.",
+    "lead_term": "Exit beat or trailed holding",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D31",
+    "text": "vs held now: compared with the held return at this minute, so the figure moves while the market is open. At close: compared at the session's close.",
+    "lead_term": "vs held now",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D32",
+    "text": "Lifetime Max DD: this symphony's deepest fall since it was invested, from Composer's records, held through.",
+    "lead_term": "Lifetime Max DD",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D33",
+    "text": "The first column is the session's return; its α is the bot's edge over holding for that session.",
+    "lead_term": null,
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D34",
+    "text": "Bot · frozen: after an exit the Bot figure stays at the exit's return while If held keeps moving.",
+    "lead_term": "Bot · frozen",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D35",
+    "text": "If held · live: the held return, still moving with the market after the exit.",
+    "lead_term": "If held · live",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D36",
+    "text": "Cum: return since the symphony was invested, from Composer; the Bot side adds the exits' effect over the shadow history.",
+    "lead_term": "Cum",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D37",
+    "text": "Max DD on a card: each side's deepest fall over the shadow history; a positive α means the bot's fall was shallower.",
+    "lead_term": "Max DD on a card",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D38",
+    "text": "The ring: the Monte Carlo reading, the share of similar past market days on which this symphony's holdings did better than they are doing now. A low reading means today is unusually strong; a dash means no reading.",
+    "lead_term": "The ring",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D39",
+    "text": "Sparkline: the session's return; a TP, VWAP or Stop badge marks the minute of an exit.",
+    "lead_term": "Sparkline",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D42",
+    "text": "CVaR: expected shortfall, the average of the outcomes in the worst tail the heading names.",
+    "lead_term": "CVaR",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D43",
+    "text": "stderr: the standard error, how far the figure could be off by chance alone.",
+    "lead_term": "stderr",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D44",
+    "text": "Tail obs: how many outcomes fell in that tail; a small count means a rough figure.",
+    "lead_term": "Tail obs",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D46",
+    "text": "Lower bound: the method tends to understate how bad the tail is, so the real figure is likely worse.",
+    "lead_term": "Lower bound",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D49",
+    "text": "Atlas cache: the age of the weekly saved copy of the community strategy catalog the builders read.",
+    "lead_term": "Atlas cache",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D50a",
+    "text": "Capital: the money assigned to the sleeve.",
+    "lead_term": "Capital",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D50b",
+    "text": "Ledger cash: the sleeve's uninvested cash by its own books.",
+    "lead_term": "Ledger cash",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D50c",
+    "text": "Realized: gains or losses already closed out; n/a means the books could not be read.",
+    "lead_term": "Realized",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D50d",
+    "text": "Rule line: the rule's mode in brackets, then how often it fired today and over its life, and what those fires realized.",
+    "lead_term": "Rule line",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D50e",
+    "text": "Arm Paper: moves a rule from shadow to the paper account.",
+    "lead_term": "Arm Paper",
+    "slots": [],
+    "source": "G2"
+   }
+  ],
+  "detail panel": [
+   {
+    "key": "D53",
+    "text": "Return: the symphony's return in the session; frozen at exit after an exit, at close once the market has closed, real-time while it is open.",
+    "lead_term": "Return",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D54",
+    "text": "Stop level: the return at which the bot exits; breakeven lock means the stop has been raised to protect the gain, vol-scaled means it follows the symphony's volatility.",
+    "lead_term": "Stop level",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D55",
+    "text": "Peak (HWM): the highest return the symphony itself reached in the session; until an exit, the stop trails this peak, and after an exit the figure keeps following the held return.",
+    "lead_term": "Peak (HWM)",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D56",
+    "text": "Exit α: the exit's return minus the held return, for this symphony.",
+    "lead_term": "Exit α",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D58a",
+    "text": "Bot (booked): the bot's path; it moves with the symphony until an exit and then stays at the exit's return.",
+    "lead_term": "Bot (booked)",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D58b",
+    "text": "Breakeven lock: once the gain is large enough, the stop is raised so that the exit cannot fall below breakeven.",
+    "lead_term": "Breakeven lock",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D58c",
+    "text": "VWAP: the day's volume-weighted average price.",
+    "lead_term": "VWAP",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D58d",
+    "text": "MC probability: the share of similar past market days on which this symphony's holdings did better than they are doing now; lower means today is unusually strong.",
+    "lead_term": "MC probability",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D63",
+    "text": "Parabolic velocity: how fast the return is climbing; past the threshold, the stop is pulled in closer.",
+    "lead_term": "Parabolic velocity",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D64",
+    "text": "Active · floor: the breakeven lock has fired and the stop cannot go below the floor shown.",
+    "lead_term": "Active · floor",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D65",
+    "text": "VWAP defense: whether the symphony's holdings trade above or below their volume-weighted average price, and by how much; below it after a gain is what the VWAP breakdown exit watches for.",
+    "lead_term": "VWAP defense",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D67t",
+    "text": "locked: the weekly autotune may not change this variable.",
+    "lead_term": "locked",
+    "slots": [],
+    "source": "ref"
+   }
+  ],
+  "Performance": [
+   {
+    "key": "F03",
+    "text": "Windows: calendar days counted back from the session shown; YTD starts on 1 January and 5Y covers five years.",
+    "lead_term": "Windows",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F04t",
+    "text": "If held: the same symphonies held with no exit. Bot (shadow): the bot's shadow record, the return with its exits applied; while live trading is off it is a simulation that places no order.",
+    "lead_term": "If held",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F07",
+    "text": "Sharpe: return per unit of overall volatility; higher is better.",
+    "lead_term": "Sharpe",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F09",
+    "text": "Sortino: return per unit of downside volatility only; higher is better.",
+    "lead_term": "Sortino",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F08",
+    "text": "Max DD reduction: how much shallower the bot's deepest fall was than holding's, in percentage points.",
+    "lead_term": "Max DD reduction",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F15a",
+    "text": "Max DD: the largest fall from a high to a later low over the window, shown as a size.",
+    "lead_term": "Max DD",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F15b",
+    "text": "Calmar: yearly return divided by the deepest fall; higher is better.",
+    "lead_term": "Calmar",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F15c",
+    "text": "Annualized volatility: how widely daily returns swing, scaled to a year.",
+    "lead_term": "Annualized volatility",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F15d",
+    "text": "Volatility reduction: how much calmer the bot's returns were than holding's, in percentage points.",
+    "lead_term": "Volatility reduction",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F15e",
+    "text": "Total return: the whole window's return, compounded.",
+    "lead_term": "Total return",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F15f",
+    "text": "Annualized return (CAGR): the yearly rate that compounds to the total return.",
+    "lead_term": "Annualized return (CAGR)",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F15g",
+    "text": "Up days: the share of days with a gain.",
+    "lead_term": "Up days",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F15h",
+    "text": "Delta: bot minus baseline. Positive deltas on risk metrics (Sharpe, Sortino, drawdown reduction) mean the bot improved risk-adjusted outcomes vs holding through; drawdown and volatility deltas are in %.",
+    "lead_term": "Delta",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "F17a",
+    "text": "Sample: which daily series was checked, Replay or Shadow. Replay = simulated if-held daily series from the last autotune/replay run; Shadow = live if-held daily series across all position epochs of the symphony.",
+    "lead_term": "Sample",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "F17b",
+    "text": "ρ: lag-1 autocorrelation, how much one day's return tends to carry into the next.",
+    "lead_term": "ρ",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F17c",
+    "text": "CI: the confidence range that ρ likely sits in.",
+    "lead_term": "CI",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F17d",
+    "text": "Daily Sharpe: the average daily return divided by its volatility, not annualized.",
+    "lead_term": "Daily Sharpe",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F17e",
+    "text": "N: how many daily returns the sample holds.",
+    "lead_term": "N",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F17h",
+    "text": "What is checked: whether a day's move tends to carry into the next by more than the day's risk-adjusted return.",
+    "lead_term": "What is checked",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "F19a",
+    "text": "Sufficient met: even at the low end of its range, the day-to-day carry beats the daily Sharpe ratio, which is enough to justify the stop on average.",
+    "lead_term": "Sufficient met",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F19b",
+    "text": "Sufficient likely: the carry beats the daily Sharpe ratio at its central estimate, but its range overlaps it.",
+    "lead_term": "Sufficient likely",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F19c",
+    "text": "Not met: this sample does not show enough carry; that is not proof the stop is wrong, and it says nothing about drawdown protection.",
+    "lead_term": "Not met",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F19d",
+    "text": "Negative edge: the daily Sharpe ratio is zero or below, so no carry can justify the stop on return grounds.",
+    "lead_term": "Negative edge",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F19e",
+    "text": "Insufficient data: too few days to judge either way.",
+    "lead_term": "Insufficient data",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F20",
+    "text": "Autotune: the weekly search for better stop settings; its last run leaves the replay series this table reads.",
+    "lead_term": "Autotune",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F23",
+    "text": "Retained: the days of exit history still kept; a count covers only those days.",
+    "lead_term": "Retained",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "F24",
+    "text": "Est. annual trading-cost drag: an estimate of the yearly return lost to trading costs, at {friction_pct} percentage points per exit times the exits per year.",
+    "lead_term": "Est. annual trading-cost drag",
+    "slots": [
+     "friction_pct"
+    ],
+    "source": "ref"
+   }
+  ],
+  "History": [
+   {
+    "key": "Y03",
+    "text": "Windows: calendar days counted back from the session shown; YTD starts on 1 January and 5Y covers five years.",
+    "lead_term": "Windows",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "Y04",
+    "text": "Exit alpha: an exit's return minus its held return, in pts, which are percentage points.",
+    "lead_term": "Exit alpha",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "Y08",
+    "text": "The time in the note: when the bot freezes each exit's result for the day's record, the same afternoon check the dashboard calls snapshot-time.",
+    "lead_term": "The time in the note",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "Y05",
+    "text": "Dollar result: the dollars the exits saved or lost against holding, on the same snapshot basis as the dashboard.",
+    "lead_term": "Dollar result",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "Y07",
+    "text": "Win rate: the share of exits whose exit alpha was above zero.",
+    "lead_term": "Win rate",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "Y13",
+    "text": "Wins: exits whose exit alpha was above zero. Avg per exit: the reason's sum of exit alpha divided by its number of exits.",
+    "lead_term": "Wins",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "Y16",
+    "text": "Detail: the exit's exit alpha, in pts.",
+    "lead_term": "Detail",
+    "slots": [],
+    "source": "G2"
+   }
+  ],
+  "Settings": [
+   {
+    "key": "S13a",
+    "text": "Composer: the key and secret the bot reads your symphonies and sends sell orders with, and your account ids.",
+    "lead_term": "Composer",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "S13b",
+    "text": "Alpaca · price data: the keys the bot reads market prices with.",
+    "lead_term": "Alpaca · price data",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "S13c",
+    "text": "Discord + Anthropic: the webhook for alerts and the key the advisor uses.",
+    "lead_term": "Discord + Anthropic",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "S14s",
+    "text": "Where overrides live: they are stored in alphabot_state.db, keyed on the normalized symphony name.",
+    "lead_term": "Where overrides live",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "S14p",
+    "text": "Pinned value: a value stored for the symphony that equals the global today; it will not follow a later global change.",
+    "lead_term": "Pinned value",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "S15",
+    "text": "uses globals: no value set for this symphony. N overrides: values set for this symphony. lock: stop the autotune changing a value. override: a value that replaces the global one.",
+    "lead_term": "uses globals",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "S16",
+    "text": "No longer held: Composer no longer reports this symphony and the engine writes it no rows; it returns here by itself if its rows resume.",
+    "lead_term": "No longer held",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "S18",
+    "text": "Synthetic post-mortem: a daily exit record that was generated or seeded rather than captured live. Re-syncs account totals: reads the account totals from Composer again.",
+    "lead_term": "Synthetic post-mortem",
+    "slots": [],
+    "source": "ref"
+   }
+  ],
+  "settings modal": [
+   {
+    "key": "M01",
+    "text": "Dry-run (global off): the server's live switch is off, so nothing trades live. Live: this symphony sends real sell orders. Dry-run: this symphony is watched but sends no orders.",
+    "lead_term": "Dry-run (global off)",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "M08",
+    "text": "Clear: the check passed. Watch: worth a look, not a failure. Breach: the check failed.",
+    "lead_term": "Clear",
+    "slots": [],
+    "source": "ref"
+   }
+  ],
+  "Overview": [
+   {
+    "key": "A03",
+    "text": "Tab dots: green marks low risk; amber marks a tab to read with more care: higher overfitting risk, a real Composer write, or explanations only.",
+    "lead_term": "Tab dots",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "A04",
+    "text": "Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.",
+    "lead_term": "Model not known",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O04",
+    "text": "OOS: out of sample, recent history the tuning never saw, kept back to check that a result is not fitted to noise.",
+    "lead_term": "OOS",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O07a",
+    "text": "Confidence: the model's own rating of a suggestion, not a statistical test.",
+    "lead_term": "Confidence",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O07b",
+    "text": "Gates: allowlist checks the setting is one the advisor may suggest; risk direction checks that the direction the model claims for its change, looser or tighter, matches the direction the engine works out; oos frozen eval checks the change holds up on held-back history; locked vars checks the setting is not locked.",
+    "lead_term": "Gates",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O06",
+    "text": "Fallback OOS: the same held-back score for the settings the symphony had before the latest autotune.",
+    "lead_term": "Fallback OOS",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O09a",
+    "text": "Runs without adopting a tuned config: how many runs in a row kept the old settings.",
+    "lead_term": "Runs without adopting a tuned config",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O09b",
+    "text": "CRRA-EU score: the autotune's score for a set of settings, an average outcome in which losses weigh more than gains of the same size; higher is better.",
+    "lead_term": "CRRA-EU score",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O09c",
+    "text": "Sel t-stat: how clearly the winning settings stand out after correcting for how many settings were tried; higher is stronger.",
+    "lead_term": "Sel t-stat",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O10",
+    "text": "Fallback: the new settings failed the check on held-back data, so the symphony keeps the settings it had before the run.",
+    "lead_term": "Fallback",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O11",
+    "text": "Frozen-eval: a final score of the run's best settings on held-back data, under the same objective; not evaluated means the run recorded no such score.",
+    "lead_term": "Frozen-eval",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O12",
+    "text": "N/A: the run recorded no figure for that column.",
+    "lead_term": "N/A",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O16",
+    "text": "risk-on: conditions favor taking risk. risk-off: they favor caution. neutral: no lean either way. limited-inputs: too few lenses had data for a read.",
+    "lead_term": "risk-on",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O19",
+    "text": "Lenses: technicals reads price trends and breadth, sentiment reads news tone, derivatives reads volatility measures, macro reads rates, inflation and jobs data, and fundamentals reads company filings.",
+    "lead_term": "Lenses",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O24",
+    "text": "Numeric verification: each number the read lists as a cited figure is checked against lens data fetched after the read; verified means it matched, and unverifiable means there was nothing to check it against, not that it is wrong. Numbers that appear only in the prose are not checked.",
+    "lead_term": "Numeric verification",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O28",
+    "text": "THEORY spec: the frozen set of objective settings every tuning run shares, such as its risk aversion and utility family. Backtest-selection degrees of freedom: choices made by looking at backtest results, each of which adds overfitting risk.",
+    "lead_term": "THEORY spec",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O29",
+    "text": "Asset Swap and Logic Change: the weekly searches for a better ticker or rule in each symphony.",
+    "lead_term": "Asset Swap and Logic Change",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O30",
+    "text": "Clear: the check passed. Watch: worth a look, not a failure. Breach: the check failed. Adopt candidate: a candidate passed the gate and beat the current symphony. Keep incumbent: no candidate beat the current symphony.",
+    "lead_term": "Clear",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "O31a",
+    "text": "Spec Critic: an active guardrail checking the shared, frozen THEORY spec structure — a CLEAR verdict means the spec was evaluated and passed.",
+    "lead_term": "Spec Critic",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "O31b",
+    "text": "Overfitting Conscience: checks one narrow overfitting-risk source (backtest-selection degrees of freedom) — a CLEAR here does not mean 'no overfitting risk exists,' only that this one source is clean.",
+    "lead_term": "Overfitting Conscience",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "O31c",
+    "text": "Divergence Explainer: disabled by default and its rows are informational-only, not currently monitoring anything active.",
+    "lead_term": "Divergence Explainer",
+    "slots": [],
+    "source": "G2"
+   }
+  ],
+  "Correlations": [
+   {
+    "key": "C05",
+    "text": "Correlation: a number from minus 1 to 1 for how closely two return series move together; 1 is in lockstep and 0 is unrelated.",
+    "lead_term": "Correlation",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "C03",
+    "text": "Stored no pairs: the run analysed the symphonies but saved no pair figures, so there is nothing to draw until a newer run saves them.",
+    "lead_term": "Stored no pairs",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "C07",
+    "text": "Fill and markers: the fill deepens as the correlation gets stronger; a thin marker means the pair shares few days, so its figure is rough.",
+    "lead_term": "Fill and markers",
+    "slots": [],
+    "source": "ref"
+   }
+  ],
+  "Retirement": [
+   {
+    "key": "R04",
+    "text": "Deposit-adjusted: the series Composer names deposit-adjusted, which the recommender uses instead of the raw account value series.",
+    "lead_term": "Deposit-adjusted",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R06",
+    "text": "Analysed: symphonies with a usable daily series, of all live symphonies.",
+    "lead_term": "Analysed",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R07",
+    "text": "History: the shortest and longest daily series, in days.",
+    "lead_term": "History",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R08",
+    "text": "Pairs screened: pairs whose correlation reached the screen, of all pairs compared.",
+    "lead_term": "Pairs screened",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R09",
+    "text": "Blocked: screened pairs that did not become a recommendation, counted by the check that stopped them.",
+    "lead_term": "Blocked",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R12",
+    "text": "Run recommender: runs the nightly analysis now; it takes a minute or two.",
+    "lead_term": "Run recommender",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "R17",
+    "text": "kept: the symphony of the pair that stays; the one before the arrow is the one suggested for retirement.",
+    "lead_term": "kept",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R18",
+    "text": "Composite gap: how far the kept symphony's combined return and risk score is ahead of the flagged one's.",
+    "lead_term": "Composite gap",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R19a",
+    "text": "Uncertainty gate: passes only if the correlation is still at or above the screen at the low end of its confidence range, so a high reading from a short history does not count.",
+    "lead_term": "Uncertainty gate",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R19b",
+    "text": "Structural-redundancy gate: passes only if the two still move together on the worst {stress_fraction_pct} percent of days, when diversification matters most.",
+    "lead_term": "Structural-redundancy gate",
+    "slots": [
+     "stress_fraction_pct"
+    ],
+    "source": "ref"
+   },
+   {
+    "key": "R20",
+    "text": "Approve retirement: records your decision and shows a wind-down checklist; it sells nothing and changes nothing in Composer.",
+    "lead_term": "Approve retirement",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R23",
+    "text": "Run tenure review: runs the review now instead of waiting for the nightly run; it is refused while the market is open.",
+    "lead_term": "Run tenure review",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R26",
+    "text": "trigger: whether the run was the nightly one or one you started. threshold in effect: the trading days a symphony needs before it gets a verdict.",
+    "lead_term": "trigger",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R27a",
+    "text": "keep: no evidence against it.",
+    "lead_term": "keep",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R27b",
+    "text": "watch: it trails its own backtest by more than {watch_trail_pp} percentage points of total return, or the portfolio would have a higher return and no deeper drawdown without it.",
+    "lead_term": "watch",
+    "slots": [
+     "watch_trail_pp"
+    ],
+    "source": "ref"
+   },
+   {
+    "key": "R27c",
+    "text": "retire-candidate: it duplicates another live symphony and scores lower, as under Correlated pairs.",
+    "lead_term": "retire-candidate",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R27d",
+    "text": "no verdict: there is not yet enough evidence to judge.",
+    "lead_term": "no verdict",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R28",
+    "text": "basis: which series the figures use, Composer's realized one or the bot's shadow history. missing: evidence items that could not be computed, with the reason.",
+    "lead_term": "basis",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R30",
+    "text": "not applicable: the item does not apply to this symphony, for the reason shown. paired with: the live symphony this one is compared against. normalized across N symphonies: the score is ranked among that many symphonies.",
+    "lead_term": "not applicable",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R29a",
+    "text": "Performance: the symphony's realized return and risk over its tenure.",
+    "lead_term": "Performance",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R29b",
+    "text": "Composite score: its return and risk score ranked against the other live symphonies.",
+    "lead_term": "Composite score",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R29c",
+    "text": "Redundancy: its return correlation with the other live symphonies.",
+    "lead_term": "Redundancy",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R29d",
+    "text": "Backtest: Composer's backtest of its current rules, against what it really earned.",
+    "lead_term": "Backtest",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R29e",
+    "text": "Marginal contribution: the portfolio of eligible symphonies with and without it.",
+    "lead_term": "Marginal contribution",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "R29f",
+    "text": "Long VIX hedge: its long-volatility holdings beside the rest of the portfolio, shown for context and not used in the verdict.",
+    "lead_term": "Long VIX hedge",
+    "slots": [],
+    "source": "ref"
+   }
+  ],
+  "Asset Swaps": [
+   {
+    "key": "A04",
+    "text": "Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.",
+    "lead_term": "Model not known",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "W02",
+    "text": "The gate: a candidate must beat the current symphony on history held back from the test, beat SPY over the same period, pass the overfitting check, and survive a correction for how many candidates were tested.",
+    "lead_term": "The gate",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "W06",
+    "text": "Baseline: the symphony as it is. Variant: the symphony with the change.",
+    "lead_term": "Baseline",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "W07",
+    "text": "PBO: probability of backtest overfitting, the chance the best-looking candidate looked best by luck; a high PBO vetoes the candidate.",
+    "lead_term": "PBO",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "W09",
+    "text": "Model and context: which model reasoned and which evidence it was given.",
+    "lead_term": "Model and context",
+    "slots": [],
+    "source": "ref"
+   }
+  ],
+  "Logic Changes": [
+   {
+    "key": "A04",
+    "text": "Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.",
+    "lead_term": "Model not known",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "L02a",
+    "text": "FDR/Yekutieli correction: raises the bar each candidate must clear as more candidates are tested, so one lucky result among many tries is not taken for skill.",
+    "lead_term": "FDR/Yekutieli correction",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "L02b",
+    "text": "Sound-but-unprovable: passed every check, which still does not prove it will work live.",
+    "lead_term": "Sound-but-unprovable",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "L03",
+    "text": "Objectives: reduce drawdown aims for shallower falls, lift risk-adjusted return aims for more return per unit of risk, and reduce turnover aims for fewer trades.",
+    "lead_term": "Objectives",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "L05",
+    "text": "Baseline: the symphony as it is. Variant: the symphony with the change. Ann. return: yearly return.",
+    "lead_term": "Baseline",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "L06",
+    "text": "Adjusted threshold α: the p-value bar after the correction for how many candidates were tested. p: the candidate's p-value, which must be under the bar to pass.",
+    "lead_term": "Adjusted threshold α",
+    "slots": [],
+    "source": "ref"
+   }
+  ],
+  "Chat": [
+   {
+    "key": "A04",
+    "text": "Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.",
+    "lead_term": "Model not known",
+    "slots": [],
+    "source": "ref"
+   }
+  ],
+  "Strategy Builder": [
+   {
+    "key": "A04",
+    "text": "Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.",
+    "lead_term": "Model not known",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "B01",
+    "text": "Community: strategies from the Atlas library, a public catalog of Composer strategies, ranked for your goal.",
+    "lead_term": "Community",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "B02",
+    "text": "FDR/Yekutieli correction: raises the bar each candidate must clear as more candidates are tested, so one lucky result among many tries is not taken for skill.",
+    "lead_term": "FDR/Yekutieli correction",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "B03o",
+    "text": "Objectives: diversify favors strategies that share few holdings with yours, cut drawdown favors shallow falls, and lift risk-adjusted return favors a higher Sharpe ratio.",
+    "lead_term": "Objectives",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "B03u",
+    "text": "Universe (tickers): the tickers the designed strategies may use; leave it empty to allow every tradeable US-listed stock and fund.",
+    "lead_term": "Universe (tickers)",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "B08",
+    "text": "PBO: probability of backtest overfitting, the chance the best-looking candidate looked best by luck; a high PBO vetoes the candidate.",
+    "lead_term": "PBO",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "B07t",
+    "text": "Live Baseline: the same figures for your live symphony over the same days as the candidate's backtest.",
+    "lead_term": "Live Baseline",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "B12",
+    "text": "Incubating: paper-tracked forward before it is shown as a recommendation. Promoted: its forward results held up. Failed: they did not, or its fall went too deep. Expired: tracking stopped.",
+    "lead_term": "Incubating",
+    "slots": [],
+    "source": "ref"
+   }
+  ],
+  "Frontrunner Builder": [
+   {
+    "key": "X06",
+    "text": "Incumbent: your current symphony. Frontrunner overlay: a rule placed ahead of the symphony's own logic that switches into VIX-linked funds when its conditions are met, for example a watched ticker's RSI rising above a set level.",
+    "lead_term": "Incumbent",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "X08",
+    "text": "Same title: several cards can copy the same symphony; they differ in their overlay and figures, which View the added overlay shows.",
+    "lead_term": "Same title",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "X09",
+    "text": "Strategy Builder (retrofit): a from-scratch Strategy Builder design offered for this symphony; it does not contain the incumbent's logic.",
+    "lead_term": "Strategy Builder (retrofit)",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "X11",
+    "text": "Calmar: yearly return divided by the deepest fall; higher is better. CAGR: the yearly growth rate. Max DD: the deepest fall from a high to a later low.",
+    "lead_term": "Calmar",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "X12",
+    "text": "Node count change: how many more or fewer steps the copy's rule tree has than the original; fewer is simpler.",
+    "lead_term": "Node count change",
+    "slots": [],
+    "source": "ref"
+   }
+  ]
+ },
+ "titles": [
+  {
+   "key": "TG3-1",
+   "host": "/",
+   "element": "the guard-effect label .guard-alpha-label (templates/index.html:1252)",
+   "glossary_line": "D02",
+   "line_keys": [
+    "D02"
+   ]
+  },
+  {
+   "key": "TG3-2",
+   "host": "/",
+   "element": "the comparison row labels: \"Cumulative · lifetime\" keeps its info-mark title; \"Max DD\" (:1499), \"Ann. vol\" (:1545)",
+   "glossary_line": "D17, D18",
+   "line_keys": [
+    "D17",
+    "D18"
+   ]
+  },
+  {
+   "key": "TG3-3",
+   "host": "/",
+   "element": "the mini-stat labels Tracked, Armed and Triggered (:1606, :1610, :1614)",
+   "glossary_line": "D20t",
+   "line_keys": [
+    "D20t"
+   ]
+  },
+  {
+   "key": "TG3-4",
+   "host": "/",
+   "element": "\"Account · all-time\" (:1286) and \"Lifetime Max DD · since inception\" (:1600)",
+   "glossary_line": "D05, D19",
+   "line_keys": [
+    "D05",
+    "D19"
+   ]
+  },
+  {
+   "key": "TG3-5",
+   "host": "Overview",
+   "element": "the autotune headers \"Runs without adopting a tuned config\" and \"Sel t-stat\" (static/ai_advisor.js:873-880); the score header keeps its own title",
+   "glossary_line": "O09a, O09c",
+   "line_keys": [
+    "O09a",
+    "O09c"
+   ]
+  },
+  {
+   "key": "TG3-6",
+   "host": "Overview",
+   "element": "the outcome words \"Fallback\" and \"Frozen-eval\" in the outcome column (static/ai_advisor.js:802-806)",
+   "glossary_line": "O10, O11",
+   "line_keys": [
+    "O10",
+    "O11"
+   ]
+  },
+  {
+   "key": "TG3-7",
+   "host": "Overview",
+   "element": "the \"Numeric verification\" header (templates/ai_advisor.html:1714) and the Market Prism sentiment chip (:1558-1559)",
+   "glossary_line": "O24, O16",
+   "line_keys": [
+    "O24",
+    "O16"
+   ]
+  },
+  {
+   "key": "TG3-8",
+   "host": "Performance",
+   "element": "headline strip labels \"Sharpe improvement\", \"Max DD reduction\", \"Sortino improvement\" (templates/performance.html:628-636)",
+   "glossary_line": "F07, F08, F09",
+   "line_keys": [
+    "F07",
+    "F08",
+    "F09"
+   ]
+  },
+  {
+   "key": "TG3-9",
+   "host": "Performance",
+   "element": "risk metric row labels Max DD, Calmar, Annualized volatility, Volatility reduction, Total return, Annualized return (CAGR), Up days (:708-729); the Delta header (:690)",
+   "glossary_line": "F15a to F15g; F15h",
+   "line_keys": [
+    "F15a",
+    "F15b",
+    "F15c",
+    "F15d",
+    "F15e",
+    "F15f",
+    "F15g",
+    "F15h"
+   ]
+  },
+  {
+   "key": "TG3-10",
+   "host": "Performance",
+   "element": "precondition headers Sample, ρ, 95% CI, Daily Sharpe, N (:759-763) and each verdict chip word",
+   "glossary_line": "F17a, F17b, F17c, F17d, F17e; F19a to F19e",
+   "line_keys": [
+    "F17a",
+    "F17b",
+    "F17c",
+    "F17d",
+    "F17e",
+    "F19a",
+    "F19b",
+    "F19c",
+    "F19d",
+    "F19e"
+   ]
+  },
+  {
+   "key": "TG3-11",
+   "host": "Performance",
+   "element": "turnover header \"Est. annual trading-cost drag\" (:806)",
+   "glossary_line": "F24",
+   "line_keys": [
+    "F24"
+   ]
+  },
+  {
+   "key": "TG3-12",
+   "host": "History",
+   "element": "\"Dollar result\" and \"Win rate\" hero labels (templates/history.html:440, :447); the Detail header (:572); the \"Wins\" and \"Avg per exit\" headers (:503, :505)",
+   "glossary_line": "Y05, Y07, Y16, Y13",
+   "line_keys": [
+    "Y05",
+    "Y07",
+    "Y16",
+    "Y13"
+   ]
+  },
+  {
+   "key": "TG3-13",
+   "host": "Retirement",
+   "element": "the tile labels Analysed, History, Pairs screened, Blocked (templates/ai_advisor.html:2320); the six evidence headings (:2152)",
+   "glossary_line": "R06, R07, R08, R09; R29a to R29f",
+   "line_keys": [
+    "R06",
+    "R07",
+    "R08",
+    "R09",
+    "R29a",
+    "R29b",
+    "R29c",
+    "R29d",
+    "R29e",
+    "R29f"
+   ]
+  },
+  {
+   "key": "TG3-14",
+   "host": "Settings",
+   "element": "the override badge words \"lock\" and \"override\", and \"No longer held\" (static/settings.js)",
+   "glossary_line": "S15, S16",
+   "line_keys": [
+    "S15",
+    "S16"
+   ]
+  },
+  {
+   "key": "TG3-15",
+   "host": "Strategy Builder, Frontrunner Builder",
+   "element": "the \"Live Baseline\" column header of the stats tables; the Calmar, CAGR, Max DD and Node count change labels on Frontrunner cards (templates/ai_advisor.html:3297-3330)",
+   "glossary_line": "B07t; X11, X12",
+   "line_keys": [
+    "B07t",
+    "X11",
+    "X12"
+   ]
+  },
+  {
+   "key": "TG3-16",
+   "host": "Asset Swaps, Logic Changes",
+   "element": "the Baseline and Variant labels of a result (static/ai_advisor_asset_swaps.js, static/ai_advisor_logic_changes.js)",
+   "glossary_line": "W06; L05",
+   "line_keys": [
+    "W06",
+    "L05"
+   ]
+  }
+ ],
+ "values": [
+  {
+   "slot": "stress_fraction_pct",
+   "copy_row": "R19b",
+   "phrase": "on the worst {stress_fraction_pct} percent of days,",
+   "fallback": "on their worst days,",
+   "authority": "`advisors/retirement_recommender.py:97` (`STRESS_WINDOW_FRACTION`) times 100",
+   "in_context": "no",
+   "format": "whole number when whole, else one decimal",
+   "table": "B"
+  },
+  {
+   "slot": "watch_trail_pp",
+   "copy_row": "R27b",
+   "phrase": "by more than {watch_trail_pp} percentage points of total return,",
+   "fallback": "by more than the set margin of total return,",
+   "authority": "`advisors/tenure_review.py:49` (`BACKTEST_TRAIL_WATCH_PP`)",
+   "in_context": "no",
+   "format": "the number with no trailing \".0\"",
+   "table": "B"
+  },
+  {
+   "slot": "friction_pct",
+   "copy_row": "D25",
+   "phrase": "after taking {friction_pct} percentage points off every exit,",
+   "fallback": "after taking a fixed trading cost off every exit,",
+   "authority": "`autotuner.py:1444` (`SIM_EXIT_FRICTION_PCT`)",
+   "in_context": "no",
+   "format": "the number with no trailing zeros",
+   "table": "B"
+  },
+  {
+   "slot": "friction_pct",
+   "copy_row": "F24",
+   "phrase": "at {friction_pct} percentage points per exit times the exits per year.",
+   "fallback": "at a fixed cost per exit times the exits per year.",
+   "authority": "`autotuner.py:1444` (`SIM_EXIT_FRICTION_PCT`)",
+   "in_context": "no",
+   "format": "the number with no trailing zeros",
+   "table": "B"
+  },
+  {
+   "slot": "shadow_retention_days",
+   "copy_row": "D07",
+   "phrase": "kept for the last {shadow_retention_days} days.",
+   "fallback": "kept for a limited number of days.",
+   "authority": "`SHADOW_HISTORY_RETENTION_DAYS`, read from the env file as the 02:00 prune reads it, default 180 (`app.py:1792-1793`, `:2930`)",
+   "in_context": "no",
+   "format": "whole number",
+   "table": "B"
+  },
+  {
+   "slot": "min_history_days",
+   "copy_row": "F10",
+   "phrase": "At least {min_history_days} trading days of portfolio history are needed",
+   "fallback": "More trading days of portfolio history are needed",
+   "authority": "`app.py:58` (`_PERFORMANCE_MIN_HISTORY_DAYS`)",
+   "in_context": "yes (`templates/performance.html:542`)",
+   "format": "whole number",
+   "table": "C"
+  },
+  {
+   "slot": "screen_threshold",
+   "copy_row": "R02",
+   "phrase": "at {screen_threshold} or more",
+   "fallback": "past the screen",
+   "authority": "the stored ok run's `screen_threshold` when one exists, so R02 and the Pairs tile print the same value (`app.py:7094-7097`); otherwise `advisors/retirement_recommender.py:58` (`CORRELATION_SCREEN_THRESHOLD`)",
+   "in_context": "only inside `retirement_last_run.screen_threshold` for an ok run; not when no run exists",
+   "format": "as the Pairs tile prints it (`app.py:7097`)",
+   "table": "A",
+   "authority_now": "app.py:2698 (_copy_screen_threshold)"
+  },
+  {
+   "slot": "tenure_threshold",
+   "copy_row": "R22",
+   "phrase": "Once invested for {tenure_threshold} trading days,",
+   "fallback": "Once past the configured minimum tenure,",
+   "authority": "the stored review's `threshold_in_effect` when a review exists (`templates/ai_advisor.html:2121`); otherwise `TENURE_REVIEW_MIN_TRADING_DAYS` read the way the review reads it, from the env file first and from the process environment only when the file has no value (`app.py:2616-2623`), resolved by `advisors/tenure_review.py:430` (`parse_threshold`, default `DEFAULT_MIN_TENURE_TRADING_DAYS` at `:41`)",
+   "in_context": "yes, as `tenure_review.threshold_in_effect`, only when a review exists; no otherwise (Gate 2 states how the configured value reaches the page)",
+   "format": "whole number",
+   "table": "A",
+   "authority_now": "app.py:2682 (_copy_tenure_threshold)"
+  }
+ ],
+ "ref_rows": [
   {
    "key": "D01",
    "host_place": "`/`, top of the page, above the hero (`templates/index.html:1178-1215`)",
@@ -4466,7 +7015,7 @@
    "slots": []
   }
  ],
- "values": [
+ "ref_values": [
   {
    "slot": "tenure_threshold",
    "copy_row": "R22",

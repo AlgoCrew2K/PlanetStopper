@@ -321,12 +321,15 @@ def test_every_attribute_id_class_and_contract_name_of_the_reference_is_still_in
     assert not problems, "tokens the reference carried are gone:\n" + "\n".join(problems)
 
 
-def test_the_inventory_names_the_three_removed_controls_and_the_ruled_rename():
+def test_the_inventory_is_the_reference_commits_and_holds_none_of_the_removed_controls():
+    """The three controls an earlier change removed are not in the reference's markup, so none of
+    their tokens is recorded and none is among the tokens a page must keep."""
     record = json.loads(INVENTORY.read_text(encoding="utf-8"))
-    assert "id:dp-view-logs-btn" in record["removed_control_tokens"]
-    assert "id:dp-go-cash-btn" in record["removed_control_tokens"]
-    assert RULED_RENAMES[0] in record["files"]["templates/history.html"]
     assert record["reference_commit"] == harness.REFERENCE_COMMIT
+    assert record["removed_control_tokens"] == []
+    every_token = {t for tokens in record["files"].values() for t in tokens}
+    assert {"id:dp-view-logs-btn", "id:dp-go-cash-btn"}.isdisjoint(every_token)
+    assert RULED_RENAMES[0] not in record["files"]["templates/history.html"]
 
 
 def test_the_token_comparison_reports_a_missing_testid_and_class():

@@ -8,14 +8,17 @@ fails with a message naming it, never a skip.
 Each case is one seeded world (``tests/ui/_page_explainers.py``) served by the app in this process
 and read at one host through the same function the reference capture used
 (``read_host_in_browser``). The record it makes is compared with the one
-``tests/fixtures/page_explainers/ref_capture.json`` holds for the same world and host. Nothing is
-typed here.
+``tests/fixtures/page_explainers/ref_capture.json`` holds for the same world and host, captured at
+the reference commit. Nothing is typed here.
 
-* S-5.1: the text of every figure element (a leaf element whose ``data-testid`` or ``id`` names it)
-  is identical; the elements Copy table C rewords are excluded by the old text each row gives.
-* S-5.2: every control the reference listed at 1440 and at 375 is still listed, with the same
-  type, label, link, disabled state and visibility. The three controls AC-5 excepts are not
-  required (the cycle that removes them pins their absence).
+* Figures: the text of every figure element (a leaf element whose ``data-testid`` or ``id`` names
+  it) is identical at 1920, 1440 and 390 px; the elements a copy row rewords are excluded by the old
+  text each row gives.
+* Controls: every control the reference listed at 1920, 1440 and 390 px is still listed, with the
+  same type, label, link, disabled state and visibility.
+* Table forms: every table keeps, at 1000, 390 and 320 px, the stacked-row form it has at the
+  reference (how its parts are laid out, not what they say), so a column the page no longer shows
+  leaves the form as it was.
 
 The requests each control sends are pinned by ``tests/ui/test_post_controls_request_bytes.py``,
 which this change leaves as it is.
@@ -170,6 +173,22 @@ def control_differences(reading: list, reference: list, matchers: list[re.Patter
     return problems
 
 
+def form_differences(reading: dict, reference: dict) -> list[str]:
+    """Tables whose stacked-row form differs from the reference's, or that are no longer found."""
+    problems = []
+    for name, want in reference.items():
+        got = reading.get(name)
+        if got is None:
+            problems.append(f"table {name}: not read")
+        elif got["count"] != want["count"]:
+            problems.append(
+                f"table {name}: {got['count']} found, the reference has {want['count']}"
+            )
+        elif got["shapes"] != want["shapes"]:
+            problems.append(f"table {name}: form {got['shapes']} != reference {want['shapes']}")
+    return problems
+
+
 @pytest.mark.parametrize(("world", "host"), harness.WORLD_HOST_PAIRS)
 def test_every_figure_and_control_equals_the_reference(
     firefox,  # noqa: F811
@@ -193,19 +212,29 @@ def test_every_figure_and_control_equals_the_reference(
 
     want = ref["worlds"][world]["hosts"][host]
     matchers = _relabel_matchers()
-    problems = [
-        f"1440 {p}"
-        for p in figure_differences(reading["figures_1440"], want["figures_1440"], matchers)
-    ]
-    for width in ("1440", "375"):
+    problems: list[str] = []
+    for width, _height in harness.INVENTORY_WIDTHS:
+        problems += [
+            f"{width} {p}"
+            for p in figure_differences(
+                reading[f"figures_{width}"], want[f"figures_{width}"], matchers
+            )
+        ]
         problems += [
             f"{width} {p}"
             for p in control_differences(
                 reading[f"controls_{width}"], want[f"controls_{width}"], matchers
             )
         ]
+        assert reading[f"page_errors_{width}"] == [], f"{world} {host} {width}: page errors"
+    for width, _height in harness.FORM_WIDTHS:
+        problems += [
+            f"{width} {p}"
+            for p in form_differences(
+                reading[f"stacked_forms_{width}"], want[f"stacked_forms_{width}"]
+            )
+        ]
     assert not problems, f"{world} {host} differs from the reference:\n" + "\n".join(problems)
-    assert reading["page_errors_1440"] == [] and reading["page_errors_375"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +269,30 @@ def test_the_control_comparison_reports_a_missing_and_a_disabled_control_and_ski
     assert control_differences([], reference, []) != []
     assert control_differences([{**base, "disabled": True}], reference, []) != []
     assert control_differences([{**base, "displayed": False}], reference, []) != []
+
+
+def test_the_form_comparison_reports_a_changed_a_lost_and_a_missing_table():
+    shape = {
+        "cell": "block",
+        "group": "block",
+        "header_shown": False,
+        "row": "grid",
+        "stacked": True,
+    }
+    reference = {
+        "a": {"count": 1, "shapes": [shape]},
+        "b": {"count": 2, "shapes": [shape]},
+        "c": {"count": 1, "shapes": [shape]},
+        "d": {"count": 0, "shapes": []},
+    }
+    reading = {
+        "a": {"count": 1, "shapes": [{**shape, "stacked": False}]},
+        "b": {"count": 1, "shapes": [shape]},
+        "d": {"count": 0, "shapes": []},
+    }
+    problems = form_differences(reading, reference)
+    assert [p.split(":")[0] for p in problems] == ["table a", "table b", "table c"]
+    assert form_differences(reference, reference) == []
 
 
 def test_the_relabel_matchers_cover_the_verdict_and_the_label_rows():

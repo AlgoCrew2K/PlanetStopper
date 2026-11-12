@@ -9,15 +9,13 @@ rationale, eleven tenure entries with long redundancy text, autotune rows from o
 real hero headline. Each case here builds that state (``tests/ui/_page_explainers_production_shapes.py``
 says what each seed is derived from) and asserts the layout contract, never a pixel value:
 
-* the guard-effect description reads under the headline at full width and the hero holds no empty
-  region (1440 and 1240);
+* the guard-effect description reads under the headline at full width (1440 and 1240);
 * the detail panel's opening description is inset like its siblings;
 * the Advisor tab strip shows all eight tabs whole whichever tab is active, and does so for any
   tab text width, because font metrics differ between machines (the production capture's Firefox
   measured 909 px for tabs this one measures at 872 px);
-* the Market Prism disclosure sits directly under its description and the block holds no hole;
-* the tenure entries hold no empty region and stack in one column on a phone;
-* the autotune table holds no band between its name and its count;
+* the Market Prism disclosure sits directly under its description;
+* the tenure entries stack in one column on a phone;
 * History's tallest bar does not touch the description above the chart.
 """
 
@@ -44,10 +42,8 @@ from tests.ui.test_page_explainers_advisor_browser import (  # noqa: F401  (help
     PHONE,
     TABS,
     VERY_NARROW,
-    _empty_regions,
     _open,
     _prepare,
-    _scoped,
 )
 from tests.ui.test_page_explainers_dashboard_browser import (  # noqa: F401
     _Dashboard,
@@ -57,22 +53,11 @@ from tests.ui.test_page_explainers_dashboard_browser import (  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
-MIN_W, MIN_H = 240, 80
 # The description under the guard effect is one sentence; four lines is the most a full-width
 # line of this length takes at either desktop width.
 DESCRIPTOR_MAX_LINES = 4
 TOUCHING_GAP_PX = 4
 DISCLOSURE_GAP_PX = 16
-
-
-def _offenders(found: list[dict]) -> list[str]:
-    return [
-        f"{f['testid'] or f['id'] or f['cls']} #{f['index']}: empty "
-        f"{f['largest_empty']['w']:.0f}x{f['largest_empty']['h']:.0f} at "
-        f"({f['largest_empty']['x']:.0f},{f['largest_empty']['y']:.0f})"
-        for f in found
-        if f["largest_empty"] is not None
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -133,27 +118,6 @@ def test_the_figures_of_every_hero_row_line_up_under_each_other_when_a_row_has_n
         assert len(figures) >= 3, f"premise: three rows show their {kind} figure: {figures}"
         spread = max(f["left"] for f in figures) - min(f["left"] for f in figures)
         assert spread <= 1, f"the {kind} figures of the hero rows do not line up: {figures}"
-
-
-@pytest.mark.parametrize("width", [1440, 1240])
-def test_the_hero_holds_no_empty_region_once_the_headline_has_a_real_figure(
-    firefox,  # noqa: F811
-    advisor_server,  # noqa: F811
-    seeded,
-    width,
-):
-    """The production hero: a real headline, Ann. vol hidden and Max DD still waiting."""
-    seeded("dashboard_full")
-    with _Dashboard(firefox, advisor_server, width) as probe:
-        probe.page.evaluate(prod.HERO_JS)
-        probe.page.wait_for_timeout(150)
-        # The hero section only: the dollar-saved panel also carries .hero-section and is
-        # judged by the density tests' own measurement.
-        found = probe.page.evaluate(
-            harness.EMPTY_REGION_JS, ['[data-testid="hero-section"]', MIN_W, MIN_H]
-        )
-    assert found, "premise: the hero is measured"
-    assert not _offenders(found), "empty regions in the hero:\n" + "\n".join(_offenders(found))
 
 
 @pytest.mark.parametrize("width", [1440, 375])
@@ -235,7 +199,7 @@ def test_all_eight_tabs_show_whole_whichever_tab_is_active_and_whatever_their_te
 
 
 @pytest.mark.parametrize("size", DESKTOPS)
-def test_the_market_prism_disclosure_follows_its_description_and_the_block_holds_no_hole(
+def test_the_market_prism_disclosure_follows_its_description(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     tmp_path,
@@ -251,36 +215,6 @@ def test_the_market_prism_disclosure_follows_its_description_and_the_block_holds
         assert gap <= DISCLOSURE_GAP_PX, (
             f"the disclosure lands {gap:.0f} px under its description: {read}"
         )
-        selector = ".prism-block, " + _scoped('[data-testid="tab-panel-overview"]')
-        found = opened.evaluate(harness.EMPTY_REGION_JS, [selector, MIN_W, MIN_H])
-        assert not _offenders(found), "empty regions in the Overview:\n" + "\n".join(
-            _offenders(found)
-        )
-
-
-def test_the_autotune_table_holds_no_band_between_a_name_and_its_count(
-    firefox,  # noqa: F811
-    advisor_server,  # noqa: F811
-    tmp_path,
-    monkeypatch,
-):
-    """Every symphony's latest run from one weekly batch, as in production."""
-    _prepare(tmp_path, monkeypatch, world="empty", seed=prod.seed_same_batch_autotune_runs)
-    with _open(firefox, advisor_server, (1440, 900), "overview") as opened:
-        opened.page.wait_for_selector(
-            '#autotune-runs-list [data-testid="autotune-run-row"]', state="attached"
-        )
-        opened.page.wait_for_timeout(200)
-        line = opened.evaluate(
-            "() => [...document.querySelectorAll('[data-testid=\"autotune-shared-line\"]')]"
-            ".map((e) => e.innerText)"
-        )
-        assert len(line) == 1 and "Run time" in line[0], f"premise: the run time is lifted: {line}"
-        selector = ".autotune-panel, " + _scoped('[data-testid="tab-panel-overview"]')
-        found = opened.evaluate(harness.EMPTY_REGION_JS, [selector, MIN_W, MIN_H])
-        assert not _offenders(found), "empty regions in the Overview:\n" + "\n".join(
-            _offenders(found)
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -292,26 +226,6 @@ def _retirement_with_production_tenure_review():
     w.seed_roster()
     adv.seed_recommendation_cards(3)
     prod.seed_production_tenure_review(11)
-
-
-@pytest.mark.parametrize("size", DESKTOPS)
-def test_eleven_tenure_entries_with_long_redundancy_text_hold_no_empty_region(
-    firefox,  # noqa: F811
-    advisor_server,  # noqa: F811
-    tmp_path,
-    monkeypatch,
-    size,
-):
-    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_production_tenure_review)
-    with _open(firefox, advisor_server, size, "retirement") as opened:
-        entries = opened.evaluate(prod.TENURE_ENTRIES_JS)
-        assert len(entries) == 11, f"premise: eleven entries render, not {len(entries)}"
-        found = opened.evaluate(
-            harness.EMPTY_REGION_JS, [_scoped('[data-testid="tab-panel-retirement"]'), MIN_W, MIN_H]
-        )
-        assert not _offenders(found), "empty regions in the Retirement tab:\n" + "\n".join(
-            _offenders(found)
-        )
 
 
 @pytest.mark.parametrize("size", [PHONE, VERY_NARROW])

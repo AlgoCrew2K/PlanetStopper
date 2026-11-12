@@ -797,3 +797,89 @@ class TestSecurity:
         shown = advisor.open("empty", key=True, seed=seed)
         assert hostile not in shown.html
         assert "&lt;script&gt;" in shown.html
+
+
+# ---------------------------------------------------------------------------
+# Every section description is one short sentence, with a slot filled or its fallback in place
+# ---------------------------------------------------------------------------
+
+DESCRIPTION_MAX_WORDS = 25
+DESCRIPTION_SENTENCE_BREAK = re.compile(r"(?<=[.?])\s+(?=[A-Z0-9\"'(])")
+DESCRIPTION_EMOJI = re.compile("[\U0001f000-\U0001faff☀-➿⭐⭕️]")
+DESCRIPTION_DASHES = ("—", "–")
+# The longest a slot's authority prints: six decimals for a threshold, four digits for a day count.
+LONGEST_SLOT_VALUE = {"screen_threshold": "0.123456", "tenure_threshold": "1260"}
+
+
+def description_problems(text: str) -> list[str]:
+    """What is wrong with a description: not one sentence, over 25 words, or a banned character."""
+    problems = []
+    sentences = [s for s in DESCRIPTION_SENTENCE_BREAK.split(text.strip()) if s]
+    if len(sentences) != 1:
+        problems.append(f"{len(sentences)} sentences")
+    if len(text.split()) > DESCRIPTION_MAX_WORDS:
+        problems.append(f"{len(text.split())} words")
+    if "!" in text:
+        problems.append("an exclamation mark")
+    if any(dash in text for dash in DESCRIPTION_DASHES):
+        problems.append("a dash")
+    if DESCRIPTION_EMOJI.search(text):
+        problems.append("an emoji")
+    if re.search(r"\{[a-z_]+\}", text):
+        problems.append("an unfilled slot")
+    return problems
+
+
+def filled_description(row: dict, mode: str) -> str:
+    """The row's text with each slot phrase filled by its longest authority value (``value``) or
+    replaced whole by its fallback phrase (``fallback``)."""
+    text = copy_fixture.a_text(row["key"])
+    for slot_row in copy_fixture.new_slot_rows():
+        if slot_row["copy_row"] != row["key"]:
+            continue
+        if mode == "value":
+            replacement = copy_fixture.fill(
+                slot_row["phrase"], **{slot_row["slot"]: LONGEST_SLOT_VALUE[slot_row["slot"]]}
+            )
+        else:
+            replacement = slot_row["fallback"]
+        assert slot_row["phrase"] in text, (
+            f"{row['key']}: the phrase for {slot_row['slot']} is gone"
+        )
+        text = text.replace(slot_row["phrase"], replacement)
+    return text
+
+
+DESCRIBED_ROWS = [r for r in copy_fixture.a_rows() if copy_fixture.a_text(r["key"]) is not None]
+
+
+@pytest.mark.parametrize("mode", ["value", "fallback"])
+@pytest.mark.parametrize("row", DESCRIBED_ROWS, ids=[r["key"] for r in DESCRIBED_ROWS])
+def test_every_section_description_is_one_sentence_of_at_most_25_words(row, mode):
+    problems = description_problems(filled_description(row, mode))
+    assert not problems, f"{row['key']} ({mode}): {problems}"
+
+
+def test_the_descriptions_cover_every_host_and_a_removed_row_reads_none():
+    hosts = {copy_fixture.host_of(r) for r in DESCRIBED_ROWS}
+    assert len(DESCRIBED_ROWS) >= 45 and {"/", "Performance", "History", "Settings"} <= hosts, hosts
+    removed = [r for r in copy_fixture.a_rows() if r["kind"] in ("removed", "moved")]
+    assert removed and all(copy_fixture.a_text(r["key"]) is None for r in removed)
+    slotted = {
+        s["copy_row"]
+        for s in copy_fixture.new_slot_rows()
+        if s["copy_row"] in {r["key"] for r in DESCRIBED_ROWS}
+    }
+    assert {"R02", "R22"} <= slotted, "the rows with a slot are checked with it filled"
+
+
+def test_the_description_check_reports_each_fault_it_checks_for():
+    assert description_problems("One short sentence.") == []
+    assert any("words" in p for p in description_problems(" ".join(["word"] * 26) + "."))
+    assert description_problems(" ".join(["word"] * 25) + ".") == []
+    assert any("sentences" in p for p in description_problems("First one. Second one."))
+    assert any("exclamation" in p for p in description_problems("Nice!"))
+    assert any("dash" in p for p in description_problems("A — B."))
+    assert any("dash" in p for p in description_problems("A – B."))
+    assert any("emoji" in p for p in description_problems("A \U0001f680 launch."))
+    assert any("slot" in p for p in description_problems("At {screen_threshold} or more."))

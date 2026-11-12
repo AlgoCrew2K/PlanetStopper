@@ -257,6 +257,60 @@ class TestUnauthenticatedAccess:
 
 
 # ---------------------------------------------------------------------------
+# Every host and every read route sits behind the one gate
+# ---------------------------------------------------------------------------
+
+HOST_PAGES = ("/", "/performance", "/history", "/settings", "/ai-advisor")
+READ_ROUTES = (
+    "/api/state",
+    "/api/performance",
+    "/api/history/30",
+    "/api/retirement-recommendations",
+    "/api/guard-alpha-summary",
+    "/api/autotune-runs",
+    "/api/settings",
+)
+
+
+class TestEveryHostRefusesWithoutASession:
+    """With no session an HTML request is sent to /login and an /api or XHR request gets a 401
+    JSON refusal, on every page the dashboard serves and every read route its scripts poll. A page
+    that changes only its copy and layout changes none of this."""
+
+    @pytest.mark.parametrize("host", HOST_PAGES)
+    def test_a_page_request_is_redirected_to_login_and_carries_no_page(self, auth_client, host):
+        resp = auth_client.get(host, follow_redirects=False)
+        assert resp.status_code == 302, f"GET {host} answered {resp.status_code}, not 302"
+        assert "/login" in resp.headers.get("Location", "")
+        assert b"data-testid" not in resp.get_data(), (
+            f"GET {host} sent page content with the redirect"
+        )
+
+    @pytest.mark.parametrize("host", HOST_PAGES)
+    def test_an_xhr_request_for_a_page_gets_a_401_json_refusal(self, auth_client, host):
+        resp = auth_client.get(host, headers={"X-Requested-With": "XMLHttpRequest"})
+        assert resp.status_code == 401, f"XHR GET {host} answered {resp.status_code}, not 401"
+        assert "application/json" in (resp.content_type or "")
+        assert resp.get_json() is not None
+
+    @pytest.mark.parametrize("route", READ_ROUTES)
+    def test_a_read_route_gets_a_401_json_refusal_with_and_without_xhr(self, auth_client, route):
+        for headers in ({}, {"X-Requested-With": "XMLHttpRequest"}):
+            resp = auth_client.get(route, headers=headers)
+            assert resp.status_code == 401, f"GET {route} {headers} answered {resp.status_code}"
+            assert "application/json" in (resp.content_type or "")
+            body = resp.get_json()
+            assert isinstance(body, dict) and ("error" in body or "message" in body), body
+
+    @pytest.mark.parametrize("host", HOST_PAGES)
+    def test_a_session_lets_the_page_through(self, auth_client_authed, host):
+        """The positive control: the refusals above are the gate's, not a missing page."""
+        resp = auth_client_authed.get(host, follow_redirects=False)
+        assert resp.status_code == 200, f"an authenticated GET {host} answered {resp.status_code}"
+        assert b"data-testid" in resp.get_data()
+
+
+# ---------------------------------------------------------------------------
 # AC-4 + AC-5 + AC-13: Login flow
 # ---------------------------------------------------------------------------
 

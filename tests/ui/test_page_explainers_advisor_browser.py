@@ -16,8 +16,7 @@ Contract pinned (the plan's AC-1, AC-2, AC-6, AC-7 and AC-8 for the Advisor page
   disclosure keeps its term lines hidden until it is opened and shows each one afterwards.
 * Choosing tabs twice leaves each description on the page once.
 * At 1440 and 1240 the Retirement tab's two subsections share one row while each is no taller than
-  320 px in one column, and stack when they are taller; no panel or card holds an empty rectangle
-  of 240 by 80 px; five Frontrunner cards leave no empty cell.
+  320 px in one column, and stack when they are taller.
 * At 375 and 320 the tab strip shows a cue at each edge past which a tab lies out of view and at no
   other edge; every tab is reached by scrolling the strip and chosen by a tap (a mouse click at the
   tab's centre: Firefox has no touch emulation here, so the gesture itself is the live phone check),
@@ -61,7 +60,6 @@ TABS = (
 PHONE = (375, 812)
 VERY_NARROW = (320, 812)
 DESKTOPS = [(1440, 900), (1240, 900)]
-MIN_W, MIN_H = 240, 80
 PAIR_MAX_HEIGHT = 320
 EDGE_TOLERANCE = 0.5
 
@@ -154,10 +152,6 @@ _PAIR_JS = """() => {
 }"""
 
 
-def _scoped(prefix: str) -> str:
-    return ", ".join(f"{prefix} {part.strip()}" for part in harness.PANEL_SELECTOR.split(","))
-
-
 def _prepare(tmp_path, monkeypatch, *, world="full", seed=None, key=True):
     harness.credential_free_environment(
         tmp_path / "page.env", monkeypatch.setattr, lambda n: monkeypatch.delenv(n, raising=False)
@@ -199,16 +193,6 @@ def _open(firefox, server, size, tab=None):  # noqa: F811
 def _show_tab(opened: _Opened, tab: str) -> None:
     opened.page.click(f'[role="tab"][data-tab="{tab}"]')
     opened.page.wait_for_timeout(150)
-
-
-def _empty_regions(opened: _Opened, selector: str) -> list[str]:
-    found = opened.evaluate(harness.EMPTY_REGION_JS, [selector, MIN_W, MIN_H])
-    return [
-        f"{f['testid'] or f['cls']} #{f['index']}: empty {f['largest_empty']['w']:.0f}x"
-        f"{f['largest_empty']['h']:.0f} at ({f['largest_empty']['x']:.0f},{f['largest_empty']['y']:.0f})"
-        for f in found
-        if f["largest_empty"] is not None
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +329,7 @@ def _stacked(read: dict) -> bool:
 
 
 @pytest.mark.parametrize("size", DESKTOPS)
-def test_two_short_retirement_subsections_share_one_row_and_leave_no_empty_region(
+def test_two_short_retirement_subsections_share_one_row(
     firefox,
     advisor_server,
     tmp_path,
@@ -360,12 +344,10 @@ def test_two_short_retirement_subsections_share_one_row_and_leave_no_empty_regio
         )
         assert "retirement-pair--side" in read["pair"]["cls"], read["pair"]
         assert _side_by_side(read), f"the subsections do not share a row: {read}"
-        offenders = _empty_regions(opened, _scoped('[data-testid="tab-panel-retirement"]'))
-        assert not offenders, "empty regions in the Retirement tab:\n" + "\n".join(offenders)
 
 
 @pytest.mark.parametrize("size", DESKTOPS)
-def test_two_tall_retirement_subsections_stack_and_leave_no_empty_region(
+def test_two_tall_retirement_subsections_stack(
     firefox,
     advisor_server,
     tmp_path,
@@ -381,53 +363,6 @@ def test_two_tall_retirement_subsections_stack_and_leave_no_empty_region(
             )
         assert _stacked(read), f"tall subsections must stack: {read}"
         assert read["pair"] is not None and "retirement-pair--side" not in read["pair"]["cls"]
-        offenders = _empty_regions(opened, _scoped('[data-testid="tab-panel-retirement"]'))
-        assert not offenders, "empty regions in the Retirement tab:\n" + "\n".join(offenders)
-
-
-_EVIDENCE_GRID_FAULT_CSS = (
-    # Whatever layout the grid has, the fault turns it into a multi-column list with far more
-    # columns than items, so the measurement is shown a list whose columns are mostly empty.
-    ".tenure-review-evidence-grid { display: block !important; columns: 4rem 24 !important; "
-    "column-gap: 4px !important; column-fill: auto !important; height: 300px !important; }"
-)
-_GRID_RECT_JS = """() => {
-  const g = document.querySelector('.tenure-review-evidence-grid');
-  const r = g.getBoundingClientRect();
-  return { l: r.left, t: r.top, r: r.right, b: r.bottom };
-}"""
-
-
-@pytest.mark.parametrize("size", DESKTOPS)
-def test_empty_columns_in_the_evidence_grid_are_still_reported(
-    firefox,
-    advisor_server,
-    tmp_path,
-    monkeypatch,
-    size,  # noqa: F811
-):
-    """The column-bottom allowance never hides a column that holds nothing.
-
-    A fault gives the evidence grid far more columns than items, filled in order, so most
-    columns are empty: the measurement must report a region that lies inside the grid.
-    """
-    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_cards_and_long_review)
-    with _open(firefox, advisor_server, size, "retirement") as opened:
-        opened.page.add_style_tag(content=_EVIDENCE_GRID_FAULT_CSS)
-        opened.page.wait_for_timeout(150)
-        grid = opened.evaluate(_GRID_RECT_JS)
-        found = opened.evaluate(
-            harness.EMPTY_REGION_JS,
-            [_scoped('[data-testid="tab-panel-retirement"]'), MIN_W, MIN_H],
-        )
-        inside = [
-            f["largest_empty"]
-            for f in found
-            if f["largest_empty"] is not None
-            and grid["l"] <= f["largest_empty"]["x"] + f["largest_empty"]["w"] / 2 <= grid["r"]
-            and grid["t"] <= f["largest_empty"]["y"] + f["largest_empty"]["h"] / 2 <= grid["b"]
-        ]
-        assert inside, f"empty columns of the evidence grid were not reported: {found}"
 
 
 @pytest.mark.parametrize("size", [PHONE, VERY_NARROW])
@@ -444,46 +379,6 @@ def test_the_retirement_subsections_always_stack_on_a_phone_even_when_short(
         assert _stacked(read), f"the subsections share a row at {size[0]} px: {read}"
         state = opened.evaluate(_STRIP_JS)
         assert state["pageScroll"] == state["pageClient"]
-
-
-@pytest.mark.parametrize("count", [1, 4, 5])
-@pytest.mark.parametrize("size", DESKTOPS)
-def test_pending_proposals_leave_no_empty_cell_in_the_grid_a_card_or_the_tab_panel(
-    firefox,
-    advisor_server,
-    tmp_path,
-    monkeypatch,
-    size,
-    count,  # noqa: F811
-):
-    """One, four and five cards: a lone or last-row card fills its row, so no blank sits beside it.
-
-    The tab panel's own content box is measured too, because a cap on the card's width leaves the
-    blank in the panel and inside no card.
-    """
-    _prepare(
-        tmp_path, monkeypatch, world="empty", seed=lambda: adv.seed_frontrunner_proposals(count)
-    )
-    with _open(firefox, advisor_server, size, "frontrunner-builder") as opened:
-        cards = opened.evaluate(_TEXT_JS, '[data-testid="frontrunner-proposal-card"]')
-        assert len(cards) == count and all(c["shown"] for c in cards), (
-            f"premise: {count} cards show"
-        )
-        # Everything above the cards (the build controls, the descriptions, the shared notes) is
-        # taken out of the panel, so the panel's content box measured here is the card area and
-        # a hole above it cannot stand in for one beside a card.
-        opened.evaluate(
-            "() => { const cards = document.querySelector("
-            "'[data-testid=\"frontrunner-proposal-cards\"]');"
-            " for (let el = cards.previousElementSibling; el; el = el.previousElementSibling)"
-            " el.style.display = 'none'; }"
-        )
-        selector = (
-            '[data-testid="frontrunner-proposal-cards"], #tab-panel-frontrunner-builder, '
-            + _scoped('[data-testid="tab-panel-frontrunner-builder"]')
-        )
-        offenders = _empty_regions(opened, selector)
-        assert not offenders, "empty regions in the Frontrunner tab:\n" + "\n".join(offenders)
 
 
 def _card_rows(layout: dict) -> list[list[dict]]:

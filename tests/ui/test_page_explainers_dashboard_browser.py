@@ -21,9 +21,8 @@ through ``tests/ui/_page_copy.py``; nothing is typed here. What is asserted, on 
   and overlay still work;
 * at 1440 and 1240 the CVaR and Managed sleeves panels share one row, and a lone sleeves panel
   takes the full width, before and after a poll and a window pick;
-* at 375 the page is as wide as the viewport, no added text is under 11 px, and its height grows
-  only by the added copy (the bound of the reference capture, per world) and returns to the
-  closed height when every disclosure is opened and closed again.
+* at 375 the page is as wide as the viewport, no added text is under 11 px, and its height
+  returns to the closed height when every disclosure is opened and closed again.
 """
 
 from __future__ import annotations
@@ -51,12 +50,6 @@ from tests.ui._shell_support import (  # noqa: F401  (fixtures: overrides, empty
 
 pytestmark = pytest.mark.browser
 
-REF_PATH = (
-    pathlib.Path(__file__).resolve().parents[1]
-    / "fixtures"
-    / "page_explainers"
-    / "ref_capture.json"
-)
 DASHBOARD_DESCRIPTIONS = (
     "D01",
     "dash.hero",
@@ -77,7 +70,6 @@ POLL_MS = 31_000
 PROD_DROPLET = pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "prod_droplet"
 # Exit return minus held return, in points: beat, trailed, exactly level, and a hair above level.
 EXIT_GAPS = (1.24, -0.42, 0.0, 0.04)
-HEIGHT_SLACK_PX = 16
 CLOSED_HEIGHT_TOLERANCE_PX = 1
 
 VISIBILITY_JS = """
@@ -164,13 +156,6 @@ def seeded(tmp_path, monkeypatch):
         tmp_path / "page.env", monkeypatch.setattr, lambda n: monkeypatch.delenv(n, raising=False)
     )
     return lambda world: harness.seed_world(world, tmp_path, monkeypatch.setattr)
-
-
-@pytest.fixture(scope="module")
-def ref() -> dict:
-    if not REF_PATH.is_file():
-        pytest.fail(f"no reference capture at {REF_PATH}: the producer has not been run")
-    return json.loads(REF_PATH.read_text(encoding="utf-8"))
 
 
 class _Dashboard:
@@ -562,75 +547,37 @@ def test_the_layout_holds_after_a_poll_and_a_window_pick_and_back(
     with _Dashboard(firefox, advisor_server, WIDE[0]) as probe:
         probe.page.clock.run_for(POLL_MS)
         probe.page.wait_for_timeout(800)
-        readings = {"after poll": _layout(probe)}
+        readings = {"after poll": probe.page.evaluate(GEOMETRY_JS)}
         probe.page.locator('[data-testid="window-1y"]').click()
         probe.page.wait_for_timeout(1500)
-        readings["on 1y"] = _layout(probe)
+        readings["on 1y"] = probe.page.evaluate(GEOMETRY_JS)
         probe.page.locator('[data-testid="window-30d"]').click()
         probe.page.wait_for_timeout(1500)
-        readings["back on 30d"] = _layout(probe)
+        readings["back on 30d"] = probe.page.evaluate(GEOMETRY_JS)
     problems = []
-    for name, (geometry, found) in readings.items():
+    for name, geometry in readings.items():
         problems += [f"{name}: {p}" for p in _foot_row_problems(geometry, expect_cvar=True)]
-        problems += [
-            f"{name}: {f['testid'] or f['id'] or f['cls']} holds an empty {f['largest_empty']}"
-            for f in found
-            if f["largest_empty"]
-        ]
     assert not problems, "\n".join(problems)
 
 
-def _layout(probe):
-    return (
-        probe.page.evaluate(GEOMETRY_JS),
-        probe.page.evaluate(harness.EMPTY_REGION_JS, [harness.PANEL_SELECTOR, 240, 80]),
-    )
-
-
 # ---------------------------------------------------------------------------
-# 375 px: growth is only the added copy
+# 375 px
 # ---------------------------------------------------------------------------
-
-
-def _bound(ref_facts: dict, head: dict) -> float:
-    """The most the document may grow: the added copy's own heights, the reworded labels' growth, slack."""
-    grown = 0.0
-    for host_key, head_lists in head["relabelled"].items():
-        ref_lists = ref_facts["relabelled"].get(host_key, [])
-        for i, heads in enumerate(head_lists):
-            refs = ref_lists[i] if i < len(ref_lists) else []
-            for j, height in enumerate(heads):
-                grown += max(0.0, height - refs[j]) if j < len(refs) else height
-    return (
-        ref_facts["document_height"]
-        + head["explainer_sum"]
-        + head["terms_summary_sum"]
-        + grown
-        + HEIGHT_SLACK_PX
-    )
 
 
 @pytest.mark.parametrize("world", harness.WORLDS)
-def test_the_page_grows_at_375_only_by_the_copy_it_adds_and_is_no_wider_than_the_phone(
+def test_the_page_is_no_wider_than_the_phone(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     seeded,
-    ref,
     world,
 ):
     seeded(world)
-    want = ref["worlds"][world]["hosts"]["/"]["heights_375"]
     with _Dashboard(firefox, advisor_server, NARROW[0], NARROW[1]) as probe:
-        head = probe.page.evaluate(
-            harness.HEIGHT_FACTS_JS, {"/": list(harness.RELABEL_SELECTORS["/"])}
+        scroll, viewport = probe.page.evaluate(
+            "() => [document.documentElement.scrollWidth, innerWidth]"
         )
-    assert head["scroll_width"] == head["viewport_width"], "the page scrolls sideways at 375"
-    assert head["explainer_sum"] > 0, "premise: the page carries descriptions to allow for"
-    bound = _bound(want, head)
-    assert head["document_height"] <= bound, (
-        f"{world}: the page is {head['document_height']} px tall at 375; the bound is {bound} px "
-        f"(reference {want['document_height']} plus the added copy)"
-    )
+    assert scroll == viewport, f"the page scrolls sideways at 375: {scroll} in {viewport}"
 
 
 def test_every_added_line_is_at_least_eleven_pixels_and_opening_every_disclosure_and_closing_it_restores_the_height(

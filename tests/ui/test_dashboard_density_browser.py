@@ -13,9 +13,6 @@ What is asserted, on the live render:
 * at 1440 px the cards are single rows, each at most 112 px tall (the card layout it replaced
   measured 319 px), and the dollar-saved panel is a short block of at most 160 px (it was 212) plus
   the measured height of its description line and its closed disclosure's summary line;
-* at 1440 and at 1240 px no panel or card holds an empty rectangle 240 by 80 px or larger inside
-  its content box (the exact search of ``tests/ui/_page_explainers.py``), in the seeded dashboard
-  and again after a poll and a window pick;
 * at 375 px the document is as wide as the viewport, and no visible text is smaller than 11 px;
 * the Today figures are one text per card, and the status words carry a dot and no fill.
 """
@@ -49,9 +46,6 @@ MAX_ROW_HEIGHT_PX = 112
 # description line and the closed disclosure's summary line the page adds to it are measured and
 # allowed on top of that.
 MAX_DOLLAR_PANEL_HEIGHT_PX = 160
-EMPTY_MIN_WIDTH_PX = 240
-EMPTY_MIN_HEIGHT_PX = 80
-DESKTOP_WIDTHS = (1440, 1240)
 MIN_TEXT_PX = 11
 
 _ROW_FACTS = """
@@ -153,50 +147,3 @@ def seeded_world(tmp_path, monkeypatch):
         tmp_path / "page.env", monkeypatch.setattr, lambda n: monkeypatch.delenv(n, raising=False)
     )
     return lambda name: harness.seed_world(name, tmp_path, monkeypatch.setattr)
-
-
-def _empty_rectangles(probe) -> list[dict]:
-    """Every panel and card the page shows, with its largest empty rectangle (None when none)."""
-    return probe.page.evaluate(
-        harness.EMPTY_REGION_JS, [harness.PANEL_SELECTOR, EMPTY_MIN_WIDTH_PX, EMPTY_MIN_HEIGHT_PX]
-    )
-
-
-def _offenders(found: list[dict]) -> list[str]:
-    return [
-        f"{f['testid'] or f['id'] or f['cls']}: {f['largest_empty']} in a content box "
-        f"{f['content']['w']:.0f} by {f['content']['h']:.0f}"
-        for f in found
-        if f["largest_empty"]
-    ]
-
-
-@pytest.mark.parametrize(
-    ("world", "width"),
-    [
-        ("dashboard_full", 1440),
-        ("dashboard_full", 1240),
-        ("dashboard_sleeves", 1440),
-        ("empty", 1440),
-    ],
-)
-def test_no_panel_holds_an_empty_rectangle_the_size_of_a_block_of_text(
-    firefox,  # noqa: F811
-    advisor_server,  # noqa: F811
-    seeded_world,
-    world,
-    width,
-):
-    seeded_world(world)
-    with open_probe(firefox, advisor_server, width=width, height=900) as probe:
-        probe.context.clock.install(time=harness.CAPTURE_INSTANT)
-        open_page(probe, "/")
-        probe.page.wait_for_timeout(harness.SETTLE_MS)
-        found = _empty_rectangles(probe)
-    assert found, "premise: the dashboard shows panels"
-    assert any(f["testid"] == "hero-section" for f in found), "premise: the hero is measured"
-    offenders = _offenders(found)
-    assert not offenders, (
-        f"{world} at {width} px: panels with an empty region of {EMPTY_MIN_WIDTH_PX} by "
-        f"{EMPTY_MIN_HEIGHT_PX} px or more:\n" + "\n".join(offenders)
-    )

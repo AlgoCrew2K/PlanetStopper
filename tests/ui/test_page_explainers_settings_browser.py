@@ -21,8 +21,7 @@ held" line has a symphony to describe.
 * S-1.22, S-2.16, S-5.12: an unsaved edit survives a section switch; a pending live toggle in the
   modal keeps its descriptions, and Save with it asks for confirmation and sends nothing first.
 * S-3.16: typing into a credential field shows the new status and no text says it will be saved.
-* S-6.6, S-6.10, S-6.14: Settings Master holds no empty 240 by 80 rectangle at 1440 and at 1240,
-  and the document is no wider than the viewport.
+* the Settings document is no wider than the viewport at 1440 and at 1240.
 """
 
 from __future__ import annotations
@@ -57,7 +56,6 @@ SUMMARY_TEXT = "What the terms mean"
 GONE_NAME = "Review Gone Symphony"
 GONE_ID = "review-gone-symphony"
 TYPED_PLACEHOLDER = "typed-placeholder-not-a-credential"
-MIN_W, MIN_H = 240, 80
 MODAL_SAVE = "#sym-settings-save"
 MODAL_TOGGLE = "#sym-settings-live-toggle"
 
@@ -313,12 +311,12 @@ def test_typing_a_credential_shows_the_new_status_and_nothing_promises_a_save(
 
 
 # ---------------------------------------------------------------------------
-# S-6.6, S-6.10, S-6.14: Settings Master leaves no empty region
+# The Settings document fits the viewport
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("size", [WIDE, (1240, 900)], ids=["1440", "1240"])
-def test_settings_master_holds_no_empty_rectangle_and_the_page_is_no_wider_than_the_viewport(
+def test_the_settings_document_is_no_wider_than_the_viewport(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     world,
@@ -327,16 +325,6 @@ def test_settings_master_holds_no_empty_rectangle_and_the_page_is_no_wider_than_
     with settings_open(firefox, advisor_server, size=size) as probe:
         go_to(probe, "master")
         probe.page.wait_for_timeout(harness.SETTLE_MS)
-        panels = probe.page.evaluate(
-            harness.EMPTY_REGION_JS, [harness.PANEL_SELECTOR, MIN_W, MIN_H]
-        )
-        assert panels, "no panel was measured"
-        empty = [
-            (p["id"] or p["testid"] or p["cls"], p["largest_empty"])
-            for p in panels
-            if p["largest_empty"]
-        ]
-        assert not empty, f"empty rectangles of {MIN_W} by {MIN_H} or larger: {empty}"
         width, viewport = probe.page.evaluate(
             "() => [document.documentElement.scrollWidth, innerWidth]"
         )

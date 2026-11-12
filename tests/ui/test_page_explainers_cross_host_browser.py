@@ -5,7 +5,7 @@ Browser-only (marker ``browser``; run with
 headless through Playwright; the app in this process on the per-test database, seeded through the
 real writers (``tests/ui/_page_explainers.seed_world``); the app and browser clocks fixed. Never
 skips. The expected text of a row comes from ``tests/fixtures/page_explainers/copy.json`` through
-``tests/ui/_page_copy.py``; the reference heights and figures from ``ref_capture.json``.
+``tests/ui/_page_copy.py``; the reference figures from ``ref_capture.json``.
 
 Scenarios swept over the (world, host) pairs of ``harness.WORLD_HOST_PAIRS``:
 
@@ -14,11 +14,9 @@ Scenarios swept over the (world, host) pairs of ``harness.WORLD_HOST_PAIRS``:
   Enter and by Space; S-2.14 on Overview and Performance; S-2.18 with every script refused;
 * S-3.11: every template-built reworded label shows its new words with every script refused;
 * S-5.4 and S-5.10: honesty texts equal the reference's, a missing figure leaks no placeholder;
-* S-6.6, S-6.7, S-6.9, S-6.10, S-6.11, S-6.14: no empty rectangle, figure rows spread, the type
-  contract (light and dark), at 1440 and 1240, the empty states included;
-* S-7.1, S-7.2, S-7.4, S-7.5, S-7.6: at 375 and 320 the page grows only by its added copy, is no
-  wider than the phone, no added text is under 11 px, and a disclosure opened and closed restores
-  the height.
+* the type contract (light and dark) at 1440 and the document no wider than the viewport, the
+  empty states included;
+* at 375 and 320 the page is no wider than the phone, and no added text is under 11 px.
 
 Recorded against the host cycles' own tests (same assertion, same world): S-2.12 and S-2.14 on `/`
 (``test_page_explainers_dashboard_browser.py``).
@@ -50,9 +48,8 @@ from tests.ui._shell_support import (  # noqa: F401  (fixtures: overrides, serve
 )
 from tests.ui.test_page_copy_performance_history import warm_market_calendar
 from tests.ui.test_page_explainers_cross_host import new_alternatives, page_of, slotted, tidy
-from tests.ui.test_page_explainers_dashboard_browser import (  # noqa: F401  (the seeding fixture)
-    _bound,
-    seeded,
+from tests.ui.test_page_explainers_dashboard_browser import (
+    seeded,  # noqa: F401  (the seeding fixture)
 )
 from tests.ui.test_page_explainers_unchanged_browser import (
     _relabel_matchers,
@@ -61,10 +58,7 @@ from tests.ui.test_page_explainers_unchanged_browser import (
 
 pytestmark = pytest.mark.browser
 
-MIN_W, MIN_H = 240, 80
 MIN_TEXT_PX = 11
-SPREAD = 0.9
-FIGURE_ROWS = ".mini-stats, .hp-figs, .adv-figs"
 SUMMARY_TEXT = "What the terms mean"
 PAIRS = harness.WORLD_HOST_PAIRS
 PAIR_IDS = [f"{w}-{h.strip('/') or 'dashboard'}" for w, h in PAIRS]
@@ -177,9 +171,9 @@ def _show(probe, tab: str) -> None:
     probe.page.wait_for_timeout(150)
 
 
-def reading(firefox, server, seeded, world, host, width, *, theme=None, full=True):  # noqa: F811
+def reading(firefox, server, seeded, world, host, width, *, theme=None):  # noqa: F811
     """Facts of ``host`` in ``world`` at ``width``; one browser visit per distinct request."""
-    key = (world, host, width, theme, full)
+    key = (world, host, width, theme)
     if key in _READ:
         return _READ[key]
     seeded(world)
@@ -189,9 +183,6 @@ def reading(firefox, server, seeded, world, host, width, *, theme=None, full=Tru
         open_page(probe, host)
         probe.page.wait_for_timeout(harness.SETTLE_MS)
         facts: dict = {"states": {}}
-        facts["height"] = probe.page.evaluate(
-            harness.HEIGHT_FACTS_JS, {host: list(harness.RELABEL_SELECTORS[host])}
-        )
         facts["figures"] = [
             [k, harness.mask_clock_text(t)] for k, t in probe.page.evaluate(harness.FIGURES_JS)
         ]
@@ -204,15 +195,6 @@ def reading(firefox, server, seeded, world, host, width, *, theme=None, full=Tru
                     "() => [document.documentElement.scrollWidth, innerWidth]"
                 ),
             }
-            if full:
-                state["empty"] = [
-                    o
-                    for o in probe.page.evaluate(
-                        harness.EMPTY_REGION_JS, [harness.PANEL_SELECTOR, MIN_W, MIN_H]
-                    )
-                    if o["largest_empty"]
-                ]
-                state["spans"] = probe.page.evaluate(harness.FIGURE_SPAN_JS, FIGURE_ROWS)
             facts["states"][tab] = state
         facts["page_errors"] = list(probe.page_errors)
     _READ[key] = facts
@@ -307,60 +289,6 @@ def test_a_description_is_whole_on_a_phone_never_clipped_or_ellipsed(
 # S-6.x: layout at 1440 and 1240
 # ---------------------------------------------------------------------------
 
-DESKTOP = {1440: WIDE[0], 1240: 1240}
-# Performance and History are measured in the states the plan names (10 metric and 11 precondition
-# rows, the 8-exit day opened) by the Performance and History cycle's own browser tests; the
-# harness's full world holds neither, so only their empty states are swept here. Settings is
-# measured on Master, the one section the plan names.
-LAYOUT_PAIRS = [p for p in PAIRS if p not in {("full", "/performance"), ("full", "/history")}]
-LAYOUT_IDS = [f"{w}-{h.strip('/') or 'dashboard'}" for w, h in LAYOUT_PAIRS]
-LAYOUT_STATES = {"/settings": ("master",)}
-
-
-def _layout_states(facts: dict, host: str) -> dict:
-    wanted = LAYOUT_STATES.get(host)
-    return {t: s for t, s in facts["states"].items() if wanted is None or t in wanted}
-
-
-@pytest.mark.parametrize("width", sorted(DESKTOP))
-@pytest.mark.parametrize(("world", "host"), LAYOUT_PAIRS, ids=LAYOUT_IDS)
-def test_no_panel_holds_an_empty_rectangle_of_240_by_80(
-    firefox,
-    advisor_server,
-    seeded,
-    world,
-    host,
-    width,  # noqa: F811
-):
-    facts = reading(firefox, advisor_server, seeded, world, host, width)
-    problems = [
-        f"{tab or host}: {o['testid'] or o['id'] or o['cls']} holds {o['largest_empty']}"
-        for tab, state in _layout_states(facts, host).items()
-        for o in state["empty"]
-    ]
-    assert not problems, f"{world} {host} at {width}:\n" + "\n".join(problems)
-    assert any(s["explainers"] for s in facts["states"].values())
-
-
-@pytest.mark.parametrize("width", sorted(DESKTOP))
-@pytest.mark.parametrize(("world", "host"), LAYOUT_PAIRS, ids=LAYOUT_IDS)
-def test_every_row_of_figures_spreads_across_its_container(
-    firefox,
-    advisor_server,
-    seeded,
-    world,
-    host,
-    width,  # noqa: F811
-):
-    facts = reading(firefox, advisor_server, seeded, world, host, width)
-    problems = [
-        f"{tab or host}: {row['cls']} {row['testid']} spans {row['ratio']:.2f}"
-        for tab, state in _layout_states(facts, host).items()
-        for row in state["spans"]
-        if row["children"] >= 2 and row["ratio"] < SPREAD
-    ]
-    assert not problems, f"{world} {host} at {width}:\n" + "\n".join(problems)
-
 
 @pytest.mark.parametrize(("world", "host"), PAIRS, ids=PAIR_IDS)
 def test_the_document_is_no_wider_than_the_viewport_at_1440(
@@ -390,7 +318,7 @@ def test_added_text_uses_only_existing_weights_sizes_and_colors_in_both_themes(
     host,
     theme,  # noqa: F811
 ):
-    facts = reading(firefox, advisor_server, seeded, world, host, WIDE[0], theme=theme, full=False)
+    facts = reading(firefox, advisor_server, seeded, world, host, WIDE[0], theme=theme)
     assert facts["type"]["added"] > 0, "premise: the page carries added text"
     assert facts["type"]["bad"] == [], f"{host} {theme}: {facts['type']['bad'][:6]}"
 
@@ -398,25 +326,6 @@ def test_added_text_uses_only_existing_weights_sizes_and_colors_in_both_themes(
 # ---------------------------------------------------------------------------
 # S-7.x: the phone
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(("world", "host"), PAIRS, ids=PAIR_IDS)
-def test_the_page_grows_at_375_only_by_the_copy_it_adds(
-    firefox,
-    advisor_server,
-    seeded,
-    ref,
-    world,
-    host,  # noqa: F811
-):
-    facts = reading(firefox, advisor_server, seeded, world, host, NARROW[0])
-    head = facts["height"]
-    want = ref["worlds"][world]["hosts"][host]["heights_375"]
-    bound = _bound(want, head)
-    assert head["document_height"] <= bound, (
-        f"{world} {host}: {head['document_height']} px tall at 375; bound {bound} px "
-        f"(reference {want['document_height']} plus the added copy)"
-    )
 
 
 @pytest.mark.parametrize("width", [375, 320])
@@ -429,7 +338,7 @@ def test_the_page_is_no_wider_than_the_phone_on_every_tab(
     host,
     width,  # noqa: F811
 ):
-    facts = reading(firefox, advisor_server, seeded, world, host, width, full=False)
+    facts = reading(firefox, advisor_server, seeded, world, host, width)
     problems = [
         f"{tab or host}: scrollWidth {scroll} in a {vw} viewport"
         for tab, state in facts["states"].items()

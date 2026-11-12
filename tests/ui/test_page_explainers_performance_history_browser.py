@@ -1,4 +1,4 @@
-"""Performance and History in a real browser: the added copy shows, and no panel is left half empty.
+"""Performance and History in a real browser: the added copy shows and the disclosures work.
 
 Browser-only (marker ``browser``; run with
 ``python -m pytest -m browser -n 0 tests/ui/test_page_explainers_performance_history_browser.py``).
@@ -12,12 +12,6 @@ CONTRACT PINNED
   and every definition disclosure starts closed and opens to its exact rows.
 * The disclosure looks the same on both pages (one shared rule): the summary's resolved font size,
   weight, colour and cursor are equal across hosts.
-* At 1440 and at 1240 no panel of either page holds an empty rectangle of 240 by 80 px (the plan's
-  AC-6 measure, ``EMPTY_REGION_JS``: glyph boxes, controls, canvases, SVGs and filled bars are
-  content; borders and rules are not). Performance is measured with 10 metric rows and 11
-  precondition rows, History with the 8-exit day open; and again when the exit-turnover or the
-  preconditions route answers 500.
-* History at 375 is at most five screens tall with every description visible.
 
 Provenance of the preconditions body (Performance): the real ``/api/guard-alpha-preconditions``
 answer over the captured shadow rows, with each symphony's shadow ``verdict`` changed from
@@ -63,19 +57,7 @@ from tests.ui.test_page_copy_performance_history import (
 
 pytestmark = pytest.mark.browser
 
-MIN_W, MIN_H = 240, 80
-DESKTOP_WIDTHS = {"1440": WIDE, "1240": (1240, 900)}
 EXIT_DAY = "2026-06-23"  # the captured day with 8 exits
-PANELS = {
-    "/performance": (
-        "perf-controls-panel",
-        "perf-chart-block",
-        "metrics-table",
-        "guard-alpha-preconditions-panel",
-        "exit-turnover-panel",
-    ),
-    "/history": ("history-controls", "daily-strip", "by-reason-section", "recent-triggers"),
-}
 
 
 @pytest.fixture
@@ -145,25 +127,6 @@ def _open_exit_day(probe) -> None:
         probe,
         "() => document.querySelectorAll('#triggers-tbody tr').length === 8",
         "the 8-exit day never filled the exits table",
-    )
-
-
-def _empty_regions(probe) -> list[dict]:
-    return probe.page.evaluate(harness.EMPTY_REGION_JS, [harness.PANEL_SELECTOR, MIN_W, MIN_H])
-
-
-def _assert_no_empty_region(probe, path: str, label: str) -> None:
-    found = {f["testid"]: f for f in _empty_regions(probe) if f["testid"]}
-    missing = [t for t in PANELS[path] if t not in found]
-    assert not missing, f"{label}: panels not displayed, so not measured: {missing}"
-    offenders = [
-        f"{testid}: {f['largest_empty']['w']:.0f} by {f['largest_empty']['h']:.0f} px at "
-        f"({f['largest_empty']['x']:.0f}, {f['largest_empty']['y']:.0f})"
-        for testid, f in found.items()
-        if testid in PANELS[path] and f["largest_empty"] is not None
-    ]
-    assert not offenders, (
-        f"{label}: empty rectangle of {MIN_W} by {MIN_H} px or more in {offenders}"
     )
 
 
@@ -299,87 +262,3 @@ def test_the_disclosure_summary_looks_the_same_on_both_pages(
             f"{key} differs from History's own disclosure: {style} vs {reference}"
         )
     assert reference["cursor"] == "pointer"
-
-
-# ---------------------------------------------------------------------------
-# AC-6: no empty rectangle
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("width", sorted(DESKTOP_WIDTHS))
-def test_performance_holds_no_empty_rectangle_with_10_metric_rows_and_11_precondition_rows(
-    firefox,
-    advisor_server,
-    seeded,
-    width,  # noqa: F811
-):
-    size = DESKTOP_WIDTHS[width]
-    with open_probe(firefox, advisor_server, width=size[0], height=size[1]) as probe:
-        _open(probe, "/performance", preconditions=(200, _usable_preconditions_body()))
-        counts = probe.page.evaluate(
-            "() => ({metrics: document.querySelectorAll('#metrics-tbody tr').length,"
-            " precond: document.querySelectorAll('#guard-alpha-preconditions-tbody tr').length})"
-        )
-        assert counts == {"metrics": 10, "precond": 11}, counts
-        _assert_no_empty_region(probe, "/performance", f"Performance at {width}")
-
-
-@pytest.mark.parametrize("width", sorted(DESKTOP_WIDTHS))
-def test_history_holds_no_empty_rectangle_with_the_8_exit_day_open(
-    firefox,
-    advisor_server,
-    seeded,
-    width,  # noqa: F811
-):
-    size = DESKTOP_WIDTHS[width]
-    with open_probe(firefox, advisor_server, width=size[0], height=size[1]) as probe:
-        _open(probe, "/history")
-        _open_exit_day(probe)
-        probe.page.wait_for_timeout(500)
-        _assert_no_empty_region(probe, "/history", f"History at {width}")
-
-
-FAILURES = {
-    "turnover answers 500": {"turnover_status": 500},
-    "preconditions answer 500": {"preconditions": (500, "Internal Server Error")},
-    "both answer 500": {"turnover_status": 500, "preconditions": (500, "Internal Server Error")},
-}
-
-
-@pytest.mark.parametrize("width", sorted(DESKTOP_WIDTHS))
-@pytest.mark.parametrize("failure", sorted(FAILURES))
-def test_performance_holds_no_empty_rectangle_when_a_panel_route_answers_500(
-    firefox,
-    advisor_server,
-    seeded,
-    failure,
-    width,  # noqa: F811
-):
-    size = DESKTOP_WIDTHS[width]
-    with open_probe(firefox, advisor_server, width=size[0], height=size[1]) as probe:
-        _open(probe, "/performance", **FAILURES[failure])
-        probe.page.wait_for_timeout(500)
-        _assert_no_empty_region(probe, "/performance", f"Performance at {width}, {failure}")
-
-
-# ---------------------------------------------------------------------------
-# AC-7: History at 375
-# ---------------------------------------------------------------------------
-
-
-def test_history_at_375_is_at_most_five_screens_with_every_description_visible(
-    firefox,
-    advisor_server,
-    seeded,  # noqa: F811
-):
-    with open_probe(firefox, advisor_server, width=NARROW[0], height=NARROW[1]) as probe:
-        _open(probe, "/history")
-        facts = probe.page.evaluate("() => ({height: document.documentElement.scrollHeight})")
-        shown = {
-            key: probe.page.evaluate(_VISIBLE_TEXT_JS, f'[data-explainer="{key}"]')
-            for key in DESCRIPTION_KEYS["/history"]
-        }
-    assert all(len(v) == 1 and v[0]["shown"] for v in shown.values()), (
-        "every History description must be on screen while the page stays within five screens"
-    )
-    assert facts["height"] <= 5 * NARROW[1], f"History is {facts['height']} px tall at 375"

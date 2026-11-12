@@ -1,30 +1,25 @@
 """Write ``ref_capture.json``: what the five pages show, request and pin at the reference commit.
 
-Run ONCE, in a throwaway worktree whose production paths equal the reference commit (the script
-refuses otherwise). From the repository root:
+Run ONCE per reference, in a checkout whose production paths equal the reference commit (the script
+refuses otherwise, and refuses when any of them has an uncommitted change). Before any production
+file changes: a capture written after one has changed would make every comparison agree with the
+head it was taken at. From the repository root:
 
-    git worktree add --detach <path> 7e6afd02            # production paths equal 1988ce5f
-    # copy into <path>, at the same relative paths:
-    #   tests/fixtures/page_explainers/produce_ref_capture.py, copy.json (the --pass-one output)
-    #   tests/ui/_page_explainers.py
-    cd <path> && python tests/fixtures/page_explainers/produce_ref_capture.py
-    git worktree remove <path>                           # plain, never forced
+    python tests/fixtures/page_explainers/produce_ref_capture.py
 
-The reading code is ``tests/ui/_page_explainers.py``, the module the checks import, so a
-difference between this record and a head is a difference between the trees and never between
-two readers. State is written through the real writers from captured records
-(``seed_world``), the app runs in this process on a scratch database, every request to anything
-but that server is refused, and the developer ``.env`` is never read. Provenance:
-``PROVENANCE.md`` in this directory.
+State is written through the real writers from captured records (``seed_world``), the app runs in
+this process on a scratch database, every request to anything but that server is refused, and the
+developer ``.env`` is never read. The reading code is ``tests/ui/_page_explainers.py``, the module
+the checks import, so a difference between this record and a head is a difference between the trees
+and never between two readers. Provenance: ``PROVENANCE.md`` in this directory.
 
-What the record holds, per seeded world and host: the document height and the heights of the
-elements the copy tables reword at 375 px (the AC-7 baseline), the figure-element texts, the
-control inventory at 1440 px and 375 px (S-5.1, S-5.2), the section-heading order, the banner
-markup (S-5.3, S-5.5), the bodies of the seven read-only routes (S-5.6); once: the login and
-logout pages and one Discord payload (S-5.9), the content pins of the engine files and
-``database.py`` and the migration listing (S-5.13, S-5.7), the route table and the scheduler
-digest (S-5.7), the buttons no script handles (S-5.15), the rendered text of the kept rows, and
-the Firefox version.
+What the record holds, per seeded world and host: the figure-element texts and the control
+inventory at 1920, 1440 and 390 px, the stacked-row form of every table at 1000, 390 and 320 px, the
+section-heading order, the banner markup, the login and logout pages, the bodies of the read-only
+routes; once: one Discord payload, the content pins of the engine files, ``database.py`` and
+``advisors/tenure_review.py``, the migration listing, the hashes of the no-trade-boundary test files,
+the route table and the scheduler digest, the buttons no script handles, the rendered text of the
+kept rows, and the Firefox version. The document heights of an earlier capture are not recorded.
 """
 
 from __future__ import annotations
@@ -41,8 +36,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO))
 
-REFERENCE_COMMIT = "1988ce5f"
-BUILD_BASE_COMMIT = "8f8be28d"
+REFERENCE_COMMIT = "c0760e70"
 PRODUCTION_PATHS = (
     "app.py",
     "templates",
@@ -53,10 +47,11 @@ PRODUCTION_PATHS = (
     "alpha_bot_execution.py",
     "math_engine.py",
     "reporting.py",
+    "advisors/tenure_review.py",
+    "migrations",
 )
-# database.py is pinned at the build base (the merged security head adds lines to it), so it is
-# the one production path allowed to differ from the reference here.
-ALLOWED_TO_DIFFER = ("database.py",)
+# Every production path equals the reference: nothing is allowed to differ.
+ALLOWED_TO_DIFFER: tuple[str, ...] = ()
 
 
 def _git_succeeds(*args: str) -> bool:
@@ -137,7 +132,6 @@ def main() -> None:
 
     out = {
         "reference_commit": REFERENCE_COMMIT,
-        "build_base_commit": BUILD_BASE_COMMIT,
         "head_at_capture": _git_head(),
         "captured_at_utc": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "capture_instant": harness.CAPTURE_INSTANT.isoformat(),
@@ -147,14 +141,14 @@ def main() -> None:
         "discord_payload": discord,
         "kept_rows": kept_rows,
         "pins": {
-            "engine_hashes_at_reference": {
+            "hashes_at_reference": {
                 name: harness.git_object_hash(REFERENCE_COMMIT, name)
-                for name in ("alpha_bot_execution.py", "math_engine.py")
+                for name in harness.PINNED_FILES
             },
-            "database_hash_at_build_base": harness.git_object_hash(
-                BUILD_BASE_COMMIT, "database.py"
+            "migrations_at_reference": harness.migration_listing_at(REFERENCE_COMMIT),
+            "protected_test_hashes_at_reference": harness.protected_test_hashes_at(
+                REFERENCE_COMMIT
             ),
-            "migrations_at_build_base": harness.migration_listing_at(BUILD_BASE_COMMIT),
             "route_table": harness.route_table_facts(),
             "scheduler_digest": harness.scheduler_slot_digest(),
             "handlerless_buttons": harness.handlerless_buttons(),

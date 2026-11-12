@@ -27,7 +27,7 @@ import subprocess
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 OUT = pathlib.Path(__file__).with_name("ref_token_inventory.json")
-REFERENCE_COMMIT = "1988ce5f"
+REFERENCE_COMMIT = "c0760e70"
 
 FILES = (
     "templates/_chrome.html",
@@ -47,8 +47,8 @@ FILES = (
     "static/settings.js",
 )
 CONTRACT_NAMES = ("blocked_uncertainty", "_verdict_text", "exit_reason")
-# The three controls the plan removes (AC-5): their markup's tokens are recorded apart, so the
-# check excludes exactly those and nothing else.
+# Three controls an earlier change removed: none is in the markup at this reference, so the
+# list recorded is empty; the producer still records any such button's tokens apart.
 REMOVED_CONTROL_TEXTS = ("View logs", "Go to cash", "Edit variables")
 _BUTTON = re.compile(r"<button[\s>][^>]*>?.*?</button>", re.S | re.I)
 
