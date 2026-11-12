@@ -173,8 +173,19 @@ def template_rows(table: str) -> list[dict]:
 # S-2.11: a term is defined once, in the section its row names
 # ---------------------------------------------------------------------------
 
+# The Overview's term disclosures became its one Glossary: those lines are pinned by the Overview's
+# own Glossary tests, so a definition row whose key is a Glossary line, or whose disclosure the plan
+# removed, is not read here as a disclosure of its section.
+OVERVIEW_GLOSSARY_KEYS = {line["key"] for line in copy.glossary("Overview")}
+REMOVED_OVERVIEW_DISCLOSURES = {"A01", "O01", "O03", "O08", "O15", "O27"}
+
 DEFINITION_ROWS = [
-    r for r in template_rows("B") if r.get("placement_kind") == "D" and page_of(r["host"])
+    r
+    for r in template_rows("B")
+    if r.get("placement_kind") == "D"
+    and page_of(r["host"])
+    and r["key"] not in OVERVIEW_GLOSSARY_KEYS
+    and r.get("placement_target") not in REMOVED_OVERVIEW_DISCLOSURES
 ]
 
 
@@ -212,6 +223,18 @@ def test_a_term_is_defined_once_on_its_host_in_the_disclosure_its_row_names(
     assert not problems, "\n".join(problems)
     if world == "full":
         assert found > 100, f"premise: the full world renders the definitions ({found})"
+
+
+def test_every_moved_overview_line_is_defined_once_inside_the_glossary(tmp_path, monkeypatch):
+    page = adv.soup(render_hosts("full", tmp_path, monkeypatch)["/ai-advisor"])
+    problems = []
+    for key in sorted(OVERVIEW_GLOSSARY_KEYS):
+        nodes = page.select(f'#tab-panel-overview [data-term="{key}"]')
+        if len(nodes) != 1:
+            problems.append(f"{key} is defined {len(nodes)} times on the Overview")
+        elif nodes[0].find_parent("details", attrs={"data-terms": "glossary"}) is None:
+            problems.append(f"{key} is outside the Overview Glossary")
+    assert not problems, "; ".join(problems)
 
 
 # ---------------------------------------------------------------------------
@@ -301,12 +324,26 @@ def test_with_no_proposals_no_observations_the_sections_description_and_disclosu
     assert not problems, "\n".join(problems)
 
 
+def _plan_moved(record: dict) -> bool:
+    """A description row the current plan removes, moves or rewords: its own host's tests pin the
+    new state, so the reference's wording is not demanded here."""
+    if record["table"] != "A":
+        return False
+    try:
+        now = copy.a_text(record["key"])
+    except KeyError:
+        return False
+    return now != copy.text(record["key"], "A")
+
+
 def test_every_section_that_renders_in_the_empty_state_shows_its_description(tmp_path, monkeypatch):
     pages = render_hosts("empty", tmp_path, monkeypatch)
     problems = []
     for record in copy.rows("A"):
         host = page_of(record["host_place"])
         if host is None or record["builder"] != "template" or record["kind"] == "kept":
+            continue
+        if _plan_moved(record):
             continue
         page = adv.soup(pages[host])
         if page.select(f'[data-explainer="{record["key"]}"]'):
@@ -461,6 +498,7 @@ def test_every_template_built_new_label_shows_on_some_host_in_the_full_world(tmp
         if r["builder"] == "template"
         and not slotted(r)
         and "new_resolved" not in r
+        and not _plan_moved(r)
         and not all(part in everything for part in new_alternatives(r))
     ]
     assert not missing, f"new texts of reworded rows absent from every host: {missing}"
