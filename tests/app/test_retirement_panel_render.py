@@ -2175,7 +2175,7 @@ class TestTheCompositeScoreStatesHowManySymphoniesItWasNormalizedOver:
             panel = _panel(client)
             for stored in record["entries"]:
                 item = stored["evidence"]["composite"]
-                if item["status"] == "available":
+                if item["status"] == "available" or "composite" not in stored["missing_items"]:
                     continue
                 block = pb.entry_node(panel, stored["symphony_id"]).find(
                     "tenure-review-evidence-composite"
@@ -4851,6 +4851,52 @@ class TestAShadowSeriesWhoseFirstRowIsItsOwnBaseline:
 
 
 # ===========================================================================
+# An unavailable item the missing list does not name keeps its cell as it was: the headline
+# states its reason. Only an item the line names moves its reason into the line.
+# ===========================================================================
+
+
+class TestAnUnavailableItemTheMissingListDoesNotNameKeepsItsReason:
+    @pytest.mark.parametrize("which", ["full", "edge"])
+    def test_its_headline_states_unavailable_and_the_stored_reason(
+        self, client, isolated_db, which
+    ):
+        record = _store_record(which)
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            missing = stored.get("missing_items")
+            for name, item in stored["evidence"].items():
+                if not isinstance(item, dict) or item.get("status") != "unavailable":
+                    continue
+                if isinstance(missing, list) and name in missing:
+                    continue
+                block = pb.entry_node(panel, stored["symphony_id"]).find(
+                    f"tenure-review-evidence-{name}"
+                )
+                assert f"unavailable: {item['reason']}" in block.text(), (
+                    stored["display_name"],
+                    name,
+                    block.text(),
+                )
+                checked += 1
+        if which == "full":
+            assert checked >= 12, "the two ineligible cards were not both checked"
+
+    def test_a_card_with_no_missing_line_still_says_why_each_of_its_items_is_unavailable(
+        self, client, isolated_db
+    ):
+        record = _store_record("full")
+        stored = next(e for e in record["entries"] if e["display_name"] == "Young Sprout")
+        assert not stored["missing_items"], "fixture sanity: this card has no missing line"
+        card = pb.entry_node(_panel(client), stored["symphony_id"])
+        assert card.find("tenure-review-missing") is None
+        for name in ("performance", "composite", "backtest", "marginal", "long_vix"):
+            reason = stored["evidence"][name]["reason"]
+            assert reason in card.find(f"tenure-review-evidence-{name}").text(), name
+
+
+# ===========================================================================
 # A stored reason the plan does not list is the run's own record: it is shown as stored,
 # escaped, and never replaced by "not recorded".
 # ===========================================================================
@@ -4866,7 +4912,7 @@ _REASON_VICTIMS = [
 
 class TestAStoredReasonIsShownAsStoredAndEscaped:
     @pytest.mark.parametrize(("victim", "name"), _REASON_VICTIMS)
-    def test_the_reason_reaches_the_item_and_the_missing_list_escaped(
+    def test_the_reason_reaches_the_missing_line_escaped_and_not_the_cell(
         self, client, isolated_db, victim, name
     ):
         which, pick = _VICTIMS[victim]
@@ -4881,14 +4927,13 @@ class TestAStoredReasonIsShownAsStoredAndEscaped:
         assert '<i data-poison="1">' not in body, "the stored text reached the page unescaped"
         node = pb.entry_node(pb.panel_of(body), holder["id"])
         block = node.find(f"tenure-review-evidence-{name}")
-        assert _NOVEL_REASON in block.text()
+        assert _NOVEL_REASON not in _without_basis_label(block), "the cell repeats the reason"
         assert _NOT_RECORDED not in block.text().lower()
         missing = node.find("tenure-review-missing")
         assert missing is not None and _NOVEL_REASON in missing.text()
         if name == "redundancy":
             lines = _not_used_lines(block)
-            assert len(lines) == 1, [n.text() for n in lines]
-            assert _NOVEL_REASON in lines[0].text(), "the not-used line lost the stored reason"
+            assert [n.text() for n in lines] == [_NOT_USED]
 
 
 # ===========================================================================
@@ -6658,7 +6703,7 @@ class TestTheLineReadsItsTwoFormsFromTheStoredCounts:
         card = pb.entry_node(pb.panel_of(body), pb.undecided_edge_id("hostile_name", 0))
         assert "Harbor" not in pb.visible_text(card)
         assert "Harbor" in card.find(_UNDECIDED_TESTID).text()
-        assert card.find("tenure-review-missing").text() == _NOT_DECIDED_LINE
+        assert card.find("tenure-review-missing").text().startswith(_NOT_DECIDED_LINE)
 
     @pytest.mark.parametrize("peer_count", [1, 2, 3])
     def test_a_stored_reason_that_names_a_peer_at_the_needed_days_alone_reads_the_second_form(

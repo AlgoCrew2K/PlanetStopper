@@ -659,6 +659,7 @@ def test_a_peer_name_is_not_visible_on_the_closed_tenure_cards(
     """The tenure cards state N and name no peer while every disclosure is closed."""
     _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
     record = pb.undecided_record()
+    checked = 0
     with _open(firefox, advisor_server, (1440, 900), "retirement") as opened:
         for stored in record["entries"]:
             card = (
@@ -671,8 +672,16 @@ def test_a_peer_name_is_not_visible_on_the_closed_tenure_cards(
                 }""",
                 card,
             )
+            # A card whose redundancy did not decide nothing lists no undecided peer.
+            reason = stored["evidence"]["redundancy"].get("reason")
+            if not (isinstance(reason, str) and reason.startswith(pb.tr._UNDECIDED_PREFIX)):
+                continue
             for name, _days in pb.undecided_peers(stored):
+                checked += 1
                 assert name not in shown, f"{stored['display_name']} shows {name} while closed"
+        assert checked >= 10, (
+            "the cards listed too few undecided peers for the check to mean anything"
+        )
 
 
 def test_the_run_tiles_and_the_evidence_headings_carry_their_glossary_line_as_their_title(
