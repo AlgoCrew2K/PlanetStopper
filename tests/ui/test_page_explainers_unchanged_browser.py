@@ -119,6 +119,11 @@ REWRITTEN_FIGURE_KEYS = frozenset(
 )
 REWRITTEN_CONTROL_TESTIDS = frozenset({"retirement-pointer", "autotune-older-summary"})
 
+# Figures whose texts stay but whose order the plan changes: the tenure evidence headings follow
+# the cells' visible order (performance, composite, backtest, marginal contribution, long VIX
+# hedge, redundancy), so each is compared as a multiset and not by position.
+ORDER_RULED_FIGURE_KEYS = frozenset({"testid:tenure-review-evidence-heading"})
+
 # Term disclosures the plan removes from a host, as (host, tag, text) -> how many: the Overview's
 # five (its tab line, O03, O08, O15 and O27) became lines of its one Glossary. A later cycle adds
 # its host's. At most this many may be missing, so a sixth lost disclosure is still reported.
@@ -174,9 +179,15 @@ def figure_differences(reading: list, reference: list, matchers: list[re.Pattern
         got.setdefault(key, []).append(text)
     seen: Counter = Counter()
     problems = []
+    for key in ORDER_RULED_FIGURE_KEYS:
+        lost = Counter(t for k, t in reference if k == key) - Counter(got.get(key, []))
+        if lost:
+            problems.append(f"{key}: lost {sorted(lost.elements())}")
     for key, text in reference:
         index = seen[key]
         seen[key] += 1
+        if key in ORDER_RULED_FIGURE_KEYS:
+            continue
         if (
             _is_relabelled(text, matchers)
             or _is_removed_figure(text)
@@ -311,7 +322,8 @@ def test_every_figure_and_control_the_plan_rewrites_is_one_the_reference_capture
             for width, _height in harness.INVENTORY_WIDTHS:
                 figures.update(key for key, _text in host[f"figures_{width}"])
                 controls.update(c["testid"] for c in host[f"controls_{width}"])
-    assert figures >= REWRITTEN_FIGURE_KEYS, sorted(REWRITTEN_FIGURE_KEYS - figures)
+    ruled = REWRITTEN_FIGURE_KEYS | ORDER_RULED_FIGURE_KEYS
+    assert figures >= ruled, sorted(ruled - figures)
     assert controls >= REWRITTEN_CONTROL_TESTIDS, sorted(REWRITTEN_CONTROL_TESTIDS - controls)
 
 
