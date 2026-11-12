@@ -12,8 +12,8 @@
   }
 
   function readHost(host) {
-    var byTerm = {};
-    var byKey = {};
+    var byTerm = Object.create(null);
+    var byKey = Object.create(null);
     var paras = host.querySelectorAll('p[data-term]');
     for (var i = 0; i < paras.length; i++) {
       var line = clean(paras[i].textContent);
