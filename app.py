@@ -10375,7 +10375,10 @@ def _symphony_display_names_by_key(bot_state) -> "dict[str, str]":
     return names
 
 
-def _build_verification_count_line(summary: "dict") -> str:
+def _build_verification_count_line(
+    summary: "dict",
+    verdict: "str | None" = None,  # noqa: ARG001  # signature stub
+) -> str:
     """Format the MARKET_PRISM_VERIFICATION summary counts into a compact,
     human-readable status line for the Overview tab's Numeric Verification
     section (2026-07 redesign, replaces a flat wall of 25+ pass badges).
