@@ -4110,7 +4110,9 @@ class TestAnUnusedPairSaysItIsNotUsedInTheVerdict:
         assert lines[0].text() == _NOT_USED, lines[0].text()
         stored = item.get("reason")
         if isinstance(stored, str) and stored:
-            assert stored not in block.text(), "the cell repeats the reason the missing line states"
+            assert stored not in _without_basis_label(block), (
+                "the cell repeats the reason the missing line states"
+            )
 
     def test_the_line_sits_in_the_box_that_shows_the_pair(self, unused):
         item, block = unused
@@ -4657,7 +4659,7 @@ def _redundancy_problems(stored: dict, block: pb.Node) -> list[str]:
         problems.append(
             "the words 'no redundant sibling' appear on an item that does not carry them"
         )
-    if not available and item["reason"] in text:
+    if not available and item["reason"] in _without_basis_label(block):
         problems.append("the cell repeats the reason the missing line states")
     if pair:
         problems += _pair_problems(block, pair)
@@ -5692,7 +5694,7 @@ class TestARedundancyItemStatesItsReasonOnceInTheMissingLine:
                 block = card.find("tenure-review-evidence-redundancy")
                 reason = item["reason"]
                 status_word = "unavailable" if item["status"] == "unavailable" else "not applicable"
-                if reason in block.text():
+                if reason in _without_basis_label(block):
                     problems.append(f"{where}: the cell repeats the reason")
                 if _summary_of(block).text() != f"Redundancy {status_word}":
                     problems.append(f"{where}: summary reads {_summary_of(block).text()!r}")
@@ -5724,7 +5726,7 @@ class TestARedundancyItemStatesItsReasonOnceInTheMissingLine:
             "tenure-review-evidence-redundancy"
         )
         assert [n.text() for n in _not_used_lines(block)] == [_NOT_USED]
-        assert item["reason"] not in block.text()
+        assert item["reason"] not in _without_basis_label(block)
 
     def test_the_stored_reason_is_the_one_printed_once(self, client, isolated_db):
         reason = "a stored reason no template carries"
@@ -6435,6 +6437,17 @@ def _keep_card(client, record: dict | None = None):
     return record, pb.entry_of(record, sid), pb.entry_node(_panel(client), sid)
 
 
+def _without_basis_label(block: pb.Node) -> str:
+    """The text of an evidence cell without its basis-label line: an item's label can read like
+    its reason (a symphony with no history has the label and the reason "no history"), and the
+    label line is not a line that states a reason."""
+    text = block.text()
+    for node in block.walk():
+        if "retirement-rec-basis" in node.classes():
+            text = text.replace(node.text(), " ", 1)
+    return text
+
+
 def _summary_of(block: pb.Node) -> pb.Node:
     return next(n for n in block.walk() if n.tag == "summary")
 
@@ -6820,11 +6833,12 @@ class TestAReasonThatIsNotTheUndecidedListPrintsOnceInTheLineAndNowhereElse:
             card = pb.entry_node(panel, stored["symphony_id"])
             where = f"{which} / {stored['display_name']}"
             line = card.find("tenure-review-missing").text()
-            assert line.count(reason) == 1, where
-            cell = _redundancy_cell(card)
-            assert reason not in cell.text(), f"{where}: the cell repeats the reason"
-            assert card.find(_UNDECIDED_TESTID) is None, where
             word = "not applicable" if item["status"] == "not_applicable" else "unavailable"
+            stated = f"{word}: {reason}" if word == "not applicable" else reason
+            assert line.count(f"redundancy ({stated})") == 1, f"{where}: {line!r}"
+            cell = _redundancy_cell(card)
+            assert reason not in _without_basis_label(cell), f"{where}: the cell repeats the reason"
+            assert card.find(_UNDECIDED_TESTID) is None, where
             assert _summary_of(cell).text() == f"Redundancy {word}", where
             checked += 1
         assert checked >= 1, which
