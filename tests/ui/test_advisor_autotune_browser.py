@@ -21,6 +21,7 @@ import pytest
 
 import database
 from tests._ux_truth_support import captured_symphonies
+from tests.ui import _alignment as al
 from tests.ui._advisor_browser_support import (  # noqa: F401
     _stub_database_load_state_for_advisor_routes,
     _stub_get_api_state_dict,
@@ -158,19 +159,17 @@ _ON_SCREEN_JS = """() => {
   };
   const row = document.querySelector("#autotune-runs-list [data-testid='autotune-run-row']");
   const head = document.querySelector('#autotune-runs-list .autotune-row--head');
-  // Outcome is the same in every seeded row, so the page states it once in the shared line.
-  const frozen = document.querySelector("#autotune-runs-list [data-testid='autotune-shared-line']");
+  // Outcome is the same in every seeded row, so the page states it once, in its sentence.
+  const frozen = document.querySelector("#autotune-runs-list [data-testid='autotune-sentence']");
   const scoreHead = head.querySelector('.autotune-run-score');
   const label = row.querySelector('.autotune-score-label');
   const streakHead = head.querySelector('.autotune-run-streak');
   const figure = row.querySelector('.autotune-streak-figure');
   const tail = row.querySelector('.autotune-streak-tail');
   return {
-    inkDim: colour('var(--studio-ink-dim)'),
     frozenText: frozen.innerText,
     frozenInRow: row.querySelector('.autotune-run-frozen') !== null,
     frozenBox: box(frozen),
-    frozenColour: getComputedStyle(frozen).color,
     headDisplay: getComputedStyle(head).display,
     scoreHeadText: scoreHead.innerText,
     scoreHeadBox: box(scoreHead),
@@ -196,16 +195,16 @@ def _open_at(probe, width: int, height: int):
     return probe.page.evaluate(_ON_SCREEN_JS)
 
 
-def test_the_missing_frozen_verdict_and_the_scores_objective_are_on_screen_on_a_wide_page(
+def test_the_shared_outcome_and_the_scores_objective_are_on_screen_on_a_wide_page(
     advisor_probe,
 ):
     _seed(3)
     wide = _open_at(advisor_probe, 1440, 900)
-    assert wide["frozenText"].startswith("Same for every run: "), wide
-    assert "Frozen-eval not evaluated" in wide["frozenText"], wide
-    assert wide["frozenInRow"] is False, "the row repeats what the line states once"
+    assert wide["frozenText"] == "Every symphony kept its previous settings in its latest run.", (
+        wide
+    )
+    assert wide["frozenInRow"] is False, "the row repeats what the sentence states once"
     assert wide["frozenBox"]["w"] > 100 and wide["frozenBox"]["h"] >= 12, wide
-    assert wide["frozenColour"] == wide["inkDim"], "the reason is in dim ink"
     # Wide: the header row names the column and the objective; a row holds the figure only.
     assert wide["headDisplay"] != "none", wide
     assert wide["scoreHeadText"] == "Best objective score", wide
@@ -218,16 +217,16 @@ def test_the_missing_frozen_verdict_and_the_scores_objective_are_on_screen_on_a_
         fail(advisor_probe, "the page raised")
 
 
-def test_the_missing_frozen_verdict_and_the_scores_objective_are_on_screen_on_a_phone(
+def test_the_shared_outcome_and_the_scores_objective_are_on_screen_on_a_phone(
     advisor_probe,
 ):
     _seed(3)
     narrow = _open_at(advisor_probe, 375, 812)
-    assert narrow["frozenText"].startswith("Same for every run: "), narrow
-    assert "Frozen-eval not evaluated" in narrow["frozenText"], narrow
-    assert narrow["frozenInRow"] is False, "the phone row repeats what the line states once"
+    assert narrow["frozenText"] == "Every symphony kept its previous settings in its latest run.", (
+        narrow
+    )
+    assert narrow["frozenInRow"] is False, "the phone row repeats what the sentence states once"
     assert narrow["frozenBox"]["w"] > 100 and narrow["frozenBox"]["h"] >= 10, narrow
-    assert narrow["frozenColour"] == narrow["inkDim"], narrow
     # Narrow: there is no header, so the row names its own score objective and its own streak.
     assert narrow["headDisplay"] == "none", narrow
     assert narrow["labelText"] == "Best objective score", narrow
@@ -251,3 +250,131 @@ def test_the_older_runs_table_names_its_own_columns_when_opened(advisor_probe):
         "Runs without adopting a tuned config"
     )
     assert head.locator(".autotune-run-score").inner_text() == "Best objective score"
+
+
+# ---------------------------------------------------------------------------
+# One header above its columns at every width the layout changes (the runs table the page script
+# writes on each refresh, over a production-shaped history: one weekly batch, scores never stored)
+# ---------------------------------------------------------------------------
+
+_SCORE_HEADS = (
+    "Best CRRA-EU score",
+    "Best Sortino score",
+    "Best objective score",
+    "Best score",
+)
+
+
+def _seed_weekly_batches(weeks: int = 4) -> list[str]:
+    """Every captured symphony's runs stamped by one weekly batch, the first two with one run more.
+
+    The latest batch gives every row the same run time and outcome and no score or t-stat, so the
+    table keeps two columns and the sentence says the rest; the older runs keep four.
+    """
+    from tests.ui import _page_explainers_production_shapes as prod
+
+    return prod.seed_same_batch_autotune_runs(weeks)
+
+
+def _numeric(entry: dict) -> list[str]:
+    return [*entry.get("numeric", []), *_SCORE_HEADS, "Sel t-stat"]
+
+
+def _measure_runs(probe, name: str, script: str, **extra) -> dict:
+    spec = al.spec_of(
+        al.TABLE_GROUPS[name], name=name, numeric=_numeric(al.TABLE_GROUPS[name]), **extra
+    )
+    return al.measure(probe.page, script, spec)
+
+
+def _reload_at(probe, width: int):
+    probe.page.set_viewport_size(al.viewport(width))
+    open_advisor(probe)
+    _wait_for_cards(probe, 11)
+    probe.page.evaluate("() => document.fonts.ready.then(() => true)")
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_the_runs_table_shows_one_header_above_columns_that_share_their_edges(advisor_probe, width):
+    _seed_weekly_batches()
+    _reload_at(advisor_probe, width)
+    result = _measure_runs(advisor_probe, "autotune_runs", al.COLUMN_EDGES_JS)
+    assert result["found"] == 1, "the runs table is not on the page"
+    assert result["violations"] == [], result["violations"]
+    names = [c["name"] for c in result["instances"][0]["columns"]]
+    assert names == ["Symphony", "Runs without adopting a tuned config"], names
+    assert result["instances"][0]["body_rows"] == 11
+    assert advisor_probe.page_errors == [], advisor_probe.page_errors
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_the_older_runs_table_shows_one_header_above_columns_that_share_their_edges(
+    advisor_probe, width
+):
+    _seed_weekly_batches()
+    _reload_at(advisor_probe, width)
+    advisor_probe.page.locator("#autotune-older-summary").click()
+    result = _measure_runs(advisor_probe, "autotune_older_runs", al.COLUMN_EDGES_JS)
+    assert result["found"] == 1, "the older-runs table is not on the page"
+    assert result["violations"] == [], result["violations"]
+    names = [c["name"] for c in result["instances"][0]["columns"]]
+    assert names == ["Symphony", "Run time (ET)", "Outcome", "Runs without adopting a tuned config"]
+
+
+@pytest.mark.parametrize("width", [1920, 1440])
+def test_the_runs_tables_columns_sit_close_enough_to_read_across(advisor_probe, width):
+    _seed_weekly_batches()
+    _reload_at(advisor_probe, width)
+    advisor_probe.page.locator("#autotune-older-summary").click()
+    for name in ("autotune_runs", "autotune_older_runs"):
+        result = _measure_runs(advisor_probe, name, al.COLUMN_GAPS_JS, max_gap=al.MAX_COLUMN_GAP_PX)
+        assert result["found"] == 1 and result["violations"] == [], (name, result["violations"])
+
+
+@pytest.mark.parametrize("width", [1920, 1440, 1001])
+def test_a_table_whose_rows_keep_their_time_and_scores_still_lines_up(advisor_probe, width):
+    """Scored runs at different times: only the shared outcome is lifted, nothing is dropped."""
+    _seed(2)
+    _reload_at(advisor_probe, width)
+    result = _measure_runs(advisor_probe, "autotune_runs", al.COLUMN_EDGES_JS)
+    assert result["found"] == 1 and result["violations"] == [], result["violations"]
+    names = [c["name"] for c in result["instances"][0]["columns"]]
+    assert names == [
+        "Symphony",
+        "Run time (ET)",
+        "Runs without adopting a tuned config",
+        "Best objective score",
+        "Sel t-stat",
+    ], names
+    gaps = _measure_runs(
+        advisor_probe, "autotune_runs", al.COLUMN_GAPS_JS, max_gap=al.MAX_COLUMN_GAP_PX
+    )
+    assert gaps["violations"] == [], gaps["violations"]
+
+
+def test_a_long_symphony_name_wraps_inside_its_own_cell_and_the_columns_stay_aligned(advisor_probe):
+    _seed_weekly_batches()
+    # A stored key no live state holds prints as itself; spaces give the name places to wrap.
+    long_name = (
+        "A strategy name long enough to wrap onto a second line inside its own cell of the "
+        "runs table without moving the columns beside it"
+    )
+    database.save_autotune_run(
+        "2026-11-06T19:08:00", long_name, 0.5, 1.0, "Reverted to Fallback", 0.4, 0.3
+    )
+    advisor_probe.page.set_viewport_size(al.viewport(1440))
+    open_advisor(advisor_probe)
+    _wait_for_cards(advisor_probe, 12)
+    result = _measure_runs(advisor_probe, "autotune_runs", al.COLUMN_EDGES_JS)
+    assert result["found"] == 1 and result["violations"] == [], result["violations"]
+    lines = advisor_probe.page.evaluate(
+        """(name) => {
+          const cell = [...document.querySelectorAll('#autotune-runs-list .autotune-run-name')]
+            .find((c) => c.textContent.trim() === name);
+          const range = document.createRange();
+          range.selectNodeContents(cell);
+          return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+        }""",
+        long_name,
+    )
+    assert lines >= 2, "premise: the long name wrapped onto a second line"

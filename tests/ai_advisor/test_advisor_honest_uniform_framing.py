@@ -138,7 +138,7 @@ def test_ai_advisor_renders_honest_uniform_guardrail_explanation(flask_client, u
 # ===========================================================================
 
 
-def test_note_and_placeholder_name_the_suggestion_control_by_its_label(
+def test_the_description_names_the_suggestion_control_by_its_label_and_the_placeholder_does_not_repeat_it(
     flask_client, uniform_clear_rows
 ):
     html_text = flask_client.get("/ai-advisor").get_data(as_text=True)
@@ -149,11 +149,14 @@ def test_note_and_placeholder_name_the_suggestion_control_by_its_label(
     label = button.text
     assert label == "Run Claude advisor"
 
-    note = tree.find(testid="guardrail-uniform-note")
+    # The sentence above the toolbar (the description of the suggestion control) names the button
+    # exactly as it reads; the guardrail paragraph and the placeholder's long hint are gone.
+    assert tree.find(testid="guardrail-uniform-note") is None
+    description = next(n for n in tree.iter() if n.attrs.get("data-explainer") == "O03")
     placeholder = tree.find(testid="suggestions-placeholder")
-    assert note is not None and placeholder is not None
-    assert label in note.text, note.text
-    assert label in placeholder.text, placeholder.text
-    for surface in (note.text, placeholder.text):
+    assert placeholder is not None
+    assert label in description.text, description.text
+    assert placeholder.text == "No suggestions yet."
+    for surface in (description.text, placeholder.text):
         assert "gear" not in surface.lower(), surface
     assert "gear icon" not in html_text.lower()

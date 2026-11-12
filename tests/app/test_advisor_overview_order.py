@@ -3,10 +3,10 @@ below it.
 
 Subject: ``GET /ai-advisor`` over a real temp database.
 
-* In the Overview panel the top panel (the grid) holds, in this order: the Retirement pointer,
-  the controls bar, the summary strip, the lens stamp, the suggestions column and the autotune
-  runs; then come the Market Prism block and the advisor observations. The pointer, the controls
-  and the one-line hint share one toolbar row.
+* In the Overview panel the top panel (the grid) holds, in this order: the controls bar, the
+  summary strip, the lens stamp, the suggestions column and the autotune runs; then come the
+  Market Prism block and the advisor observations. The Retirement pointer is not in the grid: it
+  is the last row of the observations list.
 * The order is the same with a Market Prism row and without one (the empty state sits where the
   block does).
 * The Prism block itself is moved, not edited: its template text equals the copy captured
@@ -28,13 +28,14 @@ from tests.app import _tenure_review_panel_builders as pb
 
 _OVERVIEW_ORDER = (
     "advisor-grid",
-    "retirement-pointer",
     "advisor-controls",
     "advisor-summary-strip",
     "advisor-lens-as-of",
     "suggestions-column",
     "autotune-panel",
     "market-prism-block",
+    "advisor-observations-section",
+    "retirement-pointer",
 )
 
 
@@ -89,14 +90,21 @@ class TestOverviewOrder:
         assert order.index(panel.find("advisor-grid")) < order.index(block)
         assert order.index(panel.find("advisor-grid")) < order.index(empty)
 
-    def test_the_pointer_and_controls_precede_the_prism_block(self, isolated_db, client):
+    def test_the_controls_precede_the_prism_block_and_the_pointer_follows_the_observations(
+        self, isolated_db, client
+    ):
         w.seed_roster()
         store_prism_row()
+        store("guardrail_clear", times=2)
         _, panel, order = _overview(client)
         block = panel.find("market-prism-block")
         assert block.find("prism-sentiment-chip") is not None, "premise: a stored read renders"
-        for before in ("retirement-pointer", "advisor-controls"):
-            assert order.index(panel.find(before)) < order.index(block), before
+        assert order.index(panel.find("advisor-controls")) < order.index(block)
+        pointer = panel.find("retirement-pointer")
+        section = panel.find("advisor-observations-section")
+        assert pointer.is_inside(section), "the pointer is not in the observations list"
+        assert order.index(block) < order.index(pointer)
+        assert panel.find("advisor-grid").find("retirement-pointer") is None
 
 
 class TestPrismBlockIsMovedNotEdited:

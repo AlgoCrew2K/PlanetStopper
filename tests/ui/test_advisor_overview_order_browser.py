@@ -7,9 +7,10 @@ with a message naming it, never a skip.
 
 The server is the app in this process on the per-test database, seeded with a stored Market
 Prism read (the tallest block of the page), observation rows and autotune runs through their
-real writers. At 1440x900 the Retirement pointer and the controls bar end inside the first
-900 px, share one toolbar row at the head of the top panel (the grid), and the page reads top to
-bottom: the top panel, the Prism block, the observations.
+real writers. At 1440x900 the controls bar ends inside the first 900 px and the toolbar row at the
+head of the top panel (the grid) holds only the symphony picker, Run, the error slot and the
+suggestions slot, and the page reads top to bottom: the top panel, the Prism block, the
+observations.
 """
 
 from __future__ import annotations
@@ -42,7 +43,6 @@ _BLOCKS = (
     "market-prism-block",
     "advisor-observations-section",
 )
-_TOOLBAR = ("retirement-pointer", "advisor-controls")
 _BOXES_JS = """
 (ids) => Object.fromEntries(ids.map((id) => {
   const el = document.querySelector('[data-testid="' + id + '"]');
@@ -74,7 +74,38 @@ def _seed() -> None:
         )
 
 
-def test_the_pointer_and_the_controls_end_inside_the_first_screen(advisor_probe):
+_ROW_JS = """
+() => {
+  const grid = document.querySelector('[data-testid="advisor-grid"]');
+  const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  const controls = grid.querySelector('[data-testid="advisor-controls"]');
+  const c = controls.getBoundingClientRect();
+  const key = (el) => el.getAttribute('data-testid') || el.id || el.className;
+  const row = [...grid.children].filter(shown).filter((el) => {
+    const r = el.getBoundingClientRect();
+    return r.top < c.bottom && r.bottom > c.top;
+  }).map(key);
+  const inside = [...controls.querySelectorAll('*')].filter(shown).map((el) => el.tagName.toLowerCase());
+  return {
+    row, inside,
+    pointers: grid.querySelectorAll('a[href="#retirement"], [data-testid="retirement-pointer"]').length,
+    links: grid.querySelectorAll('a').length,
+    bottom: c.bottom + window.scrollY,
+  };
+}
+"""
+_ROW_PARTS = {"advisor-controls", "suggestions-column"}
+_CONTROL_TAGS = {"div", "label", "select", "option", "button", "span"}
+
+
+def _assert_toolbar_row(read: dict, state: str) -> None:
+    assert set(read["row"]) <= _ROW_PARTS, f"{state}: the toolbar row holds {read['row']}"
+    assert "advisor-controls" in read["row"], f"{state}: the controls are not on the row"
+    assert read["pointers"] == 0 and read["links"] == 0, f"{state}: a link is on the toolbar"
+    assert set(read["inside"]) <= _CONTROL_TAGS, f"{state}: the controls hold {read['inside']}"
+
+
+def test_the_controls_end_inside_the_first_screen(advisor_probe):
     _seed()
     open_advisor(advisor_probe)
     wait_until(
@@ -82,25 +113,53 @@ def test_the_pointer_and_the_controls_end_inside_the_first_screen(advisor_probe)
         "() => document.querySelectorAll(\"#autotune-runs-list [data-testid='autotune-run-row']\").length === 11",
         "the autotune list never finished loading",
     )
-    boxes = advisor_probe.page.evaluate(_BOXES_JS, [*_TOOLBAR, *_BLOCKS])
+    boxes = advisor_probe.page.evaluate(_BOXES_JS, ["advisor-controls", *_BLOCKS])
     missing = [name for name, box in boxes.items() if box is None]
     assert missing == [], f"the Overview has no {missing}"
-    assert boxes["retirement-pointer"]["bottom"] <= _FIRST_SCREEN_PX, boxes["retirement-pointer"]
     assert boxes["advisor-controls"]["bottom"] <= _FIRST_SCREEN_PX, boxes["advisor-controls"]
-    for name in ("retirement-pointer", "advisor-controls"):
-        assert boxes[name]["height"] > 0 and boxes[name]["width"] > 0, f"{name} takes no space"
+    assert boxes["advisor-controls"]["height"] > 0 and boxes["advisor-controls"]["width"] > 0
 
 
-def test_the_pointer_and_the_controls_share_one_toolbar_row(advisor_probe):
+def test_the_toolbar_row_holds_the_picker_run_the_error_slot_and_the_suggestions_slot_only(
+    advisor_probe,
+):
     _seed()
     open_advisor(advisor_probe)
-    boxes = advisor_probe.page.evaluate(_BOXES_JS, list(_TOOLBAR))
-    pointer, controls = boxes["retirement-pointer"], boxes["advisor-controls"]
-    assert abs(pointer["top"] - controls["top"]) < controls["height"], (
-        "the pointer sits on its own row instead of beside the controls",
-        pointer,
-        controls,
+    read = advisor_probe.page.evaluate(_ROW_JS)
+    _assert_toolbar_row(read, "idle")
+    assert "select" in read["inside"] and "button" in read["inside"]
+    assert advisor_probe.page_errors == [], advisor_probe.page_errors
+
+
+def test_the_toolbar_row_is_the_same_with_a_symphony_picked_and_while_a_run_is_in_progress(
+    advisor_probe,
+):
+    """A picked symphony and a Run that has not answered (its request held open) change nothing on
+    the row."""
+    _seed()
+    held: list = []
+    advisor_probe.page.route("**/ai-advisor/suggest", lambda route: held.append(route))
+    open_advisor(advisor_probe)
+    wait_until(
+        advisor_probe,
+        "() => document.querySelectorAll('#symphony-id-input option').length > 1",
+        "the symphony picker never listed a symphony",
     )
+    advisor_probe.page.evaluate(
+        """() => {
+          const select = document.getElementById('symphony-id-input');
+          select.value = select.options[1].value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }"""
+    )
+    _assert_toolbar_row(advisor_probe.page.evaluate(_ROW_JS), "a symphony picked")
+    advisor_probe.page.evaluate("() => document.getElementById('get-suggestions-btn').click()")
+    advisor_probe.page.wait_for_timeout(400)
+    assert held, "premise: the run's request is in flight"
+    _assert_toolbar_row(advisor_probe.page.evaluate(_ROW_JS), "a run in progress")
+    for route in held:
+        route.abort()
+    assert advisor_probe.page_errors == [], advisor_probe.page_errors
 
 
 def test_the_page_reads_top_panel_prism_observations_top_to_bottom(advisor_probe):

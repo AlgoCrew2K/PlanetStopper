@@ -11,7 +11,7 @@ which); the cards come from the real tick worker and the real approve and reject
   value is derived from the stored summary; an absent value reads the dash, never 0.
 * Each recommendation is a ``.sym-card`` with a ``.status-pill``; Run recommender is a ``.run-btn``.
 * Excluded symphonies read their display name and a sentence.
-* The Overview carries one pointer line.
+* The Overview carries one pointer, the last row of its observations list.
 * Every test id the section had on the Overview is still present, state by state.
 * Copy that names the 03:45 slot states its zone.
 
@@ -624,47 +624,131 @@ class TestExclusionSentences:
 
 
 # ===========================================================================
-# The Overview pointer
+# The Retirement row of the observations list (the pointer that left the toolbar)
 # ===========================================================================
+
+# The stored run of the scenario: 03:51 UTC on 2026-11-10 is 22:51 Eastern on 2026-11-09 (standard time).
+_ROW_RUN_AT = "2026-11-10T03:51:00Z"
+_NEVER_RUN_STATUS = "not run yet (use Run recommender)"
+
+
+def _retirement_rows(html: str) -> list[pb.Node]:
+    panel = w.tab_panel(html, "overview")
+    return [
+        n
+        for n in panel.walk()
+        if "obs-producer" in n.classes() and n.attrs.get("data-role") == "RETIREMENT"
+    ]
+
+
+def _retirement_row(html: str) -> pb.Node:
+    rows = _retirement_rows(html)
+    assert len(rows) == 1, f"the Overview holds {len(rows)} Retirement rows, not one"
+    return rows[0]
+
+
+def _cell(row: pb.Node, class_name: str) -> pb.Node:
+    cells = w.by_class(row, class_name)
+    assert len(cells) == 1, f"the Retirement row holds {len(cells)} .{class_name} cells, not one"
+    return cells[0]
 
 
 def _pointer(html: str) -> pb.Node:
-    node = w.tab_panel(html, "overview").find("retirement-pointer")
-    assert node is not None, "the Overview carries no Retirement pointer"
+    node = _retirement_row(html).find("retirement-pointer")
+    assert node is not None, "the Retirement row carries no pointer link"
     return node
 
 
-class TestOverviewPointer:
-    def test_it_is_one_plain_link_to_the_retirement_tab_on_the_toolbar(self, client, isolated_db):
-        node = _pointer(w.get_page(client))
-        assert node.tag == "a" and node.attrs["href"] == "#retirement"
-        assert "adv-pointer" in node.classes()
+def _status(html: str) -> str:
+    """The verdict cell of the Retirement row: the pointer text without its leading word."""
+    return _cell(_retirement_row(html), "obs-producer-verdict").text()
 
-    def test_never_run_reads_not_run_yet(self, client, isolated_db):
-        assert "Retirement: not run yet" in _pointer(w.get_page(client)).text()
+
+class TestRetirementRow:
+    def test_it_is_the_last_row_of_the_observations_list_and_the_only_pointer(
+        self, client, isolated_db
+    ):
+        from tests._advisor_observation_records import store
+
+        w.seed_roster()
+        store("guardrail_clear", times=2)
+        store("guardrail_watch", times=2)
+        html = w.get_page(client)
+        panel = w.tab_panel(html, "overview")
+        section = panel.find("advisor-observations-section")
+        row = _retirement_row(html)
+        assert row.is_inside(section), "the Retirement row is outside the observations list"
+        order = list(panel.walk())
+        others = [n for n in order if "obs-producer" in n.classes() and n is not row]
+        assert len(others) >= 2, "premise: producer rows are on the page"
+        assert all(order.index(n) < order.index(row) for n in others), (
+            "the Retirement row is not the last row of the list"
+        )
+        assert len(pb.parse_html(html).find_all("retirement-pointer")) == 1, (
+            "more than one Retirement pointer on the page"
+        )
+
+    def test_the_toolbar_holds_no_pointer_and_nothing_is_styled_as_one(self, client, isolated_db):
+        html = w.get_page(client)
+        panel = w.tab_panel(html, "overview")
+        grid = panel.find("advisor-grid")
+        assert grid is not None
+        assert grid.find("retirement-pointer") is None, "the pointer is still on the toolbar"
+        assert not [n for n in panel.walk() if "adv-pointer" in n.classes()], (
+            "an element still carries the toolbar pointer class"
+        )
+        assert not [n for n in grid.walk() if n.tag == "a" and n.attrs.get("href") == "#retirement"]
+
+    def test_a_row_without_other_producers_still_shows_after_the_empty_line(
+        self, client, isolated_db
+    ):
+        html = w.get_page(client)
+        panel = w.tab_panel(html, "overview")
+        empty = panel.find("obs-empty")
+        assert empty is not None, "premise: no observations stored"
+        order = list(panel.walk())
+        assert order.index(empty) < order.index(_retirement_row(html))
+
+    def test_its_label_verdict_and_link_read_as_the_plan_words_with_empty_time_and_count_cells(
+        self, client, isolated_db
+    ):
+        w.seed_roster()
+        w.store_raw_summary(w.derived_summary(run_at=_ROW_RUN_AT, recommendations=0))
+        html = w.get_page(client)
+        row = _retirement_row(html)
+        assert _cell(row, "obs-producer-label").text() == "Retirement"
+        assert _cell(row, "obs-producer-verdict").text() == (
+            "last run 2026-11-09 22:51 ET, 0 recommendations, 0 pending"
+        )
+        assert _cell(row, "obs-producer-time").text() == ""
+        assert _cell(row, "obs-producer-total").text() == ""
+        link = _pointer(html)
+        assert link.tag == "a" and link.attrs["href"] == "#retirement"
+        assert link.text() == "Open tab"
+
+    def test_the_verdict_cell_never_repeats_the_leading_word(self, client, isolated_db):
+        w.seed_roster()
+        w.store_raw_summary(w.derived_summary(run_at=_ROW_RUN_AT, recommendations=0))
+        status = _status(w.get_page(client))
+        assert not status.startswith("Retirement") and "Retirement:" not in status
+
+    def test_a_row_that_never_ran_reads_not_run_yet(self, client, isolated_db):
+        assert _status(w.get_page(client)) == _NEVER_RUN_STATUS
 
     def test_a_good_run_reads_its_et_time_its_count_and_the_pending_count(
         self, client, isolated_db, monkeypatch
     ):
         summary = w.run_tick_with_recommendations(monkeypatch, _series_cluster_scenario())
         ids = w.stored_recommendation_ids()
-        text = _pointer(w.get_page(client)).text()
-        assert "Retirement" in text
+        text = _status(w.get_page(client))
         assert w.et_text(summary["run_at"], _RUN_AT_FORMAT, -4) in text
         assert f"{summary['recommendations']} recommendations" in text
         assert f"{len(ids)} pending" in text
         # One decision lowers the pending count and nothing else.
         w.decide(client, "approve", ids[0])
-        text = _pointer(w.get_page(client)).text()
+        text = _status(w.get_page(client))
         assert f"{summary['recommendations']} recommendations" in text
         assert f"{len(ids) - 1} pending" in text
-
-    def test_a_run_with_no_recommendation_reads_the_run_time_and_zero(self, client, isolated_db):
-        w.seed_roster()
-        summary = w.store_captured_summary()
-        text = _pointer(w.get_page(client)).text()
-        assert w.et_text(summary["run_at"], _RUN_AT_FORMAT, -4) in text
-        assert "0 recommendations" in text
 
     @pytest.mark.parametrize(
         ("builder", "state_words"),
@@ -680,12 +764,12 @@ class TestOverviewPointer:
     ):
         summary = builder(w, monkeypatch)
         w.store_summary(summary)
-        text = _pointer(w.get_page(client)).text()
-        assert state_words in text.lower()
+        text = _status(w.get_page(client))
+        assert text.startswith(f"last run {state_words}, ")
         assert w.et_text(summary["run_at"], _RUN_AT_FORMAT, -4) in text
 
-    def test_the_pointer_reads_context_the_page_already_has(self, client, isolated_db, monkeypatch):
-        # One read of each retirement source per page render, as before the pointer existed.
+    def test_the_row_reads_context_the_page_already_has(self, client, isolated_db, monkeypatch):
+        # One read of each retirement source per page render, as before the pointer moved.
         import app as app_module
 
         w.seed_roster()
@@ -705,6 +789,69 @@ class TestOverviewPointer:
             monkeypatch.setattr(app_module, attr, spy)
         w.get_page(client)
         assert calls == {"last_run": 1, "cards_run": 1, "recommendations": 1}
+
+
+class TestRetirementRowSecurity:
+    def test_a_stored_state_carrying_markup_is_escaped_in_the_verdict_cell(
+        self, client, isolated_db
+    ):
+        w.seed_roster()
+        hostile = "<script>alert(1)</script>"
+        w.store_raw_summary(w.derived_summary(run_at=_ROW_RUN_AT, status=hostile))
+        html = w.get_page(client)
+        assert hostile not in html, "the stored state reached the page as markup"
+        assert "alert(1)" in _status(html), "premise: the state is shown, as text"
+
+
+class TestRetirementPointerStatus:
+    """``_build_retirement_pointer`` keeps ``text`` and gains ``status``: the text without its
+    leading "Retirement: "."""
+
+    def test_never_run_has_a_status_and_the_unchanged_text(self):
+        import app as app_module
+
+        got = app_module._build_retirement_pointer(None, [])
+        assert got["status"] == _NEVER_RUN_STATUS
+        assert got["text"] == f"Retirement: {_NEVER_RUN_STATUS}"
+
+    def test_a_good_run_status_is_the_time_the_count_and_the_pending_count(self):
+        import app as app_module
+
+        got = app_module._build_retirement_pointer(
+            {"run_at": _ROW_RUN_AT, "status": "ok", "recommendations": 2},
+            [{"approval_status": "pending"}, {"approval_status": "approved"}],
+        )
+        assert got["status"] == "last run 2026-11-09 22:51 ET, 2 recommendations, 1 pending"
+        assert got["text"] == f"Retirement: {got['status']}"
+
+    def test_one_recommendation_reads_in_the_singular(self):
+        import app as app_module
+
+        got = app_module._build_retirement_pointer(
+            {"run_at": _ROW_RUN_AT, "status": "ok", "recommendations": 1}, []
+        )
+        assert got["status"] == "last run 2026-11-09 22:51 ET, 1 recommendation, 0 pending"
+
+    def test_a_run_that_did_not_finish_names_its_state_and_its_time(self):
+        import app as app_module
+
+        got = app_module._build_retirement_pointer(
+            {"run_at": _ROW_RUN_AT, "status": "internal_error"}, []
+        )
+        assert got["status"] == "last run internal error, 2026-11-09 22:51 ET"
+        assert got["text"] == f"Retirement: {got['status']}"
+
+    @pytest.mark.parametrize("status", [None, "", "  ", 5])
+    def test_a_run_with_no_readable_state_reads_unknown(self, status):
+        import app as app_module
+
+        got = app_module._build_retirement_pointer({"run_at": _ROW_RUN_AT, "status": status}, [])
+        assert got["status"] == "last run unknown, 2026-11-09 22:51 ET"
+
+    def test_no_other_key_is_added(self):
+        import app as app_module
+
+        assert set(app_module._build_retirement_pointer(None, [])) == {"text", "status"}
 
 
 # ===========================================================================
@@ -845,10 +992,10 @@ class TestMergedPanel:
     def test_the_pointer_counts_the_review_candidates_waiting_for_a_decision(self, merged, client):
         # The tab lists a retire candidate from the symphony review that waits for a decision. The
         # pointer states the recommender's count of 0 and must not say nothing is pending.
-        text = _pointer(merged).text()
+        text = _status(merged)
         assert "0 recommendations" in text and "1 pending" in text
         w.decide(client, "approve", pb.FULL_IDS["retire"])
-        after = _pointer(w.get_page(client)).text()
+        after = _status(w.get_page(client))
         assert "0 recommendations" in after and "1 pending" not in after
 
     def test_every_review_entry_is_a_sym_card_like_the_recommender_cards(self, merged):

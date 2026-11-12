@@ -199,9 +199,10 @@ PRISM_JS = (
   const rect = """
     + RECT_JS
     + """;
+  const header = document.querySelector('[data-testid="market-prism-block"] .prism-block-header');
   const description = document.querySelector('[data-explainer="O15"]');
-  const disclosure = document.querySelector('details[data-terms="O15"]');
-  return { description: rect(description), disclosure: rect(disclosure) };
+  const rationale = document.querySelector('[data-testid="prism-rationale"]');
+  return { header: rect(header), description: rect(description), rationale: rect(rationale) };
 }"""
 )
 

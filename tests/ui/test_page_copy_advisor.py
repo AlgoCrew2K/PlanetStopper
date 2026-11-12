@@ -131,7 +131,11 @@ A_KEYS_WITH_TERMS = [k for k in adv.OWNED_A_KEYS if adv.b_rows_for(k)]
 
 
 def test_every_owned_row_is_in_the_fixture_and_every_term_row_has_a_description():
-    owned_b = [r for r in copy_fixture.rows("B") if r["host"] in adv.TAB_OF_B_HOST]
+    owned_b = [
+        r
+        for r in copy_fixture.rows("B")
+        if r["host"] in adv.TAB_OF_B_HOST and r.get("placement_target") not in adv.RE_PINNED_A_KEYS
+    ]
     assert owned_b, "the fixture holds no Advisor term rows"
     for record in owned_b:
         assert record["placement_target"] in adv.OWNED_A_KEYS, (
@@ -181,7 +185,7 @@ def test_a_tab_whose_dot_carries_a_title_keeps_the_title_and_names_its_meaning_i
     shown = advisor.open("full", key=True, seed=_seed_everything)
     assert adv.tab_dot_titles(shown.page) == adv.TAB_DOT_TITLES
     carried_by = {
-        "overview": ("O01",),
+        "overview": ("O03",),
         "correlations": ("C01",),
         "asset-swaps": ("W01",),
         "logic-changes": ("L01",),
@@ -209,7 +213,7 @@ def test_a_tab_whose_dot_carries_a_title_keeps_the_title_and_names_its_meaning_i
 def test_a_page_with_nothing_stored_describes_only_the_sections_it_renders(advisor):
     shown = advisor.open("empty", key=False)
     present = {k for k in adv.OWNED_A_KEYS if adv.explainer_nodes(shown.page, k)}
-    for key in ("A01", "O01", "O03", "O08", "O15", "O27", "C01", "R01", "R02", "R22"):
+    for key in ("C01", "R01", "R02", "R22"):
         assert key in present, f"{key}: a rendered section lost its description"
     for key in ("W01", "L01", "B00", "T02", "X01"):
         assert key in present, f"{key} is a tab line and always shows"
@@ -279,7 +283,12 @@ def test_a_disclosure_follows_its_description_closed_with_one_line_per_term(advi
 
 def test_every_term_is_defined_once_on_the_page(advisor):
     shown = advisor.open("full", key=True, seed=_seed_everything)
-    for record in (r for r in copy_fixture.rows("B") if r["host"] in adv.TAB_OF_B_HOST):
+    moved = adv.moved_term_keys()
+    for record in (
+        r
+        for r in copy_fixture.rows("B")
+        if r["host"] in adv.TAB_OF_B_HOST and r["key"] not in moved
+    ):
         found = shown.page.select(f'[data-term="{record["key"]}"]')
         assert len(found) == 1, f"{record['key']} is defined {len(found)} times on the page"
 
@@ -290,7 +299,11 @@ def test_every_disclosure_is_closed_on_load_and_has_the_one_summary_everywhere(a
     assert details, "the page holds no shared disclosure"
     for node in details:
         assert not node.has_attr("open")
-        assert adv.norm(node.find("summary").get_text(" ")) == adv.DISCLOSURE_SUMMARY
+        summary = adv.norm(node.find("summary").get_text(" "))
+        # A host that still holds its terms in a disclosure keeps the reference summary; a host
+        # whose terms moved holds one Glossary.
+        assert summary in (adv.DISCLOSURE_SUMMARY, "Glossary"), summary
+        assert (summary == "Glossary") == (node.get("data-terms") == "glossary"), summary
 
 
 # ---------------------------------------------------------------------------
@@ -883,3 +896,258 @@ def test_the_description_check_reports_each_fault_it_checks_for():
     assert any("dash" in p for p in description_problems("A – B."))
     assert any("emoji" in p for p in description_problems("A \U0001f680 launch."))
     assert any("slot" in p for p in description_problems("At {screen_threshold} or more."))
+
+
+# ---------------------------------------------------------------------------
+# The navigation panel and the Overview: descriptions, other texts and the Glossary
+# (the plan's AC-2, AC-3 and AC-4 for the part of the Advisor page above the other tabs)
+#
+# The expected text of every row is this plan's (``a_text``, ``x_row``, ``glossary``); the
+# reference rows these replace are still read for what must be gone.
+# ---------------------------------------------------------------------------
+
+OLD_PLACEHOLDER = "Select a symphony and click Run Claude advisor to get suggestions."
+OLD_GUARDRAIL_TAIL = "Per-symphony recommendations come from the Run Claude advisor button."
+
+
+def _overview(shown: Opened):
+    return adv.panel_of(shown.page, "overview")
+
+
+def _position(order, node) -> int:
+    return next(i for i, n in enumerate(order) if n is node)
+
+
+def _glossary_of(panel):
+    found = panel.select('details[data-terms="glossary"]')
+    assert len(found) == 1, f"{len(found)} Glossaries in the panel, not one"
+    return found[0]
+
+
+def _without_glossaries(page) -> str:
+    """The page's text with every Glossary, script and style removed: the section bodies."""
+    clone = adv.soup(str(page))
+    for dead in clone(["script", "style", "template"]):
+        dead.decompose()
+    for glossary in clone.select('details[data-terms="glossary"]'):
+        glossary.decompose()
+    return adv.norm(clone.get_text(" "))
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.?!])\s+", adv.norm(text)) if s]
+
+
+def test_the_navigation_panel_holds_only_the_tab_bar(advisor):
+    """S-3.5 and the markup half of S-2.1: no description, no disclosure, no link and no text
+    beside or above the tab bar."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    nav = shown.page.select_one('[data-testid="advisor-nav-panel"]')
+    assert nav is not None, "the page has no navigation panel"
+    assert not nav.select("[data-explainer]"), "the navigation panel carries a description"
+    assert not nav.select("details, [data-terms], [data-term], p"), (
+        "the navigation panel carries a disclosure or a paragraph"
+    )
+    children = [c for c in nav.find_all(recursive=False)]
+    assert [c.name for c in children] == ["div"] and "cap-nav-wrap" in children[0].get("class", [])
+    assert adv.explainer_nodes(shown.page, "A01") == [], "the caption A01 is still on the page"
+    assert not shown.page.select('[data-testid="advisor-caption"]')
+    own_text = adv.norm(" ".join(nav.stripped_strings))
+    assert "Advisory tools" not in own_text and "Tab dots" not in own_text
+
+
+@pytest.mark.parametrize("key", adv.OVERVIEW_A_KEYS)
+def test_an_overview_description_shows_its_new_text_once_under_its_heading(advisor, key):
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    nodes = adv.explainer_nodes(shown.page, key)
+    assert len(nodes) == 1, f"{key}: {len(nodes)} elements carry data-explainer={key!r}"
+    node = nodes[0]
+    assert adv.norm(node.get_text(" ")) == adv.norm(copy_fixture.a_text(key)), key
+    assert adv.visible_in_markup(node), f"{key} is hidden by the markup"
+    panel = _overview(shown)
+    assert node in panel.select(f'[data-explainer="{key}"]'), f"{key} is not inside its panel"
+    heading = adv.HEADING_OF_A_KEY.get(key)
+    if heading is not None:
+        before = adv.nearest_heading_before(panel, node)
+        assert before.startswith(heading), (
+            f"{key} sits under {before!r}, not directly under {heading!r}"
+        )
+
+
+def test_the_overview_has_no_tab_line_and_its_toolbar_sentence_sits_above_the_toolbar(advisor):
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    assert adv.explainer_nodes(shown.page, "O01") == [], "the tab-level line O01 is still shown"
+    panel = _overview(shown)
+    order = [n for n in panel.descendants if getattr(n, "name", None)]
+    sentence = adv.explainer_nodes(shown.page, "O03")[0]
+    toolbar = panel.select_one('[data-testid="advisor-controls"]')
+    assert _position(order, sentence) < _position(order, toolbar)
+
+
+@pytest.mark.parametrize("world", ["empty", "full"])
+def test_the_overview_descriptions_show_with_nothing_stored_too(advisor, world):
+    shown = advisor.open(world, key=False)
+    for key in adv.OVERVIEW_A_KEYS:
+        assert len(adv.explainer_nodes(shown.page, key)) == 1, f"{key} is not shown in {world}"
+    for key in adv.REMOVED_A_KEYS:
+        assert adv.explainer_nodes(shown.page, key) == [], f"{key} is shown in {world}"
+
+
+def test_the_suggestions_placeholder_reads_no_suggestions_yet(advisor):
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    placeholder = shown.page.select_one('[data-testid="suggestions-placeholder"]')
+    assert placeholder is not None
+    assert adv.norm(placeholder.get_text(" ")) == copy_fixture.x_row("CX-1")["new_text"]
+    assert copy_fixture.x_row("CX-1")["new_text"] == "No suggestions yet."
+
+
+def test_the_guardrail_paragraph_and_the_pointer_class_are_gone_from_the_page(advisor):
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    assert not shown.page.select('[data-testid="guardrail-uniform-note"]')
+    assert copy_fixture.x_row("CX-3")["kind"] == "removed"
+    assert not shown.page.select(".adv-pointer, .obs-framing-note")
+
+
+def test_every_old_text_the_overview_dropped_is_in_no_section_body(advisor):
+    """S-3.3 for the Overview and the navigation panel: the reference text of each removed or
+    shortened row, and each old sentence the new text drops, appears in no section body, hidden
+    panels included. A sentence a Glossary line took over lives in the Glossary only."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    body = _without_glossaries(shown.page)
+    problems = []
+    for key in ("A01", "O01", "O03", "O08", "O15", "O27"):
+        old = adv.norm(copy_fixture.text(key, "A"))
+        new = copy_fixture.a_text(key)
+        kept = set(_sentences(new)) if new else set()
+        if old in body:
+            problems.append(f"{key}: the whole old text is on the page")
+        for sentence in _sentences(old):
+            if sentence not in kept and sentence in body:
+                problems.append(f"{key}: the old sentence {sentence!r} is on the page")
+    for literal in (OLD_PLACEHOLDER, OLD_GUARDRAIL_TAIL):
+        if literal in body:
+            problems.append(f"the old text {literal!r} is on the page")
+    assert not problems, "\n".join(problems)
+
+
+def test_the_old_guardrail_sentences_are_in_the_glossary_and_nowhere_else(advisor):
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    glossary = adv.norm(_glossary_of(_overview(shown)).get_text(" "))
+    body = _without_glossaries(shown.page)
+    for key in ("O31a", "O31b", "O31c"):
+        line = next(x for x in copy_fixture.glossary("Overview") if x["key"] == key)
+        sentence = adv.norm(line["text"]).split(": ", 1)[1]
+        assert sentence in glossary, f"{key}: the sentence is not in the Glossary"
+        assert sentence not in body, f"{key}: the sentence is also in a section body"
+
+
+def test_the_overview_ends_with_one_closed_glossary_holding_table_gs_lines_in_order(advisor):
+    """S-4.1 and S-4.2 for the Overview: one disclosure, closed, summary Glossary, the last
+    element of the tab panel, one paragraph per line in order with exactly the line's text."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    panel = _overview(shown)
+    glossary = _glossary_of(panel)
+    assert "hp-more" in glossary.get("class", []), "the Glossary is not the shared closed look"
+    assert not glossary.has_attr("open"), "the Glossary is open on load"
+    assert glossary.has_attr("data-glossary-host") and glossary.get("data-testid") == "glossary"
+    summary = glossary.find("summary", recursive=False)
+    assert summary is not None and adv.norm(summary.get_text(" ")) == "Glossary"
+    last = [c for c in panel.find_all(recursive=False)][-1]
+    assert last is glossary, "the Glossary is not the last element of the Overview panel"
+    lines = [c for c in glossary.find_all(recursive=False) if c.name != "summary"]
+    expected = copy_fixture.glossary("Overview")
+    assert [c.name for c in lines] == ["p"] * len(expected)
+    assert [c.get("data-term") for c in lines] == [line["key"] for line in expected]
+    for node, line in zip(lines, expected, strict=True):
+        assert adv.norm(node.get_text(" ")) == adv.norm(line["text"]), line["key"]
+
+
+def test_the_glossary_changed_and_new_lines_read_their_g2_text(advisor):
+    """S-4.5 for the Overview: O31a, O31b and O31c are the lines Table G2 writes."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    glossary = _glossary_of(_overview(shown))
+    g2 = [line for line in copy_fixture.glossary("Overview") if line["source"] == "G2"]
+    assert [line["key"] for line in g2] == ["O31a", "O31b", "O31c"]
+    for line in g2:
+        found = glossary.select(f'p[data-term="{line["key"]}"]')
+        assert len(found) == 1 and adv.norm(found[0].get_text(" ")) == adv.norm(line["text"])
+
+
+def test_an_unchanged_overview_line_equals_its_reference_row(advisor):
+    """S-4.7 for the Overview: a line that is not in Table G2 reads the reference fixture's text."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    glossary = _glossary_of(_overview(shown))
+    unchanged = [x for x in copy_fixture.glossary("Overview") if x["source"] == "ref"]
+    assert len(unchanged) >= 15, "premise: most Overview lines are unchanged"
+    for line in unchanged:
+        node = glossary.select_one(f'p[data-term="{line["key"]}"]')
+        assert node is not None, line["key"]
+        assert adv.norm(node.get_text(" ")) == adv.norm(copy_fixture.text(line["key"], "B")), line[
+            "key"
+        ]
+
+
+@pytest.mark.parametrize("world", ["empty", "full"])
+def test_the_glossary_holds_every_line_whatever_sections_render(advisor, world):
+    """S-4.11: with no run, no Prism row and no observations the Glossary still holds each line."""
+    shown = advisor.open(world, key=False)
+    glossary = _glossary_of(_overview(shown))
+    keys = [c.get("data-term") for c in glossary.find_all("p", recursive=False)]
+    assert keys == [line["key"] for line in copy_fixture.glossary("Overview")]
+
+
+def test_the_navigation_panel_and_the_overview_carry_no_what_the_terms_mean_disclosure(advisor):
+    """S-4.3 for the part C2 owns: no such summary, and no data-terms but the Glossary."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    nav = shown.page.select_one('[data-testid="advisor-nav-panel"]')
+    for scope in (nav, _overview(shown)):
+        summaries = [adv.norm(s.get_text(" ")) for s in scope.select("summary")]
+        assert adv.DISCLOSURE_SUMMARY not in summaries, summaries
+        others = [d for d in scope.select("[data-terms]") if d["data-terms"] != "glossary"]
+        assert others == [], [d["data-terms"] for d in others]
+    for line in copy_fixture.glossary("Overview"):
+        found = shown.page.select(f'#tab-panel-overview [data-term="{line["key"]}"]')
+        assert len(found) == 1, f"{line['key']} is defined {len(found)} times in the Overview"
+
+
+def test_the_page_loads_the_glossary_script_once_beside_its_own_scripts(advisor):
+    """The titles come from static/glossary.js, loaded once by the page that holds a Glossary."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    sources = [s["src"].split("?")[0] for s in shown.page.select("script[src]")]
+    assert sources.count("/static/glossary.js") == 1, sources
+    assert "/static/ai_advisor.js" in sources
+
+
+def test_the_sentiment_chip_and_the_verification_header_name_their_glossary_lines(advisor):
+    """TG3-7 in the server render: the chip carries data-glossary O16, the header O24."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    chip = shown.page.select_one('[data-testid="prism-sentiment-chip"]')
+    assert chip is not None, "premise: a stored read renders its chip"
+    assert chip.get("data-glossary") == "O16"
+    glossary = _glossary_of(_overview(shown))
+    assert glossary.select_one('p[data-term="O16"]') is not None
+
+
+def test_the_numeric_verification_header_names_its_glossary_line(advisor):
+    from tests._advisor_overview_prism import prism_raw_response, store_prism_row
+
+    def seed():
+        store_prism_row()
+        database.insert_advisor_observation(
+            advisor_role="MARKET_PRISM_VERIFICATION",
+            subject_type="portfolio",
+            subject_id="global",
+            verdict=None,
+            raw_response={
+                "run_id": prism_raw_response()["run_id"],
+                "checks": [],
+                "summary": {"n_checks": 0},
+                "verdict": "no-numeric-claims",
+            },
+        )
+
+    shown = advisor.open("full", key=True, seed=seed)
+    header = shown.page.select_one(".prism-verification-header")
+    if header is None:
+        pytest.fail("premise: the stored verification row renders its header")
+    assert header.get("data-glossary") == "O24"

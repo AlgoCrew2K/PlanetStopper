@@ -7,7 +7,7 @@ Scope: this file is ADDITIVE to tests/app/test_ai_advisor_tab_verification_overl
 (untouched — all 9 existing tests still pass unmodified) and pins ONLY the new
 redesign surface:
 
-  1. `_build_verification_count_line(summary)` (app.py:3744) — the new testable
+  1. `_build_verification_count_line(summary, verdict)` — the testable
      formatting helper, unit-tested directly with summary dicts, plus a hypothesis
      property test for the "flagged/overridden segment present iff nonzero" invariant.
   2. Clean case (25 pass / 2 unverifiable / 0 flagged / 0 overridden, verdict="clean"):
@@ -248,15 +248,25 @@ def _get_ai_advisor(client, verification_row):
 
 
 # ---------------------------------------------------------------------------
-# 1. _build_verification_count_line(summary) — direct unit tests
+# 1. _build_verification_count_line(summary, verdict) — direct unit tests
+#
+# The pill states the verified count only for a "clean" verdict whose counts are readable and
+# below the check count ("15 of 18 verified"); the count line then leaves that count out. Every
+# count that is not an integer above zero is left out (a bool is not an integer), and the line is
+# empty when the check count is absent, null or zero.
 # ---------------------------------------------------------------------------
+
+
+def _counts(**given) -> dict:
+    base = {"n_checks": 0, "n_pass": 0, "n_unverifiable": 0, "n_flagged": 0, "n_overridden": 0}
+    return {**base, **given}
 
 
 def test_count_line_is_empty_string_when_zero_checks():
     from app import _build_verification_count_line
 
-    summary = {"n_checks": 0, "n_pass": 0, "n_unverifiable": 0, "n_flagged": 0, "n_overridden": 0}
-    assert _build_verification_count_line(summary) == ""
+    for verdict in ("no-numeric-claims", "clean", None):
+        assert _build_verification_count_line(_counts(), verdict) == "", verdict
 
 
 def test_count_line_is_empty_string_when_n_checks_key_absent():
@@ -265,16 +275,24 @@ def test_count_line_is_empty_string_when_n_checks_key_absent():
     as '' — not raise a KeyError."""
     from app import _build_verification_count_line
 
-    assert _build_verification_count_line({}) == ""
+    assert _build_verification_count_line({}, "no-numeric-claims") == ""
+    assert _build_verification_count_line({}, "clean") == ""
 
 
-def test_count_line_clean_case_shows_pass_and_unverifiable_only():
+def test_count_line_is_empty_string_when_n_checks_is_null():
+    from app import _build_verification_count_line
+
+    assert _build_verification_count_line(_counts(n_checks=None, n_unverifiable=3), "clean") == ""
+
+
+def test_count_line_clean_case_omits_the_count_the_pill_states():
     from app import _build_verification_count_line
 
     summary = _VERIFICATION_ROW_CLEAN["raw_response"]["summary"]
-    line = _build_verification_count_line(summary)
+    assert summary["n_pass"] < summary["n_checks"], "self-guard: the pill states the count"
+    line = _build_verification_count_line(summary, "clean")
 
-    assert line == f"{summary['n_pass']} verified · {summary['n_unverifiable']} unverifiable", (
+    assert line == f"{summary['n_unverifiable']} unverifiable", (
         f"unexpected count line for the clean 25/2 case: {line!r}"
     )
     assert "flagged" not in line and "overridden" not in line, (
@@ -283,11 +301,18 @@ def test_count_line_clean_case_shows_pass_and_unverifiable_only():
     )
 
 
+def test_count_line_clean_case_with_every_check_verified_states_the_verified_count():
+    from app import _build_verification_count_line
+
+    summary = _counts(n_checks=18, n_pass=18)
+    assert _build_verification_count_line(summary, "clean") == "18 verified"
+
+
 def test_count_line_actionable_case_appends_flagged_and_overridden():
     from app import _build_verification_count_line
 
     summary = _VERIFICATION_ROW_ACTIONABLE["raw_response"]["summary"]
-    line = _build_verification_count_line(summary)
+    line = _build_verification_count_line(summary, "overrides-detected")
 
     expected = (
         f"{summary['n_pass']} verified · {summary['n_unverifiable']} unverifiable"
@@ -296,11 +321,31 @@ def test_count_line_actionable_case_appends_flagged_and_overridden():
     assert line == expected, f"unexpected count line for the actionable 23/2/1/1 case: {line!r}"
 
 
+def test_count_line_flags_detected_case_reads_three_counts_and_no_overridden():
+    from app import _build_verification_count_line
+
+    summary = _counts(n_checks=26, n_pass=23, n_unverifiable=2, n_flagged=1)
+    assert (
+        _build_verification_count_line(summary, "flags-detected")
+        == "23 verified · 2 unverifiable · 1 flagged"
+    )
+
+
+def test_count_line_overrides_detected_case_omits_the_zero_counts():
+    from app import _build_verification_count_line
+
+    summary = _counts(n_checks=24, n_pass=23, n_overridden=1)
+    assert (
+        _build_verification_count_line(summary, "overrides-detected")
+        == "23 verified · 1 overridden"
+    )
+
+
 def test_count_line_appends_only_flagged_when_overridden_is_zero():
     from app import _build_verification_count_line
 
     summary = {"n_checks": 5, "n_pass": 3, "n_unverifiable": 1, "n_flagged": 1, "n_overridden": 0}
-    line = _build_verification_count_line(summary)
+    line = _build_verification_count_line(summary, "flags-detected")
 
     assert line.endswith("1 flagged"), f"expected trailing '1 flagged' segment: {line!r}"
     assert "overridden" not in line, f"n_overridden=0 must not appear as '0 overridden': {line!r}"
@@ -310,10 +355,58 @@ def test_count_line_appends_only_overridden_when_flagged_is_zero():
     from app import _build_verification_count_line
 
     summary = {"n_checks": 5, "n_pass": 3, "n_unverifiable": 1, "n_flagged": 0, "n_overridden": 1}
-    line = _build_verification_count_line(summary)
+    line = _build_verification_count_line(summary, "overrides-detected")
 
     assert line.endswith("1 overridden"), f"expected trailing '1 overridden' segment: {line!r}"
     assert "flagged" not in line, f"n_flagged=0 must not appear as '0 flagged': {line!r}"
+
+
+@pytest.mark.parametrize(
+    ("verdict", "summary", "expected"),
+    [
+        # The pill cannot state the count (clean, but the count is absent, null, a string or out of
+        # range): the verified count is left out, the other counts above zero stay.
+        ("clean", _counts(n_checks="18", n_pass=15, n_unverifiable=3), "3 unverifiable"),
+        ("clean", _counts(n_checks="18", n_pass=18), ""),
+        ("clean", {"n_checks": 18, "n_unverifiable": 3}, "3 unverifiable"),
+        ("clean", _counts(n_checks=18, n_pass=None, n_unverifiable=3), "3 unverifiable"),
+        ("clean", _counts(n_checks=18, n_pass="15", n_unverifiable=3), "3 unverifiable"),
+        ("clean", _counts(n_checks=5, n_pass=7), ""),
+        # A verdict that is not clean never has the count in its pill, so a readable one stays.
+        ("flags-detected", _counts(n_checks=5, n_pass="23", n_flagged=1), "1 flagged"),
+        ("flags-detected", _counts(n_checks=5, n_pass=True, n_flagged=1), "1 flagged"),
+        ("flags-detected", _counts(n_checks=5, n_pass=3, n_flagged=True), "3 verified"),
+        ("flags-detected", _counts(n_checks=5, n_pass=3, n_flagged=-1), "3 verified"),
+        ("flags-detected", _counts(n_checks=5, n_pass=3.0, n_flagged=1), "1 flagged"),
+        ("flags-detected", _counts(n_checks=5, n_pass=0, n_flagged=2), "2 flagged"),
+        (
+            "some-future-verdict",
+            _counts(n_checks=5, n_pass=3, n_unverifiable=2),
+            "3 verified · 2 unverifiable",
+        ),
+        (None, _counts(n_checks=5, n_pass=3, n_unverifiable=2), "3 verified · 2 unverifiable"),
+    ],
+    ids=[
+        "clean_n_checks_string_other_counts_stay",
+        "clean_n_checks_string_nothing_else",
+        "clean_n_pass_absent",
+        "clean_n_pass_null",
+        "clean_n_pass_string_not_printed",
+        "clean_n_pass_above_n_checks",
+        "flags_n_pass_string_not_printed",
+        "flags_n_pass_bool_not_printed",
+        "flags_n_flagged_bool_not_printed",
+        "flags_negative_count_not_printed",
+        "flags_float_count_not_printed",
+        "flags_zero_verified_not_printed",
+        "unrecognised_verdict_keeps_verified",
+        "missing_verdict_keeps_verified",
+    ],
+)
+def test_count_line_prints_only_integer_counts_above_zero(verdict, summary, expected):
+    from app import _build_verification_count_line
+
+    assert _build_verification_count_line(summary, verdict) == expected
 
 
 @given(
@@ -322,14 +415,12 @@ def test_count_line_appends_only_overridden_when_flagged_is_zero():
     n_flagged=st.integers(min_value=0, max_value=200),
     n_overridden=st.integers(min_value=0, max_value=200),
 )
-def test_count_line_flagged_overridden_segments_present_iff_nonzero(
+def test_count_line_prints_a_segment_if_and_only_if_its_count_is_above_zero(
     n_pass, n_unverifiable, n_flagged, n_overridden
 ):
-    """Property (invariant, not a fixture value): for ANY summary with at least
-    one check, the count line contains a ' flagged' segment if and only if
-    n_flagged > 0, and an ' overridden' segment if and only if n_overridden > 0 —
-    never a spurious '0 flagged'/'0 overridden', and never a silently dropped
-    nonzero one. Also: n_pass and n_unverifiable are always present verbatim."""
+    """Property (invariant, not a fixture value): for ANY summary with at least one check and a
+    verdict whose pill states no count, each segment is present if and only if its count is above
+    zero: never a spurious '0 flagged', never a silently dropped nonzero count."""
     from app import _build_verification_count_line
 
     n_checks = n_pass + n_unverifiable + n_flagged + n_overridden
@@ -342,18 +433,19 @@ def test_count_line_flagged_overridden_segments_present_iff_nonzero(
         "n_flagged": n_flagged,
         "n_overridden": n_overridden,
     }
-    line = _build_verification_count_line(summary)
+    line = _build_verification_count_line(summary, "flags-detected")
 
-    assert (" flagged" in line) == (n_flagged > 0), (
-        f"n_flagged={n_flagged} but ' flagged' presence mismatch in {line!r}"
-    )
-    assert (" overridden" in line) == (n_overridden > 0), (
-        f"n_overridden={n_overridden} but ' overridden' presence mismatch in {line!r}"
-    )
-    assert str(n_pass) in line, f"n_pass={n_pass} not found in count line {line!r}"
-    assert str(n_unverifiable) in line, (
-        f"n_unverifiable={n_unverifiable} not found in count line {line!r}"
-    )
+    for count, word in (
+        (n_pass, "verified"),
+        (n_unverifiable, "unverifiable"),
+        (n_flagged, "flagged"),
+        (n_overridden, "overridden"),
+    ):
+        segment = f"{count} {word}"
+        assert (segment in line.split(" · ")) == (count > 0), (
+            f"{segment!r} presence mismatch (count {count}) in {line!r}"
+        )
+    assert "0 " not in [seg[:2] for seg in line.split(" · ")], f"a zero count is printed: {line!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -378,9 +470,11 @@ def test_clean_case_renders_verdict_pill_and_count_line(client):
         f"verdict pill must read {expected_pill!r} when only some checks verified. "
         f"HTML snippet (first 3000 chars): {html[:3000]!r}"
     )
-    expected_line = f"{summary['n_pass']} verified · {summary['n_unverifiable']} unverifiable"
-    assert 'data-testid="prism-verify-count-line"' in html
-    assert expected_line in html, f"expected count line {expected_line!r} not found in HTML"
+    # The pill states the verified count, so the line says only what the pill does not.
+    expected_line = f"{summary['n_unverifiable']} unverifiable"
+    line = parse_html(html).find(testid="prism-verify-count-line")
+    assert line is not None, "the count line is missing"
+    assert line.text == expected_line, f"the count line reads {line.text!r}, not {expected_line!r}"
 
 
 def test_clean_case_renders_zero_top_level_actionable_badges(client):
@@ -404,7 +498,12 @@ def test_clean_case_details_holds_all_27_checks_as_styled_pills(client):
 
     assert 'data-testid="prism-verify-details"' in html
     n_checks = len(_CLEAN_CHECKS)
-    assert f"Show all {n_checks} checks" in html
+    summary_line = parse_html(html).find(testid="prism-verify-details").find("summary")
+    assert summary_line.text == "Show all checks", (
+        f"the disclosure summary reads {summary_line.text!r}; the count is on the pill and the "
+        "count line"
+    )
+    assert f"Show all {n_checks} checks" not in html
 
     full_matches = _FULL_CHECK_TESTID_RE.findall(html)
     assert len(full_matches) == n_checks, (
@@ -817,7 +916,9 @@ class TestVerdictPillStatesTheVerifiedCount:
         tree = parse_html(resp.get_data(as_text=True))
         summary = row["raw_response"]["summary"]
         line = tree.find(testid="prism-verify-count-line")
-        assert line is not None and line.text == _build_verification_count_line(summary)
+        assert line is not None and line.text == _build_verification_count_line(
+            summary, row["raw_response"]["verdict"]
+        )
         actionable = {
             c["indicator"]
             for c in row["raw_response"]["checks"]
@@ -830,7 +931,8 @@ class TestVerdictPillStatesTheVerifiedCount:
             and not n.attrs["data-testid"].startswith("prism-verify-check-full-")
         }
         assert top_level == actionable
-        assert f"Show all {summary['n_checks']} checks" in tree.text
+        assert "Show all checks" in tree.text
+        assert f"Show all {summary['n_checks']} checks" not in tree.text
 
 
 class TestVerdictDisplayHelper:
@@ -889,3 +991,108 @@ class TestVerdictDisplayHelper:
         from app import _build_verdict_display
 
         assert _build_verdict_display("flags-detected") == ("flags-detected", _FLAGGED_STYLE)
+
+
+# ---------------------------------------------------------------------------
+# 9. The count line says only what the pill does not (rows from the real producer).
+# ---------------------------------------------------------------------------
+
+
+def _count_line_text(client, row) -> str | None:
+    resp = _get_ai_advisor(client, row)
+    assert resp.status_code == 200
+    tree = parse_html(resp.get_data(as_text=True))
+    assert tree.find(testid="prism-verify-verdict") is not None, "the verification block is absent"
+    node = tree.find(testid="prism-verify-count-line")
+    return None if node is None else node.text
+
+
+def _summary_of(row: dict) -> dict:
+    return row["raw_response"]["summary"]
+
+
+class TestCountLineAtTheRoute:
+    def test_a_pill_that_states_the_count_leaves_the_count_line_with_the_unverifiable_checks_only(
+        self, client
+    ):
+        row = _producer_row(_claims_classified("pass", "unverifiable"))
+        s = _summary_of(row)
+        assert row["raw_response"]["verdict"] == "clean" and 0 < s["n_pass"] < s["n_checks"]
+        assert _pill(client, row).text == f"{s['n_pass']} of {s['n_checks']} verified"
+        assert _count_line_text(client, row) == f"{s['n_unverifiable']} unverifiable"
+
+    def test_a_clean_pill_with_every_check_verified_leaves_the_verified_count_on_the_line(
+        self, client
+    ):
+        row = _producer_row(_claims_classified("pass"))
+        s = _summary_of(row)
+        assert row["raw_response"]["verdict"] == "clean" and s["n_pass"] == s["n_checks"] > 0
+        assert _pill(client, row).text == "clean"
+        assert _count_line_text(client, row) == f"{s['n_pass']} verified"
+
+    def test_flags_detected_prints_verified_unverifiable_and_flagged_and_no_zero_count(
+        self, client
+    ):
+        row = _producer_row(_claims_classified("pass", "flagged", "unverifiable"))
+        s = _summary_of(row)
+        assert row["raw_response"]["verdict"] == "flags-detected" and s["n_overridden"] == 0
+        assert _count_line_text(client, row) == (
+            f"{s['n_pass']} verified · {s['n_unverifiable']} unverifiable · {s['n_flagged']} flagged"
+        )
+
+    def test_overrides_detected_prints_only_the_counts_above_zero(self, client):
+        row = _producer_row(_claims_classified("pass", "overridden"))
+        s = _summary_of(row)
+        assert row["raw_response"]["verdict"] == "overrides-detected"
+        assert s["n_unverifiable"] == 0 and s["n_flagged"] == 0, "self-guard: two zero counts"
+        assert (
+            _count_line_text(client, row)
+            == f"{s['n_pass']} verified · {s['n_overridden']} overridden"
+        )
+
+    def test_no_numeric_claims_prints_no_count_line(self, client):
+        row = _producer_row(None, cited_numbers=[])
+        assert _summary_of(row).get("n_checks", 0) == 0 and row["raw_response"]["verdict"] == (
+            "no-numeric-claims"
+        )
+        assert _count_line_text(client, row) is None
+
+    @pytest.mark.parametrize(
+        "damage",
+        [lambda s: s.pop("n_checks"), lambda s: s.update(n_checks=None)],
+        ids=["n_checks_absent", "n_checks_null"],
+    )
+    def test_a_check_count_that_is_absent_or_null_prints_no_count_line_and_the_pill_says_so(
+        self, client, damage
+    ):
+        row = _producer_row(_claims_classified("pass", "unverifiable"))
+        damage(_summary_of(row))
+        assert _pill(client, row).text == "verified count unavailable"
+        assert _count_line_text(client, row) is None
+
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            lambda s: s.update(n_checks=str(s["n_checks"])),
+            lambda s: s.pop("n_pass"),
+            lambda s: s.update(n_pass=None),
+            lambda s: s.update(n_pass=str(s["n_pass"])),
+        ],
+        ids=["n_checks_string", "n_pass_absent", "n_pass_null", "n_pass_string"],
+    )
+    def test_a_pill_that_cannot_state_the_count_leaves_no_verified_count_and_only_integer_counts(
+        self, client, damage
+    ):
+        row = _producer_row(_claims_classified("pass", "unverifiable"))
+        s = _summary_of(row)
+        assert s["n_unverifiable"] > 0, "self-guard: a count above zero to print"
+        passed = s["n_pass"]
+        damage(s)
+        assert _pill(client, row).text == "verified count unavailable"
+        line = _count_line_text(client, row)
+        assert line == f"{s['n_unverifiable']} unverifiable", (
+            f"the line prints the integer counts above zero and no verified count: {line!r}"
+        )
+        assert f"{passed} verified" not in (line or ""), (
+            "a stored string or missing count was printed"
+        )

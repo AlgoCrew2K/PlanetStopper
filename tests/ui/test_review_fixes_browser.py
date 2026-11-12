@@ -461,55 +461,28 @@ def test_native_buttons_and_selects_use_the_app_font(
         )
 
 
-def test_the_observations_note_is_caption_size(firefox, advisor_server):
-    store("guardrail_clear", times=2)
-    with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
-        open_page(probe, "/ai-advisor")
-        sizes = probe.page.evaluate(
-            """
-            () => {
-              const note = document.querySelector('.obs-framing-note');
-              const probe = document.createElement('span');
-              // The page's caption as this page renders it: the shared caption with its advisor modifier.
-              probe.className = 'legend-as-of adv-note';
-              document.body.appendChild(probe);
-              const caption = parseFloat(getComputedStyle(probe).fontSize);
-              probe.remove();
-              const verdict = document.querySelector('[data-testid="obs-producer-verdict"]');
-              return { note: parseFloat(getComputedStyle(note).fontSize), caption,
-                       verdict: parseFloat(getComputedStyle(verdict).fontSize) };
-            }
-            """
-        )
-        assert sizes["note"] <= sizes["caption"] + 0.5, (
-            f"the observations note is {sizes['note']} px against a {sizes['caption']} px caption"
-        )
-        assert sizes["note"] <= sizes["verdict"], (
-            "the explanation is larger than the status it explains"
-        )
-
-
-def test_the_overview_retirement_pointer_reads_as_a_link(firefox, advisor_server):
+def test_the_retirement_rows_open_tab_link_reads_as_a_link(firefox, advisor_server):
     with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
         open_page(probe, "/ai-advisor")
         facts = probe.page.evaluate(
             """
             () => {
-              const a = document.querySelector('[data-testid="retirement-pointer"]');
-              const label = a.querySelector('.mini-stat-label') || a;
-              const s = getComputedStyle(label);
+              const a = document.querySelector(
+                '.obs-producer[data-role="RETIREMENT"] [data-testid="retirement-pointer"]');
+              const s = getComputedStyle(a);
               const accent = (() => { const p = document.createElement('span'); p.style.color = 'var(--studio-accent)';
                                       document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c; })();
-              return { tag: a.tagName, underline: s.textDecorationLine.includes('underline'), color: s.color,
-                       accent, size: parseFloat(s.fontSize), upper: s.textTransform === 'uppercase',
-                       arrow: /[\\u2192\\u203a>]/.test(a.textContent) };
+              return { tag: a.tagName, text: a.textContent.trim(),
+                       underline: s.textDecorationLine.includes('underline'), color: s.color,
+                       accent, size: parseFloat(s.fontSize), upper: s.textTransform === 'uppercase' };
             }
             """
         )
-        assert facts["tag"] == "A"
-        assert facts["underline"] or facts["color"] == facts["accent"] or facts["arrow"], (
-            "nothing marks the pointer as a link to the Retirement tab"
+        assert facts["tag"] == "A" and facts["text"] == "Open tab"
+        assert facts["underline"] or facts["color"] == facts["accent"], (
+            "nothing marks the Open tab link as a link to the Retirement tab"
         )
+        assert not facts["upper"], "the link is set in capitals"
 
 
 # ---------------------------------------------------------------------------

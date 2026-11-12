@@ -9,12 +9,12 @@ CONTRACT PINNED
 * ``loadRecentRuns`` draws only an array. Any other answer (non-2xx, error object, HTML) keeps the
   cards on screen and shows ``Could not refresh runs`` in the page; a later good poll removes it. A 401
   navigates to ``/login``.
-* The runs table states a column whose cell text is the same in every row once, in one line above
-  the rows (``data-testid="autotune-shared-line"``, inside ``#autotune-runs-list``, text beginning
-  ``Same for every run: `` and listing each such column as its header followed by its cell text,
-  joined by ``; ``); the rows leave those cells out. A column that differs in any row stays in every
-  row, a single row and an empty list print no line, and the 15 s refresh moves a column between
-  the line and the rows as the runs change (the plan's AC-8).
+* The runs table states what every run shares in one sentence above the rows
+  (``data-testid="autotune-sentence"``, inside ``#autotune-runs-list``): only the run time and the
+  outcome are ever lifted, a column that reads N/A in every row is absent with its header, and the
+  older-runs summary counts the older runs and says how far back the list reaches. The table is the
+  shared columns primitive. A single row and an empty list print no sentence, and the 15 s refresh
+  moves the run time and the outcome between the sentence and the rows as the runs change.
 * ``frRunBuild`` keeps ``#fr-run-btn`` disabled from the click until the page shows that build's
   outcome or 30 minutes pass, polling ``GET /api/frontrunner-build/last-run`` every 15 s until a
   summary whose ``run_id`` is the 202's appears. Completed: ``#fr-run-status`` reads
@@ -280,19 +280,42 @@ class TestFrontrunnerBuildEnd:
         assert "ANTHROPIC_API_KEY not configured" in out.result["all"]
 
 
-SHARED_LINE = '[data-testid="autotune-shared-line"]'
-HEADERS = ".autotune-row--head [role='columnheader']"
+SENTENCE = '[data-testid="autotune-sentence"]'
+HEADERS = "#autotune-runs-list [role='columnheader']"
+OLDER_HEADERS = "#autotune-older-list [role='columnheader']"
 ROWS_STATE = f"""
   const norm = (t) => String(t || '').replace(/\\s+/g, ' ').trim();
   const rowTexts = () => H.$$('#autotune-runs-list {CARDS}').map((r) => norm(r.textContent));
-  const lineTexts = () => H.$$('{SHARED_LINE}').map((l) => norm(l.textContent));
+  const olderRowTexts = () => H.$$('#autotune-older-list {CARDS}').map((r) => norm(r.textContent));
+  const sentences = () => H.$$('{SENTENCE}').map((l) => norm(l.textContent));
   const heads = () => H.$$("{HEADERS}").map((h) => norm(h.textContent));
+  const olderHeads = () => H.$$("{OLDER_HEADERS}").map((h) => norm(h.textContent));
   const listHtml = () => H.$('#autotune-runs-list').innerHTML;
+  const panelText = () => norm(H.$('[data-testid="autotune-panel"]').textContent);
+  const olderSummary = () => norm(H.$('#autotune-older-summary').textContent);
 """
-OLD_CELL_WORDS = ("N/A", "Frozen-eval", "Fallback")
-# The score column's header when the seeded runs carry no objective; a lifted column has no header.
+# The score column's header when the seeded runs carry no objective.
 SCORE_HEAD = "Best objective score"
 STREAK_HEAD = "Runs without adopting a tuned config"
+TIME_HEAD = "Run time (ET)"
+OUTCOME_HEAD = "Outcome"
+TSTAT_HEAD = "Sel t-stat"
+KEPT = "every symphony kept its previous settings"
+ADOPTED = "every symphony took new tuned settings"
+RESET = "every symphony was reset to the global default settings"
+# The producer's own outcome literal for a run that took the global default (autotuner.py).
+RESET_DECISION = "Reset to Global Default"
+BATCH_STAMP = "2026-11-06T19:08:00"
+LATER_STAMP = "2026-11-13T19:08:00"
+
+
+def et_label(stamp: str) -> str:
+    """The run-time cell the page prints for a naive UTC stamp, by stated arithmetic."""
+    from datetime import UTC, datetime
+    from zoneinfo import ZoneInfo
+
+    moment = datetime.fromisoformat(stamp).replace(tzinfo=UTC)
+    return moment.astimezone(ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M ET")
 
 
 def shared_run(scenario, *routes_):
@@ -304,159 +327,350 @@ def shared_run(scenario, *routes_):
     )
 
 
+def _seed_batch(kinds, *, stamp=BATCH_STAMP, **per_kind):
+    """One run per captured symphony, every run stamped ``stamp``; ``kinds`` names each run's
+    kind (``reverted``, ``adopted``, ``scored`` or ``reset``, ``hold``)."""
+    keys = pe._symphony_keys(len(kinds))
+    for key, kind in zip(keys, kinds, strict=True):
+        if kind == "scored":
+            pe.save_run_like("reverted", key, stamp, naive_sharpe=1.25)
+        elif kind == "reset":
+            pe.save_run_like("reverted", key, stamp, baseline_decision=RESET_DECISION)
+        elif kind == "hold":
+            pe.save_run_like("reverted", key, stamp, baseline_decision="Hold")
+        else:
+            pe.save_run_like(kind, key, stamp)
+    return keys
+
+
 def _body_names(rows) -> list[str]:
     return [r.get("symphony_name") or r["symphony_id"] for r in rows]
 
 
-class TestSharedLine:
-    """The plan's AC-8 on the real page: the real route's rows, the page's own script."""
+def _read(scenario="", body=None):
+    body = body if body is not None else adv.autotune_runs_answer()
+    everything = (
+        "return {rows: rowTexts(), sentences: sentences(), heads: heads(), html: listHtml(),"
+        " panel: panelText(), older: olderRowTexts(), olderHeads: olderHeads(),"
+        " olderSummary: olderSummary()};"
+    )
+    out = shared_run(scenario or everything, route(RUNS, body, method="GET"))
+    return out.result, body
 
-    def test_identical_columns_are_stated_once_in_the_line_and_left_out_of_every_row(self):
-        pe.seed_autotune_runs(11)
-        body = adv.autotune_runs_answer()
-        out = shared_run(
-            "return {rows: rowTexts(), lines: lineTexts(), heads: heads(), html: listHtml()};",
-            route(RUNS, body, method="GET"),
+
+class TestAutotuneSentence:
+    """The Overview's autotune runs state what every run shares in one plain sentence (the rows the
+    page script writes on each refresh, over the real route's rows)."""
+
+    def test_a_shared_run_time_and_outcome_read_as_one_sentence_and_leave_the_rows(self):
+        _seed_batch(["reverted"] * 11)
+        r, body = _read()
+        assert r["sentences"] == [f"Latest run {et_label(BATCH_STAMP)}: {KEPT}."]
+        assert r["heads"] == ["Symphony", STREAK_HEAD], (
+            f"only the symphony and the streak stay as columns: {r['heads']!r}"
         )
-        r = out.result
-        names = _body_names(body["json"])
-        expected = (
-            pe.SHARED_LINE_PREFIX
-            + f"Outcome Fallback, Frozen-eval not evaluated; {SCORE_HEAD} N/A; Sel t-stat N/A"
-        )
-        assert r["heads"] == ["Symphony", "Run time (ET)", STREAK_HEAD], (
-            f"a stated column keeps its header: {r['heads']!r}"
-        )
-        assert r["lines"] == [expected], f"the line reads {r['lines']!r}, not {expected!r}"
         assert len(r["rows"]) == 11
-        for text in r["rows"]:
-            for word in OLD_CELL_WORDS:
-                assert word not in text, f"a row repeats {word!r}: {text!r}"
+        names = _body_names(body["json"])
         for name, text in zip(names, r["rows"], strict=True):
             assert name in text, f"a row lost its symphony {name!r}: {text!r}"
-            assert "adoption streak: insufficient history" in text, (
-                f"a row lost its streak cell: {text!r}"
-            )
-        assert "adoption streak" not in r["lines"][0], "the streak column is never lifted"
-        assert r["html"].index("autotune-shared-line") < r["html"].index("autotune-run-row"), (
-            "the line is not above the rows"
-        )
+            assert et_label(BATCH_STAMP) not in text, f"a row repeats the shared time: {text!r}"
+            for word in ("Fallback", "Frozen-eval", "N/A"):
+                assert word not in text, f"a row repeats {word!r}: {text!r}"
 
-    def test_every_row_keeps_its_run_time_in_its_own_cell(self):
-        pe.seed_autotune_runs(11)
-        out = shared_run(
-            "return H.$$('.autotune-run-time').map((c) => norm(c.textContent));",
-            route(RUNS, adv.autotune_runs_answer(), method="GET"),
-        )
-        stamps = out.result
-        assert len(stamps) == 11 and all(stamps), "a row lost its run time"
-        assert len(set(stamps)) == 11, "premise: the seeded run times differ"
+    def test_the_words_of_the_dropped_columns_and_the_old_line_are_on_screen_nowhere(self):
+        _seed_batch(["reverted"] * 11)
+        r, _ = _read()
+        for word in ("N/A", "Best CRRA-EU score", SCORE_HEAD, TSTAT_HEAD, "Same for every run"):
+            assert word not in r["panel"], f"{word!r} is still in the autotune panel"
+        assert "autotune-shared-line" not in r["html"]
 
-    def test_a_lifted_column_leaves_the_row_with_no_cell_left_behind(self):
-        pe.seed_autotune_runs(11)
-        out = shared_run(
-            f"const rows = H.$$('#autotune-runs-list {CARDS}');"
-            f' return {{head: H.$$("{HEADERS}").length,'
-            " perRow: rows.map((r) => r.children.length),"
-            " cells: rows.map((r) => Array.from(r.children).map((c) => norm(c.textContent))),"
-            " leftover: rows.map((r) => r.querySelectorAll("
-            "'.autotune-run-outcome, .autotune-run-score, .autotune-run-tstat').length)};",
-            route(RUNS, adv.autotune_runs_answer(), method="GET"),
-        )
-        r = out.result
-        assert r["head"] > 0 and len(r["perRow"]) == 11, "premise: the rows rendered"
-        assert r["perRow"] == [r["head"]] * 11, (
-            f"a row holds {r['perRow']!r} cells against {r['head']} header cells"
-        )
-        assert r["leftover"] == [0] * 11, f"a lifted column left a cell in a row: {r['leftover']!r}"
-        for cells in r["cells"]:
-            assert all(cells), f"a row holds an empty cell: {cells!r}"
+    def test_the_sentence_sits_above_the_rows_in_the_runs_list(self):
+        _seed_batch(["reverted"] * 11)
+        r, _ = _read()
+        assert r["html"].index("autotune-sentence") < r["html"].index("autotune-run-row")
 
-    def test_a_column_that_differs_in_one_row_stays_in_every_row(self):
-        pe.seed_autotune_runs(11, adopted_at=3)
-        body = adv.autotune_runs_answer()
-        out = shared_run(
-            "return {rows: rowTexts(), lines: lineTexts(), heads: heads(),"
-            f" pills: H.$$('{CARDS} .decision-pill').length}};",
-            route(RUNS, body, method="GET"),
-        )
-        r = out.result
-        assert r["heads"] == ["Symphony", "Run time (ET)", "Outcome", STREAK_HEAD], (
-            f"only the two stated columns leave the header: {r['heads']!r}"
-        )
-        assert r["lines"] == [pe.SHARED_LINE_PREFIX + f"{SCORE_HEAD} N/A; Sel t-stat N/A"], r[
-            "lines"
+    def test_a_shared_adopted_outcome_names_its_frozen_evaluation(self):
+        _seed_batch(["adopted"] * 11)
+        r, _ = _read()
+        assert r["sentences"] == [
+            f"Latest run {et_label(BATCH_STAMP)}: {ADOPTED} (frozen-eval passed)."
         ]
-        assert r["pills"] == 11, "Outcome left a row although it differs in one"
+
+    def test_a_shared_global_default_outcome_reads_its_own_clause(self):
+        _seed_batch(["reset"] * 11)
+        r, _ = _read()
+        assert r["sentences"] == [f"Latest run {et_label(BATCH_STAMP)}: {RESET}."]
+
+    def test_a_shared_outcome_the_page_has_no_clause_for_names_the_label(self):
+        _seed_batch(["hold"] * 11)
+        r, _ = _read()
+        assert r["sentences"] == [
+            f"Latest run {et_label(BATCH_STAMP)}: every run's outcome was Hold."
+        ]
+
+    def test_a_shared_run_time_with_different_outcomes_keeps_the_outcome_in_every_row(self):
+        _seed_batch(["reverted"] * 3 + ["adopted"] + ["reverted"] * 7)
+        r, _ = _read()
+        assert r["sentences"] == [f"Latest run {et_label(BATCH_STAMP)} for every symphony."]
+        assert r["heads"] == ["Symphony", OUTCOME_HEAD, STREAK_HEAD]
         for text in r["rows"]:
-            assert "Frozen-eval" in text, f"Outcome lost its frozen-eval text: {text!r}"
-            assert "N/A" not in text, f"a row repeats a shared cell: {text!r}"
+            assert "Fallback" in text or "Adopted AI" in text, f"a row lost its outcome: {text!r}"
+            assert et_label(BATCH_STAMP) not in text
 
-    def test_exactly_one_row_prints_no_line_and_shows_every_cell(self):
+    def test_a_shared_outcome_with_different_run_times_keeps_the_time_in_every_row(self):
+        pe.seed_autotune_runs(11)
+        r, body = _read()
+        assert r["sentences"] == [f"{KEPT[0].upper()}{KEPT[1:]} in its latest run."]
+        assert r["heads"] == ["Symphony", TIME_HEAD, STREAK_HEAD]
+        stamps = [et_label(row["run_timestamp"]) for row in body["json"]]
+        assert len(set(stamps)) == 11, "premise: the seeded run times differ"
+        for stamp, text in zip(stamps, r["rows"], strict=True):
+            assert stamp in text, f"a row lost its run time {stamp!r}: {text!r}"
+
+    def test_run_times_and_outcomes_that_all_differ_print_no_sentence(self):
+        pe.seed_autotune_runs(11, adopted_at=3)
+        r, _ = _read()
+        assert r["sentences"] == []
+        assert r["heads"] == ["Symphony", TIME_HEAD, OUTCOME_HEAD, STREAK_HEAD]
+        assert len(r["rows"]) == 11
+
+    def test_exactly_one_row_prints_no_sentence_and_shows_its_time_outcome_and_streak(self):
         pe.seed_autotune_runs(1)
-        body = adv.autotune_runs_answer()
-        out = shared_run(
-            "return {rows: rowTexts(), lines: lineTexts(), html: listHtml()};",
-            route(RUNS, body, method="GET"),
-        )
-        r = out.result
-        assert r["lines"] == [] and "Same for every run" not in r["html"]
-        assert len(r["rows"]) == 1
-        text = r["rows"][0]
+        r, body = _read()
+        assert r["sentences"] == []
+        assert r["heads"] == ["Symphony", TIME_HEAD, OUTCOME_HEAD, STREAK_HEAD]
+        (text,) = r["rows"]
+        assert et_label(body["json"][0]["run_timestamp"]) in text
         assert "Fallback" in text and "Frozen-eval not evaluated" in text
-        assert text.count("N/A") == 2, f"the score and the t-stat cells read N/A: {text!r}"
+        assert "adoption streak: insufficient history" in text
+        assert "N/A" not in text, "a column that reads N/A in every row has no cell"
 
-    def test_no_runs_keep_the_empty_state_and_print_no_line(self):
+    def test_a_score_in_one_row_keeps_the_score_column_in_every_row_and_drops_the_t_stat(self):
+        _seed_batch(["scored"] + ["reverted"] * 10)
+        r, _ = _read()
+        assert r["heads"] == ["Symphony", STREAK_HEAD, SCORE_HEAD], (
+            f"the score column stays with its header, the t-stat column follows its own rule: "
+            f"{r['heads']!r}"
+        )
+        assert sum("N/A" in t for t in r["rows"]) == 10, "a row without a score reads N/A"
+        assert sum("1.25" in t for t in r["rows"]) == 1, "the row with a score shows it"
+        assert TSTAT_HEAD not in r["panel"]
+
+    def test_the_sentence_and_the_rows_carry_every_value_a_row_showed_but_the_na_cells(self):
+        _seed_batch(["reverted"] * 11)
+        r, body = _read()
+        shown = " ".join([*r["sentences"], *r["rows"]])
+        for row in body["json"]:
+            assert (row.get("symphony_name") or row["symphony_id"]) in shown
+            assert et_label(row["run_timestamp"]) in shown
+        assert "kept their previous settings" in shown or "kept its previous settings" in shown
+
+    def test_no_runs_keep_the_empty_state_and_print_no_sentence(self):
         out = shared_run(
-            "return {text: H.pageText(), lines: lineTexts(), rows: cards()};",
+            "return {text: H.pageText(), sentences: sentences(), rows: cards()};",
             route(RUNS, {"json": []}, method="GET"),
         )
-        assert out.result["lines"] == [] and out.result["rows"] == 0
+        assert out.result["sentences"] == [] and out.result["rows"] == 0
         assert "No tuning runs recorded yet" in out.result["text"]
         assert "Same for every run" not in out.result["text"]
 
-    def test_a_refresh_that_brings_a_differing_run_returns_the_column_to_every_row(self):
-        keys = pe.seed_autotune_runs(11)
+    def test_a_refresh_that_brings_a_differing_outcome_changes_the_sentence_and_returns_the_outcome(
+        self,
+    ):
+        import copy
+
+        _seed_batch(["reverted"] * 11)
         first = adv.autotune_runs_answer()
-        pe.save_run_like("adopted", keys[0], "2026-10-30T04:00:00")
-        second = adv.autotune_runs_answer()
+        # The refresh's second answer: the route's own body with one run's outcome changed to the
+        # adopted outcome (its frozen evaluation passed), as the next weekly batch could bring.
+        second = copy.deepcopy(first)
+        second["json"][0]["baseline_decision"] = "Adopted AI"
+        second["json"][0]["frozen_eval_verdict"] = "passed"
         out = shared_run(
             """
-            const before = {lines: lineTexts(), rows: rowTexts()};
+            const before = {sentences: sentences(), heads: heads()};
             await H.advance(15000);
-            return {before, after: {lines: lineTexts(), rows: rowTexts()}};
+            return {before, after: {sentences: sentences(), rows: rowTexts(), heads: heads()}};
             """,
             route(RUNS, first, second, method="GET"),
         )
         before, after = out.result["before"], out.result["after"]
-        assert len(before["lines"]) == 1 and "Outcome" in before["lines"][0]
-        assert len(after["lines"]) == 1
-        assert "Outcome" not in after["lines"][0], "Outcome stayed in the line after it differed"
+        assert before["sentences"] == [f"Latest run {et_label(BATCH_STAMP)}: {KEPT}."]
+        assert len(after["sentences"]) == 1
+        assert OUTCOME_HEAD in after["heads"], "the outcome did not return to the header"
+        assert KEPT not in after["sentences"][0]
         assert len(after["rows"]) == 11
         for text in after["rows"]:
-            assert "Frozen-eval" in text, f"Outcome did not return to every row: {text!r}"
+            assert "Frozen-eval" in text, f"the outcome did not return to every row: {text!r}"
 
-    def test_a_refresh_that_fails_keeps_the_last_table_and_line(self):
-        pe.seed_autotune_runs(11)
+    def test_a_refresh_that_fails_keeps_the_last_sentence_and_table(self):
+        _seed_batch(["reverted"] * 11)
         good = adv.autotune_runs_answer()
         out = shared_run(
             """
-            const before = {lines: lineTexts(), rows: rowTexts()};
+            const before = {sentences: sentences(), rows: rowTexts()};
             await H.advance(15000);
-            return {before, after: {lines: lineTexts(), rows: rowTexts()}, shown: H.surfaced()};
+            return {before, after: {sentences: sentences(), rows: rowTexts()}, shown: H.surfaced()};
             """,
             route(RUNS, good, {"reject": True}, method="GET"),
         )
         assert out.result["before"] == out.result["after"], "a failed refresh changed the table"
-        assert len(out.result["after"]["lines"]) == 1
+        assert len(out.result["after"]["sentences"]) == 1
         assert "Could not refresh runs" in out.result["shown"]
 
-    def test_polls_that_bring_the_same_runs_never_repeat_the_line(self):
-        pe.seed_autotune_runs(11)
+    def test_a_refresh_answering_500_keeps_the_last_sentence_and_table_and_the_notice(self):
+        _seed_batch(["reverted"] * 11)
         good = adv.autotune_runs_answer()
         out = shared_run(
-            "await H.advance(45000); return {lines: lineTexts(), rows: rowTexts().length};",
+            """
+            const before = {sentences: sentences(), rows: rowTexts(), heads: heads()};
+            await H.advance(15000);
+            return {before, after: {sentences: sentences(), rows: rowTexts(), heads: heads()},
+                    shown: H.surfaced()};
+            """,
+            route(RUNS, good, unavailable_answer("/api/autotune-runs"), method="GET"),
+        )
+        assert out.result["before"] == out.result["after"]
+        assert "Could not refresh runs" in out.result["shown"]
+
+    def test_polls_that_bring_the_same_runs_never_repeat_the_sentence(self):
+        _seed_batch(["reverted"] * 11)
+        good = adv.autotune_runs_answer()
+        out = shared_run(
+            "await H.advance(45000); return {sentences: sentences(), rows: rowTexts().length,"
+            " heads: heads()};",
             route(RUNS, good, method="GET"),
         )
-        assert len(out.result["lines"]) == 1, "a poll duplicated the line"
-        assert out.result["rows"] == 11
+        assert len(out.result["sentences"]) == 1, "a poll duplicated the sentence"
+        assert out.result["rows"] == 11 and out.result["heads"] == ["Symphony", STREAK_HEAD]
+
+
+class TestAutotuneSentenceSecurity:
+    """A stored word or name reaches the page as text: never as an element, never run."""
+
+    def test_a_stored_outcome_word_carrying_markup_is_text_in_the_sentence_and_runs_nothing(self):
+        hostile = "<img src=x onerror=window.pwned=1>"
+        for key in pe._symphony_keys(11):
+            pe.save_run_like("reverted", key, BATCH_STAMP, baseline_decision=hostile)
+        out = shared_run(
+            "return {sentences: sentences(), imgs: H.$$('"
+            + SENTENCE
+            + " img').length, all: H.$$('#autotune-runs-list img').length, pwned: !!window.pwned};",
+            route(RUNS, adv.autotune_runs_answer(), method="GET"),
+        )
+        r = out.result
+        assert r["sentences"] == [
+            f"Latest run {et_label(BATCH_STAMP)}: every run's outcome was {hostile}."
+        ]
+        assert r["imgs"] == 0 and r["all"] == 0, "the stored word became an element"
+        assert r["pwned"] is False
+
+    def test_a_symphony_name_carrying_markup_is_text_in_its_cell(self):
+        hostile = "<b onmouseover=1>hostile</b>"
+        pe.save_run_like("reverted", hostile, BATCH_STAMP)
+        pe.save_run_like("adopted", "second symphony", BATCH_STAMP)
+        r, _ = _read()
+        assert any(hostile in t for t in r["rows"]), r["rows"]
+        assert "<b onmouseover" not in r["html"], "the stored name was written as markup"
+
+
+class TestAutotuneColumns:
+    """The table is the shared columns primitive, and each outcome word names its Glossary line."""
+
+    def test_the_table_is_the_columns_primitive_with_its_column_count_set_and_every_row_a_subgrid(
+        self,
+    ):
+        import re
+
+        pe.seed_autotune_runs(11, adopted_at=3)
+        r, _ = _read()
+        html = r["html"]
+        table = re.search(r"<div[^>]*role=\"table\"[^>]*>", html)
+        assert table is not None, "the runs list holds no table"
+        assert "cols-table" in table.group(0), (
+            f"the table is not the columns primitive: {table.group(0)!r}"
+        )
+        count = re.search(r"--cols:\s*(\d+)", table.group(0))
+        assert count is not None and int(count.group(1)) == len(r["heads"]) == 4, (
+            f"the column count is not set from the shown columns: {table.group(0)!r}"
+        )
+        rows = re.findall(r"<div[^>]*role=\"row\"[^>]*>", html)
+        assert len(rows) == 12, f"expected a header row and 11 rows, found {len(rows)}"
+        assert all("cols-row" in row for row in rows), "a row is not a subgrid row"
+
+    def test_a_column_that_is_dropped_leaves_the_count_at_the_shown_columns(self):
+        import re
+
+        _seed_batch(["reverted"] * 11)
+        r, _ = _read()
+        table = re.search(r"<div[^>]*role=\"table\"[^>]*>", r["html"]).group(0)
+        assert int(re.search(r"--cols:\s*(\d+)", table).group(1)) == 2 == len(r["heads"])
+
+    def test_the_older_runs_table_is_the_same_primitive(self):
+        import re
+
+        pe.seed_autotune_runs(11, older_for=3)
+        out = shared_run(
+            "return H.$('#autotune-older-list').innerHTML;",
+            route(RUNS, adv.autotune_runs_answer(), method="GET"),
+        )
+        table = re.search(r"<div[^>]*role=\"table\"[^>]*>", out.result)
+        assert table is not None and "cols-table" in table.group(0)
+        assert re.search(r"--cols:\s*(\d+)", table.group(0))
+
+    def test_the_outcome_words_name_their_glossary_lines_in_the_rows(self):
+        pe.seed_autotune_runs(11, adopted_at=3)
+        r, _ = _read()
+        assert 'data-glossary="O10"' in r["html"], "the Fallback word names no Glossary line"
+        assert 'data-glossary="O11"' in r["html"], "the Frozen-eval word names no Glossary line"
+
+    def test_the_streak_header_reads_the_glossary_term_in_both_tables(self):
+        pe.seed_autotune_runs(11, adopted_at=3, older_for=1)
+        r, _ = _read()
+        assert STREAK_HEAD in r["heads"]
+        assert STREAK_HEAD in r["olderHeads"]
+
+
+class TestOlderAutotuneRuns:
+    def _seed_history(self, per_symphony):
+        keys = pe._symphony_keys(len(per_symphony))
+        from datetime import datetime, timedelta
+
+        batch = datetime.fromisoformat(BATCH_STAMP)
+        for key, runs in zip(keys, per_symphony, strict=True):
+            for week in range(runs):
+                stamp = (batch - timedelta(weeks=week)).strftime("%Y-%m-%dT%H:%M:%S")
+                pe.save_run_like("reverted", key, stamp)
+
+    def test_the_summary_counts_the_older_runs_and_says_how_far_back_the_list_reaches(self):
+        self._seed_history([5] * 5 + [4] * 6)  # 49 runs, 11 rows, 38 older
+        body = adv.autotune_runs_answer()
+        older = len(body["json"]) - len({row["symphony_id"] for row in body["json"]})
+        assert older == 38, "premise: 38 older runs"
+        r, _ = _read(body=body)
+        assert r["olderSummary"] == "38 older runs from the 50 most recent"
+        assert len(r["older"]) == 38
+
+    def test_one_older_run_reads_in_the_singular(self):
+        self._seed_history([2] + [1] * 10)
+        r, _ = _read()
+        assert r["olderSummary"] == "1 older run from the 50 most recent"
+
+    def test_the_older_table_drops_a_column_that_reads_na_in_every_row_and_never_lifts_one(self):
+        self._seed_history([5] * 5 + [4] * 6)
+        r, _ = _read()
+        assert r["olderHeads"] == ["Symphony", TIME_HEAD, OUTCOME_HEAD, STREAK_HEAD], (
+            f"the older table keeps its time and outcome columns: {r['olderHeads']!r}"
+        )
+        text = " ".join(r["older"])
+        for word in ("N/A", SCORE_HEAD, TSTAT_HEAD):
+            assert word not in text, f"{word!r} is in an older row"
+
+    def test_the_older_table_keeps_a_score_column_a_row_fills(self):
+        keys = pe._symphony_keys(2)
+        # The newer run is the row; the older run, the one in the older table, holds the score.
+        pe.save_run_like("reverted", keys[0], BATCH_STAMP, naive_sharpe=1.5)
+        pe.save_run_like("reverted", keys[0], LATER_STAMP)
+        r, _ = _read()
+        assert SCORE_HEAD in r["olderHeads"] or "Best score" in r["olderHeads"]
+        assert TSTAT_HEAD not in r["olderHeads"]

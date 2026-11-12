@@ -193,15 +193,19 @@ class TestStatusLines:
         for other in ("correlations", "asset-swaps", "logic-changes", "chat", "retirement"):
             assert not section.is_inside(root.find(f"tab-panel-{other}")), other
 
-    def test_the_guardrail_note_comes_before_the_first_status_line(self, seeded):
+    def test_the_guardrail_paragraph_is_gone_so_the_first_status_line_follows_the_description(
+        self, seeded
+    ):
         client, _, _ = seeded
         _, root = _page(client)
+        assert root.find("guardrail-uniform-note") is None, (
+            "the paragraph is still on the page; its sentences are Glossary lines"
+        )
         order = list(root.walk())
-        note = root.find("guardrail-uniform-note")
-        assert note is not None
-        assert note.is_inside(root.find("advisor-observations-section"))
-        first_line = root.find("obs-producer")
-        assert order.index(note) < order.index(first_line)
+        section = root.find("advisor-observations-section")
+        description = next(n for n in section.walk() if n.attrs.get("data-explainer") == "O27")
+        assert order.index(description) < order.index(root.find("obs-producer"))
+        assert not [n for n in section.walk() if n.tag == "p" and "obs-framing-note" in n.classes()]
 
     def test_a_role_without_rows_has_no_line(self, isolated_db, client):
         w.seed_roster()
@@ -312,6 +316,29 @@ class TestEmptyAndUnavailable:
         assert empty.is_inside(root.find("tab-panel-overview"))
         assert root.find_all("obs-producer") == []
         assert root.find("observations-unavailable") is None
+
+    def test_the_retirement_row_follows_the_empty_line(self, isolated_db, client):
+        _, root = _page(client)
+        order = list(root.walk())
+        empty = root.find("obs-empty")
+        row = [n for n in root.walk() if n.attrs.get("data-role") == "RETIREMENT"]
+        assert empty is not None and len(row) == 1, "premise: the empty line and one row"
+        assert order.index(empty) < order.index(row[0])
+        assert row[0].is_inside(root.find("advisor-observations-section"))
+
+    def test_the_retirement_row_follows_the_unavailable_line_when_the_read_fails(
+        self, isolated_db, client, monkeypatch
+    ):
+        def count(roles):
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(database, "count_advisor_observations_by_role", count, raising=False)
+        _, root = _page(client)
+        order = list(root.walk())
+        failure = root.find("observations-unavailable")
+        row = [n for n in root.walk() if n.attrs.get("data-role") == "RETIREMENT"]
+        assert failure is not None and len(row) == 1, "premise: the failure line and one row"
+        assert order.index(failure) < order.index(row[0])
 
     @pytest.mark.parametrize("failing", ["role read", "count"])
     def test_a_failing_read_shows_the_failure_text_and_every_other_section_renders(

@@ -44,6 +44,7 @@ _WATCH = {
     "review_btn": '[data-testid="tenure-review-run-btn"]',
     "review_msg": '[data-testid="tenure-review-run-message"]',
     "pointer": '[data-testid="retirement-pointer"]',
+    "row_pointer": '[data-role="RETIREMENT"] [data-testid="retirement-pointer"]',
 }
 _POLL = "/api/retirement-recommendations"
 _RUN = "/ai-advisor/retirement/run"
@@ -549,7 +550,7 @@ class TestFragment:
         assert seen == [["retirement"], ["chat"], ["overview"]]
         assert [_active_panel(s["obs"]) for s in result["steps"]] == seen
 
-    def test_the_overview_pointer_links_to_the_fragment_and_opens_the_tab(
+    def test_the_open_tab_link_in_the_retirement_row_links_to_the_fragment_and_opens_the_tab(
         self, never_run_page, tmp_path
     ):
         result = run_advisor_page(
@@ -562,8 +563,12 @@ class TestFragment:
             watch=_WATCH,
         )
         pointers = result["loaded"]["watched"]["pointer"]
-        assert pointers, "the Overview has no Retirement pointer"
+        assert len(pointers) == 1, "the Overview holds one Retirement pointer, in the last row"
         pointer = pointers[0]
+        assert result["loaded"]["watched"]["row_pointer"], (
+            "the pointer is not inside the Retirement row of the observations list"
+        )
+        assert pointer["text"] == "Open tab"
         assert pointer["attrs"]["href"] == "#retirement"
         click, follow = result["steps"]
         assert follow["obs"]["watched"]["tabs"] and _active_tab(follow["obs"]) == ["retirement"]

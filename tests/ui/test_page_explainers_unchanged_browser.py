@@ -104,6 +104,20 @@ RELABELLED_FIGURE_KEYS = {
 }
 
 
+# Figures and controls the plan rewrites in place, each by what it was (the new text is asserted by
+# the module of the host that shows it): the Overview's suggestions placeholder, the autotune shared
+# line (now a sentence), the older-runs summary, and the pointer to the Retirement tab (now the
+# Open tab link in the last row of the observations list). A later cycle adds its host's.
+REWRITTEN_FIGURE_KEYS = frozenset(
+    {
+        "testid:suggestions-placeholder",
+        "testid:autotune-shared-line",
+        "id:autotune-older-summary",
+    }
+)
+REWRITTEN_CONTROL_TESTIDS = frozenset({"retirement-pointer", "autotune-older-summary"})
+
+
 def _relabelled_by_a_copy_row(key: str) -> bool:
     row = RELABELLED_FIGURE_KEYS.get(key)
     if row is None:
@@ -148,6 +162,7 @@ def figure_differences(reading: list, reference: list, matchers: list[re.Pattern
             _is_relabelled(text, matchers)
             or _is_removed_figure(text)
             or _relabelled_by_a_copy_row(key)
+            or key in REWRITTEN_FIGURE_KEYS
         ):
             continue
         heads = got.get(key, [])
@@ -163,7 +178,11 @@ def control_differences(reading: list, reference: list, matchers: list[re.Patter
     have = Counter(_control_key(c) for c in reading)
     problems = []
     for control in reference:
-        if _is_removed_control(control) or _is_relabelled(control["text"], matchers):
+        if (
+            _is_removed_control(control)
+            or _is_relabelled(control["text"], matchers)
+            or control["testid"] in REWRITTEN_CONTROL_TESTIDS
+        ):
             continue
         key = _control_key(control)
         if have[key] <= 0:
@@ -240,6 +259,18 @@ def test_every_figure_and_control_equals_the_reference(
 # ---------------------------------------------------------------------------
 # The comparison can fail
 # ---------------------------------------------------------------------------
+
+
+def test_every_figure_and_control_the_plan_rewrites_is_one_the_reference_capture_holds(ref):
+    """A typo in a rewritten key would excuse nothing and hide a lost figure."""
+    figures, controls = set(), set()
+    for world in ref["worlds"].values():
+        for host in world["hosts"].values():
+            for width, _height in harness.INVENTORY_WIDTHS:
+                figures.update(key for key, _text in host[f"figures_{width}"])
+                controls.update(c["testid"] for c in host[f"controls_{width}"])
+    assert figures >= REWRITTEN_FIGURE_KEYS, sorted(REWRITTEN_FIGURE_KEYS - figures)
+    assert controls >= REWRITTEN_CONTROL_TESTIDS, sorted(REWRITTEN_CONTROL_TESTIDS - controls)
 
 
 def test_the_figure_comparison_reports_a_changed_a_lost_and_an_excluded_figure():

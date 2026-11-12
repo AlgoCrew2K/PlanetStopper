@@ -275,16 +275,13 @@ def test_performance_observation_caption_reads_the_dash_before_a_count(client):
     assert root.find(testid="obs-caption").text == "--"
 
 
-def test_advisor_description_is_a_legend_in_the_first_panel(client):
+def test_advisor_first_panel_holds_only_the_tab_bar_and_no_caption(client):
     root = _page(client, "/ai-advisor")
-    caption = root.find(testid="advisor-caption")
-    assert caption is not None, "the Advisor has no data-testid=advisor-caption"
-    assert "legend-as-of" in caption.classes and _inside(caption, _first_panel(root))
-    # The caption is the plan's Copy table A row A01, read from the committed fixture.
-    from tests.ui import _page_copy as copy_fixture
-
-    assert " ".join(caption.text.split()) == copy_fixture.text("A01", "A")
-    assert "claude-powered" not in caption.text.lower()
+    assert root.find(testid="advisor-caption") is None, "the page-level caption is back"
+    first = _first_panel(root)
+    assert first.attrs.get("data-testid") == "advisor-nav-panel"
+    assert not first.find_all(cls="legend-as-of"), "a caption sits in the Advisor's first panel"
+    assert "claude-powered" not in first.text.lower()
 
 
 def test_settings_caption_is_a_legend_in_the_actions_row(client):

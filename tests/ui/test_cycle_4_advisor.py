@@ -269,7 +269,8 @@ def test_advisor_page_has_no_title_card(adv_client):
     resp = adv_client.get("/ai-advisor")
     assert b'data-testid="advisor-header"' not in resp.data
     assert b"<h1" not in resp.data
-    assert b'data-testid="advisor-caption"' in resp.data
+    # The description line beside the tab bar is gone: the first panel holds only the tab bar.
+    assert b'data-testid="advisor-caption"' not in resp.data
 
 
 def test_advisor_page_header_contains_title(adv_client):

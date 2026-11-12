@@ -199,9 +199,8 @@ class TestTemplateSectionsCoexist:
             "The existing suggestions column/container must still be present in the "
             "rendered HTML — observations section is additive, not a replacement."
         )
-        assert "advisor-caption" in body, (
-            "data-testid='advisor-caption' must be present — the page's description line "
-            "stays as a caption now that the title header is gone."
+        assert "advisor-caption" not in body, (
+            "data-testid='advisor-caption' is gone — the first panel holds only the tab bar."
         )
 
     def test_both_sections_coexist_with_observations(self, flask_client):

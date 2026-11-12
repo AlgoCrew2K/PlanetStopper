@@ -32,6 +32,7 @@ import pytest
 
 from tests.app import _retirement_tab_world as w
 from tests.app.conftest import _reset_scheduler_run_state  # noqa: F401  (autouse, health state)
+from tests.ui import _page_copy as copy_fixture
 from tests.ui import _page_explainers as harness
 from tests.ui import _page_explainers_advisor as adv
 from tests.ui import _page_explainers_production_shapes as prod
@@ -64,9 +65,7 @@ PAIR_MAX_HEIGHT = 320
 EDGE_TOLERANCE = 0.5
 
 A_KEYS_OF_TAB = {tab: [k for k in adv.OWNED_A_KEYS if adv.TAB_OF_A_KEY[k] == tab] for tab in TABS}
-A_KEYS_OF_TAB["overview"] = [
-    k for k in adv.OWNED_A_KEYS if adv.TAB_OF_A_KEY[k] in (None, "overview")
-]
+A_KEYS_OF_TAB["overview"] = list(adv.OVERVIEW_A_KEYS)
 TERM_KEYS = [k for k in adv.OWNED_A_KEYS if adv.b_rows_for(k)]
 
 _TEXT_JS = """(selector) => [...document.querySelectorAll(selector)].map((el) => ({
@@ -279,8 +278,16 @@ def test_choosing_each_tab_twice_leaves_each_description_on_the_page_once(
             assert count == 1, (
                 f"{key} is on the page {count} times after the tabs were chosen twice"
             )
-        for row in (r for r in adv.b_rows_for("A01")):
-            assert len(opened.evaluate(_TEXT_JS, f'[data-term="{row["key"]}"]')) == 1
+        for line in copy_fixture.glossary("Overview"):
+            count = len(
+                opened.evaluate(_TEXT_JS, f'#tab-panel-overview [data-term="{line["key"]}"]')
+            )
+            assert count == 1, f"{line['key']} is on the Overview {count} times"
+        for key in adv.OVERVIEW_A_KEYS:
+            count = len(opened.evaluate(_TEXT_JS, f'[data-explainer="{key}"]'))
+            assert count == 1, (
+                f"{key} is on the page {count} times after the tabs were chosen twice"
+            )
 
 
 def test_a_description_is_whole_on_a_phone_and_the_page_does_not_scroll_sideways(
@@ -625,12 +632,12 @@ def test_at_320_tab_and_enter_reach_and_choose_each_of_the_eight_tabs(
 
 
 # ---------------------------------------------------------------------------
-# AC-8: the autotune table states identical columns once (S-8.1 in the browser)
+# The autotune table states what the runs share in one sentence
 # ---------------------------------------------------------------------------
 
 _AUTOTUNE_JS = """() => {
   const norm = (t) => String(t || '').replace(/\\s+/g, ' ').trim();
-  const line = [...document.querySelectorAll('#autotune-runs-list [data-testid="autotune-shared-line"]')];
+  const line = [...document.querySelectorAll('#autotune-runs-list [data-testid="autotune-sentence"]')];
   const rows = [...document.querySelectorAll('#autotune-runs-list [data-testid="autotune-run-row"]')];
   const head = [...document.querySelectorAll('#autotune-runs-list .autotune-row--head [role="columnheader"]')];
   const box = (el) => { const r = el.getBoundingClientRect(); return { w: r.width, h: r.height }; };
@@ -645,7 +652,7 @@ _AUTOTUNE_JS = """() => {
 
 
 @pytest.mark.parametrize("size", [(1440, 900), PHONE])
-def test_twelve_identical_runs_print_one_shared_line_and_no_row_repeats_it(
+def test_eleven_runs_with_one_outcome_print_one_sentence_and_no_row_repeats_it(
     firefox,
     advisor_server,
     tmp_path,
@@ -660,13 +667,11 @@ def test_twelve_identical_runs_print_one_shared_line_and_no_row_repeats_it(
         read = opened.evaluate(_AUTOTUNE_JS)
         assert len(read["rows"]) == 11
         assert len(read["lines"]) == 1 and read["lines"][0]["shown"], read["lines"]
-        text = read["lines"][0]["text"]
-        score_head = read["heads"][4] if len(read["heads"]) > 4 else "Best objective score"
-        assert text == (
-            adv.SHARED_LINE_PREFIX
-            + f"Outcome Fallback, Frozen-eval not evaluated; {score_head} N/A; Sel t-stat N/A"
-        ), text
+        assert read["lines"][0]["text"] == (
+            "Every symphony kept its previous settings in its latest run."
+        ), read["lines"][0]["text"]
         assert read["lines"][0]["box"]["w"] > 100 and read["lines"][0]["box"]["h"] >= 10
+        assert "Outcome" not in read["heads"] and "Sel t-stat" not in read["heads"], read["heads"]
         for row in read["rows"]:
             for word in ("N/A", "Frozen-eval", "Fallback"):
                 assert word not in row["text"], f"a row repeats {word!r}: {row['text']!r}"
@@ -675,41 +680,44 @@ def test_twelve_identical_runs_print_one_shared_line_and_no_row_repeats_it(
 
 
 _NAV_JS = """() => {
-  const panel = document.querySelector('.adv-panel--nav');
+  const panel = document.querySelector('[data-testid="advisor-nav-panel"]');
+  const wrap = panel.querySelector('.cap-nav-wrap');
   const strip = panel.querySelector('[role="tablist"]');
-  const note = panel.querySelector(':scope > .adv-note');
-  const rect = (el) => { const b = el.getBoundingClientRect();
-    return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }; };
-  return { strip: rect(strip), note: rect(note), scroll: strip.scrollWidth, client: strip.clientWidth };
+  const shown = (el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  const outside = [...panel.querySelectorAll('*')]
+    .filter((el) => !wrap.contains(el) && el !== wrap && shown(el))
+    .map((el) => el.tagName.toLowerCase() + ':' + (el.textContent || '').trim().slice(0, 40));
+  const insideNotTab = [...wrap.querySelectorAll('*')]
+    .filter((el) => !strip.contains(el) && el !== strip && shown(el))
+    .map((el) => el.tagName.toLowerCase());
+  const lastTab = [...strip.querySelectorAll('[role="tab"]')].pop().getBoundingClientRect();
+  const words = [...panel.querySelectorAll('*')].filter((el) => shown(el) && !strip.contains(el)
+    && [...el.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim()));
+  const pr = panel.getBoundingClientRect();
+  const sr = strip.getBoundingClientRect();
+  return { outside, insideNotTab, words: words.length, lastRight: lastTab.right,
+           stripTop: sr.top, panelTop: pr.top, scroll: strip.scrollWidth, client: strip.clientWidth };
 }"""
 
 
-@pytest.mark.parametrize("size", DESKTOPS)
-def test_the_tab_strip_shows_every_tab_whole_and_the_description_never_covers_it(
+@pytest.mark.parametrize("size", [(1920, 1000), (1440, 900), (1240, 900)])
+def test_the_navigation_panels_only_rendered_child_is_the_tab_bar(
     firefox,
     advisor_server,
     tmp_path,
     monkeypatch,
     size,  # noqa: F811
 ):
-    """At 1440 the description sits right of the strip; at 1240 it sits under it; never on it."""
+    """No text, disclosure or link sits right of the last tab or above the tab bar, and every tab
+    is whole in the strip."""
     _prepare(tmp_path, monkeypatch, world="empty")
     with _open(firefox, advisor_server, size, "overview") as opened:
         read = opened.evaluate(_NAV_JS)
-        strip, note = read["strip"], read["note"]
-        overlap = (
-            note["left"] < strip["right"]
-            and note["right"] > strip["left"]
-            and note["top"] < strip["bottom"]
-            and note["bottom"] > strip["top"]
-        )
-        assert not overlap, f"the description covers the tab strip: {read}"
+        assert read["outside"] == [], f"the navigation panel renders more than the bar: {read}"
+        assert read["insideNotTab"] == [], f"the bar's wrapper renders more than the tabs: {read}"
+        assert read["words"] == 0, f"text sits in the navigation panel outside the tabs: {read}"
         assert read["scroll"] <= read["client"] + 1, f"a tab is out of view at {size[0]}: {read}"
-        if size[0] >= 1440:
-            assert note["left"] >= strip["right"], (
-                f"the description is not beside the strip: {read}"
-            )
-            assert note["top"] < strip["bottom"], f"the description is not level with it: {read}"
+        assert read["stripTop"] - read["panelTop"] < 40, f"something sits above the bar: {read}"
 
 
 _LONG_SUMMARY = "a summary of many short words that keeps going " * 8

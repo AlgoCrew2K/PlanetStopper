@@ -55,7 +55,18 @@ TAB_OF_A_KEY = {
     "X03": "frontrunner-builder",
     "X05": "frontrunner-builder",
 }
-OWNED_A_KEYS = tuple(TAB_OF_A_KEY)
+
+# The keys the Overview's cycle changed: their descriptions are read from this plan's Copy table A
+# (``_page_copy.a_text``) and their terms from the Overview Glossary, never from the reference rows.
+# A01 and O01 are removed; O03, O08, O15 and O27 are shortened. A later cycle moves its own keys here.
+RE_PINNED_A_KEYS = ("A01", "O01", "O03", "O08", "O15", "O27")
+OVERVIEW_A_KEYS = ("O03", "O08", "O15", "O27")
+REMOVED_A_KEYS = ("A01", "O01")
+OWNED_A_KEYS = tuple(k for k in TAB_OF_A_KEY if k not in RE_PINNED_A_KEYS)
+
+# The hosts whose terms now sit in a Glossary (this plan's Table G): their reference term rows are
+# read from the Glossary, not from the disclosures the reference had. A later cycle adds its host.
+GLOSSARY_HOSTS_DONE = ("Overview",)
 
 # The heading each description sits directly under (None: a tab or panel line with no heading).
 HEADING_OF_A_KEY = {
@@ -116,6 +127,11 @@ def b_rows_for(a_key: str) -> list[dict]:
         for r in copy_fixture.rows("B")
         if r["host"] in TAB_OF_B_HOST and r.get("placement_target") == a_key
     ]
+
+
+def moved_term_keys() -> set[str]:
+    """The reference term keys that sit in a finished host's Glossary (and in no disclosure)."""
+    return {line["key"] for host in GLOSSARY_HOSTS_DONE for line in copy_fixture.glossary(host)}
 
 
 def b_rows_of_tab(tab: str | None) -> list[dict]:
@@ -373,6 +389,11 @@ def full_world_values() -> dict[str, str]:
 
 
 def expected_a(key: str, values: dict[str, str], *, model: str | None = None) -> str:
+    if key in OVERVIEW_A_KEYS:
+        # This plan's text: the Overview rows carry no slot.
+        text = copy_fixture.a_text(key)
+        assert text is not None, f"{key} reads no description"
+        return text
     if key == "B03":
         return kept_model_note("B03", model)
     return expected_row(key, "A", **values)
@@ -398,12 +419,24 @@ def _symphony_keys(count: int) -> list[str]:
     return keys
 
 
-def save_run_like(kind: str, key: str, stamp: str) -> None:
+def save_run_like(
+    kind: str,
+    key: str,
+    stamp: str,
+    *,
+    naive_sharpe: float | None = None,
+    selection_tstat: float | None = None,
+    baseline_decision: str | None = None,
+) -> None:
     """One run through ``database.save_autotune_run`` with the values of a fixture.
 
     ``kind`` is ``reverted`` (``autotune_run_reverted_to_fallback.json``) or ``adopted``
-    (``autotune_run_adopted_ai.json``). The score and the t-stat are never stored, so those two
-    cells read N/A in every run of either kind.
+    (``autotune_run_adopted_ai.json``). The score and the t-stat are never stored unless asked
+    for, so those two cells read N/A in a run of either kind: ``naive_sharpe`` and
+    ``selection_tstat`` store them (named edits of the fixture), and ``baseline_decision`` replaces
+    the stored outcome word
+    (for example the producer's own "Reset to Global Default", autotuner.py, or a word the page
+    has no mapping for).
     """
     source = _fixture(
         {
@@ -425,11 +458,11 @@ def save_run_like(kind: str, key: str, stamp: str) -> None:
         key,
         source["oos_alpha"],
         source["train_alpha"],
-        source["baseline_decision"],
+        baseline_decision if baseline_decision is not None else source["baseline_decision"],
         source["fallback_oos_alpha"],
         source["default_oos_alpha"],
-        selection_tstat=None,
-        naive_sharpe=None,
+        selection_tstat=selection_tstat,
+        naive_sharpe=naive_sharpe,
         **extra,
     )
 

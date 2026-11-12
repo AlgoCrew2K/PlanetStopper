@@ -25,6 +25,7 @@ import pytest
 
 from tests.app import _retirement_tab_world as w
 from tests.app.conftest import _reset_scheduler_run_state  # noqa: F401  (autouse, health state)
+from tests.ui import _alignment as al
 from tests.ui import _page_explainers as harness
 from tests.ui import _page_explainers_advisor as adv
 from tests.ui import _page_explainers_production_shapes as prod
@@ -198,23 +199,34 @@ def test_all_eight_tabs_show_whole_whichever_tab_is_active_and_whatever_their_te
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("size", DESKTOPS)
-def test_the_market_prism_disclosure_follows_its_description(
+@pytest.mark.parametrize("size", [(1920, 1000), (1440, 900)])
+def test_the_market_prism_description_sits_under_its_heading_and_the_stamp_follows_the_item_before_it(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     tmp_path,
     monkeypatch,
     size,
 ):
-    """A council-length rationale: the captured fixture's 67-character one hides the defect."""
+    """A council-length rationale: the captured fixture's 67-character one hides the defect. The
+    description reads under the heading, the rationale under the description at the same left edge
+    (never beside it), and the as-of stamp starts within 24 px of the item before it."""
     _prepare(tmp_path, monkeypatch, world="full", seed=prod.seed_long_prism_rationale)
     with _open(firefox, advisor_server, size, "overview") as opened:
         read = opened.evaluate(prod.PRISM_JS)
-        assert read["description"] and read["disclosure"], f"premise: both render: {read}"
-        gap = read["disclosure"]["top"] - read["description"]["bottom"]
-        assert gap <= DISCLOSURE_GAP_PX, (
-            f"the disclosure lands {gap:.0f} px under its description: {read}"
+        assert read["description"] and read["rationale"], f"premise: both render: {read}"
+        gap = read["description"]["top"] - read["header"]["bottom"]
+        assert -1 <= gap <= DISCLOSURE_GAP_PX, f"the description is {gap:.0f} px under the heading"
+        assert read["rationale"]["top"] >= read["description"]["bottom"] - 1, (
+            f"the rationale sits beside the description: {read}"
         )
+        assert abs(read["rationale"]["left"] - read["description"]["left"]) <= 2, read
+        row = al.measure(
+            opened.page,
+            al.ROW_START_JS,
+            al.spec_of(al.TOOLBAR_ROWS["market_prism_header"], name="market_prism_header"),
+        )
+        assert row["found"] == 1, "the Market Prism header row is not on the page"
+        assert row["violations"] == [], row["violations"]
 
 
 # ---------------------------------------------------------------------------

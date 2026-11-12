@@ -56,6 +56,29 @@ PRODUCER = REPO / "tests" / "fixtures" / "page_explainers" / "produce_ref_token_
 # that may be missing.
 RULED_RENAMES = ("data:data-label=Triggers",)
 
+# Tokens the plan removes with the element that carried them, each named by what it was:
+# the Advisor's page caption beside the tab bar and its disclosure; the Overview's tab line and the
+# term disclosures the Overview's descriptions carried (their lines are Glossary lines now); the
+# guardrail paragraph; the pointer on the Overview toolbar; and the autotune shared line with the
+# column-lift modifiers. A later cycle adds the tokens of its own host.
+RULED_REMOVALS = (
+    "testid:advisor-caption",
+    "class:adv-caption",
+    "data:data-explainer=A01",
+    "data:data-terms=A01",
+    "data:data-explainer=O01",
+    "data:data-terms=O03",
+    "data:data-terms=O08",
+    "data:data-terms=O15",
+    "data:data-terms=O27",
+    "testid:guardrail-uniform-note",
+    "class:obs-framing-note",
+    "class:adv-pointer",
+    "testid:autotune-shared-line",
+    "class:autotune-shared-line",
+    "class:liftedClasses",
+)
+
 _CACHE: dict = {}
 
 
@@ -313,7 +336,7 @@ def _token_reader():
 def test_every_attribute_id_class_and_contract_name_of_the_reference_is_still_in_its_file():
     record = json.loads(INVENTORY.read_text(encoding="utf-8"))
     tokens_of = _token_reader()
-    excluded = set(record["removed_control_tokens"]) | set(RULED_RENAMES)
+    excluded = set(record["removed_control_tokens"]) | set(RULED_RENAMES) | set(RULED_REMOVALS)
     problems = []
     for path, tokens in record["files"].items():
         head = tokens_of((REPO / path).read_text(encoding="utf-8"))
@@ -330,6 +353,20 @@ def test_the_inventory_is_the_reference_commits_and_holds_none_of_the_removed_co
     every_token = {t for tokens in record["files"].values() for t in tokens}
     assert {"id:dp-view-logs-btn", "id:dp-go-cash-btn"}.isdisjoint(every_token)
     assert RULED_RENAMES[0] not in record["files"]["templates/history.html"]
+
+
+def test_every_ruled_removal_is_a_token_the_reference_carried_and_the_head_no_longer_does():
+    """The list names real tokens (a typo would excuse nothing and hide a lost token), and none
+    of them has come back."""
+    record = json.loads(INVENTORY.read_text(encoding="utf-8"))
+    tokens_of = _token_reader()
+    carried = {t for tokens in record["files"].values() for t in tokens}
+    assert set(RULED_REMOVALS) <= carried, sorted(set(RULED_REMOVALS) - carried)
+    back = []
+    for path, tokens in record["files"].items():
+        head = tokens_of((REPO / path).read_text(encoding="utf-8"))
+        back += [f"{path}: {t}" for t in tokens if t in RULED_REMOVALS and t in head]
+    assert not back, "removed tokens are back:\n" + "\n".join(back)
 
 
 def test_the_token_comparison_reports_a_missing_testid_and_class():

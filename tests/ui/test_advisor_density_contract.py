@@ -117,7 +117,9 @@ class TestAutotuneRunsAreRows:
         assert "sym-card" not in html and "autotune-run-card" not in html
 
     def test_a_row_carries_the_six_columns_the_header_names(self):
-        html = self._list_html([_run_row(1, "alpha")])
+        # One row has no sentence, and a score and a t-stat that are figures keep their columns.
+        html = self._list_html([_run_row(1, "alpha", naive_sharpe=1.2, selection_tstat=2.1)])
+        row = parse_html(html).find_all(testid="autotune-run-row")[0]
         for cell in (
             "autotune-run-name",
             "autotune-run-time",
@@ -126,7 +128,8 @@ class TestAutotuneRunsAreRows:
             "autotune-run-score",
             "autotune-run-tstat",
         ):
-            assert f'class="{cell}"' in html, cell
+            assert row.find_all(cls=cell), cell
+        heads = [n.text for n in parse_html(html).find_all(cls="autotune-row--head")[0].iter()]
         for header in (
             "Symphony",
             "Run time (ET)",
@@ -135,12 +138,25 @@ class TestAutotuneRunsAreRows:
             "Best CRRA-EU score",
             "Sel t-stat",
         ):
-            assert f">{header}</span>" in html, header
+            assert header in heads, header
+
+    def test_a_score_and_a_t_stat_that_read_na_in_every_row_have_no_column(self):
+        html = self._list_html([_run_row(i, f"symphony-{i}") for i in range(1, 4)])
+        root = parse_html(html)
+        assert not root.find_all(cls="autotune-run-score")
+        assert not root.find_all(cls="autotune-run-tstat")
+        assert "N/A" not in root.text
 
     def test_the_outcome_is_a_dot_and_one_word_with_no_inline_colour(self):
         html = self._list_html([_run_row(1, "alpha")])
-        assert 'class="decision-pill decision-pill--warn">Fallback</span>' in html
-        assert "style=" not in html, "an outcome is coloured by its class, never an inline colour"
+        pills = parse_html(html).find_all(cls="decision-pill")
+        assert [p.text for p in pills] == ["Fallback"]
+        assert "decision-pill--warn" in pills[0].classes
+        # The one inline style the table may carry is its column count, never a colour.
+        styles = re.findall(r"""style\s*=\s*["']([^"']*)["']""", html)
+        assert all(re.fullmatch(r"\s*--cols:\s*\d+;?\s*", s) for s in styles), (
+            f"an outcome is coloured by its class, never an inline colour: {styles!r}"
+        )
 
     def test_the_header_carries_the_streak_sentence_and_a_cell_carries_the_figure(self):
         root = parse_html(self._list_html([_run_row(1, "alpha")]))
@@ -183,8 +199,8 @@ class TestAutotuneRunsAreRows:
             assert _declared("autotune-run-frozen", prop) != value, prop
 
     def test_the_score_column_header_names_the_objective_the_rows_share(self):
-        # Different scores, so the column stays in the table; an identical score is stated once in
-        # the shared line instead and the column leaves the table.
+        # Scores that are figures keep the column in the table; a column that reads N/A in every row
+        # has no cell and no header.
         rows = [_run_row(1, "alpha", naive_sharpe=1.2), _run_row(2, "beta", naive_sharpe=1.4)]
         root = parse_html(self._list_html(rows))
         head = root.find_all(cls="autotune-row--head")[0]
@@ -196,15 +212,15 @@ class TestAutotuneRunsAreRows:
         assert "autotune-table--row-objectives" not in table.classes
 
     def test_a_sortino_run_names_its_objective_in_the_header_too(self):
-        rows = [_run_row(1, "alpha", objective="sortino_loss_aversion")]
+        rows = [_run_row(1, "alpha", objective="sortino_loss_aversion", naive_sharpe=1.1)]
         head = parse_html(self._list_html(rows)).find_all(cls="autotune-row--head")[0]
         assert head.find_all(cls="autotune-run-score")[0].text == "Best Sortino score"
 
     def test_rows_that_differ_in_objective_each_name_their_own_on_screen(self):
         rows = [
-            _run_row(1, "alpha"),
-            _run_row(2, "beta", objective="sortino_loss_aversion"),
-            _run_row(3, "gamma", objective=None),
+            _run_row(1, "alpha", naive_sharpe=1.1),
+            _run_row(2, "beta", objective="sortino_loss_aversion", naive_sharpe=1.2),
+            _run_row(3, "gamma", objective=None, naive_sharpe=1.3),
         ]
         root = parse_html(self._list_html(rows))
         table = root.find_all(cls="autotune-table")[0]
@@ -247,7 +263,10 @@ class TestAutotuneRunsAreRows:
         assert 'content: "Score "' not in css
 
     def test_the_older_runs_table_has_its_own_header_so_a_bare_figure_keeps_its_name(self):
-        rows = [_run_row(1, "alpha"), _run_row(2, "alpha", run_timestamp="2026-10-23T22:33:00")]
+        rows = [
+            _run_row(1, "alpha"),
+            _run_row(2, "alpha", run_timestamp="2026-10-23T22:33:00", naive_sharpe=1.2),
+        ]
         snapshots = drive([{"op": "load"}], {"/api/autotune-runs": rows})
         older = parse_html(snapshots[-1]["older"]["html"])
         assert len(older.find_all(testid="autotune-run-row")) == 1
@@ -264,27 +283,22 @@ def _norm(text: str) -> str:
 
 
 class TestEveryValueOfARowStaysOnScreen:
-    """The plan's AC-8: a cell moved into the shared line is still on screen, in the line.
+    """A cell moved into the sentence is still on screen, in the sentence.
 
     The rows are the real route's over runs written by ``database.save_autotune_run`` from the
     captured fixtures (``tests/ui/_page_explainers_advisor.py``); the expected values come from
-    those rows, never from the markup under test.
+    those rows, never from the markup under test. A column that reads N/A in every row has no
+    value to keep.
     """
 
-    @staticmethod
-    def _values(row: dict) -> dict[str, str]:
-        verdict = row.get("frozen_eval_verdict")
-        return {
-            "frozen": f"Frozen-eval {verdict}" if verdict else "Frozen-eval not evaluated",
-            "score": "N/A",
-            "tstat": "N/A",
-        }
+    # What the sentence says for each outcome the route sends, as the words of its clause.
+    _CLAUSE_WORDS = {"fallback": "kept its previous settings"}
 
     def _render(self, rows: list[dict]) -> tuple[list[str], list[str], str]:
         html = self._list_html(rows)
         root = parse_html(html)
         row_texts = [_norm(n.text) for n in root.find_all(testid="autotune-run-row")]
-        lines = [_norm(n.text) for n in root.find_all(testid="autotune-shared-line")]
+        lines = [_norm(n.text) for n in root.find_all(testid="autotune-sentence")]
         return row_texts, lines, html
 
     @staticmethod
@@ -296,7 +310,9 @@ class TestEveryValueOfARowStaysOnScreen:
         [(11, None), (11, 4), (2, None), (1, None)],
         ids=["all identical", "one differs", "two rows", "one row"],
     )
-    def test_each_rows_values_are_in_the_row_or_in_the_line(self, isolated_db, count, adopted_at):
+    def test_each_rows_values_are_in_the_row_or_in_the_sentence(
+        self, isolated_db, count, adopted_at
+    ):
         from tests.ui import _page_explainers_advisor as pe
 
         pe.seed_autotune_runs(count, adopted_at=adopted_at)
@@ -308,23 +324,28 @@ class TestEveryValueOfARowStaysOnScreen:
         for data, text in zip(rows, row_texts, strict=True):
             name = data.get("symphony_name") or data["symphony_id"]
             assert name in text, f"the row lost its symphony {name!r}: {text!r}"
-            for cell, value in self._values(data).items():
-                assert value in text or value in line, (
-                    f"the {cell} value {value!r} of {name!r} is on screen nowhere: "
-                    f"row {text!r}, line {line!r}"
-                )
+            assert "N/A" not in text, f"a column that reads N/A in every row is on screen: {text!r}"
+        # The outcome is in every row, or in the sentence as the clause that says it.
+        for data, text in zip(rows, row_texts, strict=True):
+            token = data["baseline_decision"]
+            word = {"fallback": "Fallback"}.get(token, token)
+            clause = self._CLAUSE_WORDS.get(token)
+            assert word in text or (clause is not None and clause in line.lower()), (
+                f"the outcome {token!r} of {data['symphony_id']!r} is on screen nowhere: "
+                f"row {text!r}, sentence {line!r}"
+            )
 
-    def test_a_value_moved_to_the_line_is_not_repeated_in_a_row(self, isolated_db):
+    def test_a_value_moved_to_the_sentence_is_not_repeated_in_a_row(self, isolated_db):
         from tests.ui import _page_explainers_advisor as pe
 
         pe.seed_autotune_runs(11)
         row_texts, lines, _ = self._render(pe.route_rows())
-        assert lines, "premise: identical cells make a line"
+        assert lines, "premise: an identical outcome makes a sentence"
         for text in row_texts:
-            for value in ("Frozen-eval not evaluated", "N/A"):
-                assert value not in text, f"{value!r} is in the line and in a row: {text!r}"
+            for value in ("Fallback", "Frozen-eval not evaluated", "N/A"):
+                assert value not in text, f"{value!r} is in the sentence and in a row: {text!r}"
 
-    def test_the_older_runs_keep_every_cell_and_never_print_a_line(self, isolated_db):
+    def test_the_older_runs_keep_every_cell_and_never_print_a_sentence(self, isolated_db):
         from tests.ui import _page_explainers_advisor as pe
 
         pe.seed_autotune_runs(11, older_for=3)
@@ -332,25 +353,32 @@ class TestEveryValueOfARowStaysOnScreen:
         older = parse_html(snapshots[-1]["older"]["html"])
         rows = older.find_all(testid="autotune-run-row")
         assert len(rows) == 3, "premise: three older runs, identical in every cell"
-        assert not older.find_all(testid="autotune-shared-line")
+        assert not older.find_all(testid="autotune-sentence")
         assert "Same for every run" not in snapshots[-1]["older"]["html"]
         for row in rows:
             text = _norm(row.text)
             assert "Fallback" in text and "Frozen-eval not evaluated" in text, text
-            assert text.count("N/A") == 2, f"the older row dropped its score or t-stat: {text!r}"
+            assert "N/A" not in text, (
+                f"an older row shows a column that reads N/A in every row: {text!r}"
+            )
 
-    def test_the_line_is_dim_ink_text_on_screen_never_visually_hidden(self):
-        selector = "autotune-shared-line"
-        assert _declared(selector, "color") == "var(--studio-ink-dim)"
-        for prop, value in (
-            ("display", "none"),
-            ("visibility", "hidden"),
-            ("clip", "rect(0 0 0 0)"),
-        ):
-            assert _declared(selector, prop) != value, prop
-        size = _declared(selector, "font-size")
-        if size and size.endswith("px"):
-            assert float(size[:-2]) >= 11, "below the page's 11 px text floor"
+    def test_the_sentence_is_text_on_screen_never_visually_hidden(self, isolated_db):
+        from tests.ui import _page_explainers_advisor as pe
+
+        pe.seed_autotune_runs(11)
+        root = parse_html(self._list_html(pe.route_rows()))
+        (sentence,) = root.find_all(testid="autotune-sentence")
+        assert sentence.classes, "premise: the sentence has a class its rules can be read from"
+        for cls in sentence.classes:
+            for prop, value in (
+                ("display", "none"),
+                ("visibility", "hidden"),
+                ("clip", "rect(0 0 0 0)"),
+            ):
+                assert _declared(f".{cls}", prop) != value, f"{cls}: {prop}"
+            size = _declared(f".{cls}", "font-size")
+            if size and size.endswith("px"):
+                assert float(size[:-2]) >= 11, "below the page's 11 px text floor"
 
 
 # ---------------------------------------------------------------------------

@@ -88,7 +88,7 @@ def test_ac1_page_global_claude_powered_subtitle_is_removed(client, monkeypatch)
     """MUST FAIL pre-fix: the stale universal-Claude-power claim is still
     rendered above all 6 tabs today."""
     html = _get_html(client, monkeypatch)
-    assert 'data-testid="advisor-caption"' in html, "the description line is a caption"
+    assert 'data-testid="advisor-caption"' not in html, "the page-level description line is gone"
     assert "Claude-powered suggestion engine" not in html, (
         "AC-1 GAP: the page-global 'Claude-powered suggestion engine' subtitle "
         "is still present on the page — it must be replaced by per-tab attribution."

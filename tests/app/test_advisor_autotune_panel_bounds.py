@@ -9,8 +9,8 @@ plus the server render of ``GET /ai-advisor`` for the static markup.
   first, at most 12 of them.
 * Every other returned row is an older run, listed in the route's order inside a ``<details>``
   that is closed, hidden while it has no rows, and never recreated by the 15 s poll.
-* The ``<details>`` summary states the older-run count and that the list covers the route's 50
-  most recent runs.
+* The ``<details>`` summary reads "{n} older run(s) from the 50 most recent": the older-run
+  count and how far back the route's list reaches.
 * The sparkline draws every returned run that has a score. It is hidden when the chart
   library is missing or no run has a score, shown again when one arrives, holds exactly one
   live chart however often the list renders, and replaces a chart the canvas already holds.
@@ -181,8 +181,8 @@ class TestCardsAndOlderRuns:
         rows, (loaded,) = _loaded(client)
         older_count = len(rows) - 11
         text = loaded["older"]["summary"]
-        assert set(re.findall(r"\d+", text)) == {str(older_count), str(_ROUTE_ROW_LIMIT)}, text
-        assert "recent" in text.lower(), text
+        assert older_count > 1, "premise: the plural form"
+        assert text == f"{older_count} older runs from the {_ROUTE_ROW_LIMIT} most recent", text
         assert str(len(rows)) not in re.findall(r"\d+", text), "the total, not the older count"
 
     def test_the_details_is_shown_and_closed_when_older_runs_exist(self, client):
@@ -289,11 +289,11 @@ class TestCardContent:
         older_rows = _cards(loaded["older"]["html"])
         assert len(older_rows) == 1, "the streak symphony's older run is not listed"
         # The Outcome cells (pill and frozen-eval text) are the same in every card of the list, so
-        # the list states them once in the shared line; an older row keeps every cell of its own.
-        shared = pb.parse_html(f"<div>{loaded['list']}</div>").find_all("autotune-shared-line")
-        assert len(shared) == 1, "premise: every card has the same Outcome, so one line states it"
+        # the list states them once in its sentence; an older row keeps every cell of its own.
+        shared = pb.parse_html(f"<div>{loaded['list']}</div>").find_all("autotune-sentence")
+        assert len(shared) == 1, "premise: every card has the same Outcome, so one sentence says it"
         line = " ".join(shared[0].text().split())
-        assert "Fallback" in line and "Frozen-eval" in line
+        assert line == "Every symphony kept its previous settings in its latest run."
         older_classes = {c for n in older_rows[0].walk() for c in n.classes()}
         assert "decision-pill" in older_classes
         assert "Fallback" in older_rows[0].text() and "Frozen-eval" in older_rows[0].text()

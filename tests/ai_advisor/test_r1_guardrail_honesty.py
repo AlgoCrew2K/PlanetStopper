@@ -17,11 +17,9 @@ each test class, this is not guesswork):
     NOT_APPLICABLE row with raw_response.feature_flag=="off" is returned
     verbatim and unlabeled today. That is the RED target.
 
-(b) The guardrail-uniform-note paragraph (ai_advisor.html:2204-2209,
-    data-testid="guardrail-uniform-note") currently names only TWO of the
-    THREE guardrail producers ("Overfitting Conscience and Spec Critic are
-    guardrails that check the shared, frozen THEORY spec") and implies uniform
-    behavior. Per doc-reconciliation.md §1.8 the corrected copy must name all
+(b) The three guardrail definitions (Overview Glossary lines O31a, O31b and
+    O31c, once the guardrail-uniform-note paragraph) must not imply uniform
+    behavior. Per doc-reconciliation.md §1.8 the copy must name all
     three by their ACTUAL, non-uniform behavior: Spec Critic as a genuine
     active/evaluated control, Overfitting Conscience scoped to ONE narrow
     DoF source (with the "does not mean no overfitting risk exists" carve-out
@@ -177,89 +175,88 @@ def test_self_guard_overview_panel_already_excludes_divergence_explainer_role(cl
 # ===========================================================================
 
 
-def _extract_guardrail_note(html: str) -> str:
-    """Isolate the guardrail-uniform-note paragraph's own text, not the whole
-    page. Scoping matters: the page contains generic words like 'active' (e.g.
-    the nav's `class="cap-tab active"`) elsewhere, so an unscoped substring
-    check on 'active'/'evaluated' etc. can pass vacuously without the
-    guardrail-note copy itself ever changing. Extraction is marker-based
-    (testid to next closing </p>), not full HTML parsing — sufficient for this
-    single well-known element and avoids a new parser dependency."""
-    marker = 'data-testid="guardrail-uniform-note"'
-    start = html.find(marker)
-    assert start != -1, "guardrail-uniform-note element not found in rendered HTML at all"
-    end = html.find("</p>", start)
-    assert end != -1, "guardrail-uniform-note element has no closing </p> in rendered HTML"
-    return html[start:end]
+def _guardrail_lines(html: str) -> dict[str, str]:
+    """The three guardrail definitions, read from the Overview Glossary by their keys.
+
+    The paragraph that used to carry them (``data-testid="guardrail-uniform-note"``) is gone: its
+    first three sentences are the Glossary lines O31a, O31b and O31c, scoped here by key so a
+    check on words like 'active' cannot pass on unrelated markup (the nav's ``cap-tab active``).
+    """
+    from tests.ui._page_explainers_advisor import norm, soup
+
+    page = soup(html)
+    glossary = page.select_one('#tab-panel-overview details[data-terms="glossary"]')
+    assert glossary is not None, "the Overview carries no Glossary"
+    lines = {}
+    for key in ("O31a", "O31b", "O31c"):
+        found = glossary.select(f'p[data-term="{key}"]')
+        assert len(found) == 1, f"the Overview Glossary holds {len(found)} lines {key}, not one"
+        lines[key] = norm(found[0].get_text(" "))
+    return lines
 
 
-def test_ac14_guardrail_note_no_longer_implies_uniform_two_producer_behavior(client, monkeypatch):
-    """MUST FAIL pre-fix: the current copy names only OC and SC and calls a
-    'uniform CLEAR verdict... the healthy expected result' — the exact framing
-    doc-reconciliation §1.8 corrects. Byte-absence check on the stale phrase,
-    not merely presence of new text (a lazy fix could append new text without
-    removing the misleading claim)."""
-    _mock_ai_advisor_route_deps(monkeypatch)
-    resp = client.get("/ai-advisor")
-    assert resp.status_code == 200
-    html = resp.get_data(as_text=True)
-
-    assert (
-        "Overfitting Conscience and Spec Critic are guardrails that check the shared," in html
-    ) is False, (
-        "AC-14 GAP: the stale two-producer 'uniform CLEAR' framing is still present "
-        "in the guardrail-uniform-note copy verbatim."
-    )
-
-
-def test_ac14_guardrail_note_names_spec_critic_as_active_control(client, monkeypatch):
-    """Scoped to the guardrail-uniform-note element itself (see
-    _extract_guardrail_note) — an unscoped page-wide check on 'active' would
-    pass vacuously via unrelated markup (e.g. the nav's `cap-tab active`
-    class), which is exactly the trap this scoping avoids."""
+def test_the_uniform_note_paragraph_is_gone_and_its_stale_framing_with_it(client, monkeypatch):
     _mock_ai_advisor_route_deps(monkeypatch)
     html = client.get("/ai-advisor").get_data(as_text=True)
-    note = _extract_guardrail_note(html).lower()
-    assert "spec critic" in note and ("active" in note or "evaluated" in note), (
-        "AC-14 GAP: guardrail-uniform-note does not affirm Spec Critic as a "
-        "genuine active/evaluated control."
+    assert 'data-testid="guardrail-uniform-note"' not in html, (
+        "the guardrail paragraph is still on the page; its sentences belong to the Glossary"
     )
-
-
-def test_ac14_guardrail_note_scopes_overfitting_conscience_to_one_dof_source(client, monkeypatch):
-    """The corrected copy must both (1) name the narrow scope and (2) carry the
-    explicit non-implication carve-out — a fix that adds only the scope phrase
-    without the carve-out still leaves the operator able to over-read a CLEAR
-    as 'no overfitting risk exists', which is exactly what F8 flags."""
-    _mock_ai_advisor_route_deps(monkeypatch)
-    html = client.get("/ai-advisor").get_data(as_text=True)
-    note = _extract_guardrail_note(html).lower()
-    assert "overfitting conscience" in note
     assert (
-        "backtest-selection" in note or "degrees of freedom" in note or "degrees-of-freedom" in note
-    ), (
-        "AC-14 GAP: guardrail-uniform-note does not scope Overfitting Conscience "
-        "to its actual narrow check (BACKTEST_SELECTION degrees-of-freedom only)."
-    )
-    assert "no overfitting risk exists" in note or "does not mean" in note, (
-        "AC-14 GAP: guardrail-uniform-note is missing the explicit carve-out that "
-        "a CLEAR here does not mean no overfitting risk exists anywhere."
+        "Overfitting Conscience and Spec Critic are guardrails that check the shared," not in html
     )
 
 
-def test_ac14_guardrail_note_names_divergence_explainer_as_disabled_and_informational(
+def test_the_guardrail_lines_read_the_plans_text_and_start_with_their_term(client, monkeypatch):
+    """S-4.6: each line is the first three sentences of the reference paragraph, word for word
+    after its 'Term: ' prefix, without its own leading term name and (for the first and third)
+    without the 'is' that followed it. The fixture records that derivation; the page equals it."""
+    from tests.ui import _page_copy as copy_fixture
+
+    _mock_ai_advisor_route_deps(monkeypatch)
+    lines = _guardrail_lines(client.get("/ai-advisor").get_data(as_text=True))
+    expected = {line["key"]: line["text"] for line in copy_fixture.glossary("Overview")}
+    for key, term in (
+        ("O31a", "Spec Critic: "),
+        ("O31b", "Overfitting Conscience: "),
+        ("O31c", "Divergence Explainer: "),
+    ):
+        assert lines[key] == " ".join(expected[key].split()), key
+        assert lines[key].startswith(term), f"{key} does not start with {term!r}: {lines[key]!r}"
+    assert lines["O31a"].startswith("Spec Critic: an active guardrail")
+    assert lines["O31c"].startswith("Divergence Explainer: disabled by default")
+    for key in lines:
+        assert not lines[key].split(": ", 1)[1].startswith("is "), f"{key} kept the leading 'is'"
+
+
+def test_the_guardrail_lines_name_spec_critic_as_active_control(client, monkeypatch):
+    _mock_ai_advisor_route_deps(monkeypatch)
+    line = _guardrail_lines(client.get("/ai-advisor").get_data(as_text=True))["O31a"].lower()
+    assert "spec critic" in line and ("active" in line or "evaluated" in line), (
+        "the Spec Critic line does not affirm it as a genuine active/evaluated control."
+    )
+
+
+def test_the_guardrail_lines_scope_overfitting_conscience_to_one_dof_source(client, monkeypatch):
+    """The line must both name the narrow scope and carry the explicit non-implication carve-out:
+    a line with only the scope phrase lets the operator read a CLEAR as 'no overfitting risk
+    exists', which is what the audit flagged."""
+    _mock_ai_advisor_route_deps(monkeypatch)
+    line = _guardrail_lines(client.get("/ai-advisor").get_data(as_text=True))["O31b"].lower()
+    assert "overfitting conscience" in line
+    assert (
+        "backtest-selection" in line or "degrees of freedom" in line or "degrees-of-freedom" in line
+    ), "the line does not scope Overfitting Conscience to its narrow check."
+    assert "no overfitting risk exists" in line or "does not mean" in line, (
+        "the line is missing the carve-out that a CLEAR here does not mean no overfitting risk exists."
+    )
+
+
+def test_the_guardrail_lines_name_divergence_explainer_as_disabled_and_informational(
     client, monkeypatch
 ):
-    """MUST FAIL pre-fix: the current copy does not mention Divergence Explainer
-    at all — an operator seeing a stray DE row (via the /api/advisor-observations
-    leak this file's other test targets) has zero context for it."""
     _mock_ai_advisor_route_deps(monkeypatch)
-    html = client.get("/ai-advisor").get_data(as_text=True)
-    note = _extract_guardrail_note(html).lower()
-    assert "divergence explainer" in note, (
-        "AC-14 GAP: guardrail-uniform-note does not name Divergence Explainer at all."
-    )
-    assert "disabled" in note and "informational" in note, (
-        "AC-14 GAP: guardrail-uniform-note does not describe Divergence Explainer "
-        "as disabled-by-default / informational-only."
+    line = _guardrail_lines(client.get("/ai-advisor").get_data(as_text=True))["O31c"].lower()
+    assert "divergence explainer" in line
+    assert "disabled" in line and "informational" in line, (
+        "the line does not describe Divergence Explainer as disabled-by-default / informational-only."
     )
