@@ -201,9 +201,27 @@ def reading(firefox, server, seeded, world, host, width, *, theme=None):  # noqa
     return facts
 
 
+# Hosts whose descriptions this plan has already changed in production: their rows are read from the
+# plan's Copy table A (a removed row reads None), every other host from the reference rows.
+PLAN_HOSTS = {"Advisor", "Overview"}
+
+
+def _plan_row(key: str) -> dict | None:
+    try:
+        row = copy.a_row(key)
+    except KeyError:
+        return None
+    return row if copy.host_of(row) in PLAN_HOSTS else None
+
+
+def _removed_by_plan(key: str) -> bool:
+    return _plan_row(key) is not None and copy.a_text(key) is None
+
+
 def _expected_pattern(key: str) -> re.Pattern:
-    record = copy.row(key, "A")
-    text = copy.text(key, "A")
+    plan = _plan_row(key)
+    record = plan if plan is not None else copy.row(key, "A")
+    text = copy.a_text(key) if plan is not None else copy.text(key, "A")
     if slotted(record):
         pieces = [re.escape(p) for p in re.split(r"\{[a-z_]+\}", text)]
         return re.compile(r"\s*".join(p if i == 0 else r"\S+" + p for i, p in enumerate(pieces)))
@@ -241,6 +259,10 @@ def test_every_description_of_the_host_is_visible_with_its_words_and_not_only_an
         if key not in known:
             problems.append(f"{key}: not a Copy table A row")
             continue
+        if _removed_by_plan(key):
+            if item["shown"]:
+                problems.append(f"{key}: shown, though the plan removes it")
+            continue
         if not item["shown"]:
             if not (item["sectionHidden"] or _is_hidden_by_design(world, host, key, item)):
                 problems.append(f"{key}: not shown though its section is")
@@ -252,7 +274,10 @@ def test_every_description_of_the_host_is_visible_with_its_words_and_not_only_an
     own = [
         r["key"]
         for r in copy.rows("A")
-        if page_of(r["host_place"]) == host and r["builder"] == "template" and r["kind"] != "kept"
+        if page_of(r["host_place"]) == host
+        and r["builder"] == "template"
+        and r["kind"] != "kept"
+        and not _removed_by_plan(r["key"])
     ]
     # Strategy Builder's two result sections need observations no harness world writes.
     optional = ABSENT_WITH_SECTION if world == "empty" else {"B07", "B10"}
@@ -416,21 +441,20 @@ def test_every_disclosure_is_closed_on_load_named_and_opens_and_closes_by_enter_
                 total += 1
                 if item["open"]:
                     problems.append(f"{item['key']}: open on load")
-                if item["name"] != SUMMARY_TEXT:
-                    problems.append(f"{item['key']}: named {item['name']!r}")
-                summary = probe.page.locator(f'details[data-terms="{item["key"]}"] > summary').first
+                # A Glossary is named "Glossary"; every other disclosure "What the terms mean".
+                want = "Glossary" if item["key"] == "glossary" else SUMMARY_TEXT
+                if item["name"] != want:
+                    problems.append(f"{item['key']}: named {item['name']!r}, not {want!r}")
+                # The index-th visible disclosure, so a second Glossary on another tab is not
+                # mistaken for this one.
+                details = probe.page.locator("details[data-terms]:visible").nth(index)
+                summary = details.locator(":scope > summary")
                 for keystroke in ("Enter", "Space"):
                     summary.focus()
                     probe.page.keyboard.press(keystroke)
-                    opened = probe.page.evaluate(
-                        "(k) => document.querySelector('details[data-terms=\"' + k + '\"]').open",
-                        item["key"],
-                    )
+                    opened = details.evaluate("(d) => d.open")
                     probe.page.keyboard.press(keystroke)
-                    closed = not probe.page.evaluate(
-                        "(k) => document.querySelector('details[data-terms=\"' + k + '\"]').open",
-                        item["key"],
-                    )
+                    closed = not details.evaluate("(d) => d.open")
                     if not (opened and closed):
                         problems.append(
                             f"{item['key']}: {keystroke} opened={opened} closed={closed}"
@@ -460,12 +484,12 @@ def test_an_opened_overview_disclosure_survives_the_runs_refresh_with_its_lines_
         probe.context.clock.install(time=harness.CAPTURE_INSTANT)
         open_page(probe, "/ai-advisor")
         probe.page.wait_for_timeout(harness.SETTLE_MS)
-        probe.page.locator('details[data-terms="O08"] > summary').first.click()
-        before = probe.page.evaluate(DISCLOSURE_LINES_JS, "O08")
+        probe.page.locator('#tab-panel-overview details[data-terms="glossary"] > summary').click()
+        before = probe.page.evaluate(DISCLOSURE_LINES_JS, "glossary")
         for _ in range(3):
             probe.context.clock.run_for(16000)
             probe.page.wait_for_timeout(400)
-        after = probe.page.evaluate(DISCLOSURE_LINES_JS, "O08")
+        after = probe.page.evaluate(DISCLOSURE_LINES_JS, "glossary")
     assert before["open"] is True and before["lines"]
     assert after == before
 
