@@ -129,7 +129,7 @@ REMOVED_DISCLOSURES = {("/ai-advisor", "summary", "What the terms mean"): 7}
 # <reason>" (or "not applicable: <reason>"), which the plan rewrites.
 _REWRITTEN_EVIDENCE_SUMMARY = re.compile(
     r"^(Performance|Composite score|Redundancy|Backtest|Marginal contribution|Long VIX hedge) "
-    r"(unavailable|not applicable)"
+    r"(unavailable|not applicable)\b"
 )
 
 

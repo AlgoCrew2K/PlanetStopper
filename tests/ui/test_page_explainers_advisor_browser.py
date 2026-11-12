@@ -359,6 +359,15 @@ def _is_full_width(read: dict, part: str) -> bool:
     return abs(box["left"] - content["left"]) <= 2 and abs(box["right"] - content["right"]) <= 2
 
 
+def _assert_stacked_at_full_width(opened) -> dict:
+    read = opened.evaluate(_PAIR_JS)
+    assert _stacked(read), f"the subsections share a row or are offset: {read}"
+    for part in ("a", "b"):
+        assert _is_full_width(read, part), f"{part} does not span the content width: {read}"
+    assert read["a"]["top"] < read["b"]["top"], "Correlated pairs is not above the tenure review"
+    return read
+
+
 @pytest.mark.parametrize("width", al.WIDTHS)
 def test_two_short_retirement_subsections_each_take_the_panels_full_width_one_above_the_other(
     firefox,
@@ -367,16 +376,25 @@ def test_two_short_retirement_subsections_each_take_the_panels_full_width_one_ab
     monkeypatch,
     width,  # noqa: F811
 ):
-    """S-2.18: the reference put two subsections of 320 px or less in one row (and stacked them when
-    either was taller); each now takes the whole content width, the recommender above the tenure
-    review, whatever their heights."""
+    """S-2.18: a stored run with no cards and no review yet. The reference put two subsections of
+    320 px or less in one row (and stacked them when either was taller); each now takes the whole
+    content width, the recommender above the tenure review, whatever their heights."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_without_cards)
+    with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
+        _assert_stacked_at_full_width(opened)
+
+
+@pytest.mark.parametrize("width", [1001, 1440, 1920])
+def test_a_small_stored_review_below_a_stored_run_also_stacks_at_full_width(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    width,  # noqa: F811
+):
     _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_one_small_review)
     with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
-        read = opened.evaluate(_PAIR_JS)
-    assert _stacked(read), f"the subsections share a row or are offset: {read}"
-    for part in ("a", "b"):
-        assert _is_full_width(read, part), f"{part} does not span the content width: {read}"
-    assert read["a"]["top"] < read["b"]["top"], "Correlated pairs is not above the tenure review"
+        _assert_stacked_at_full_width(opened)
 
 
 @pytest.mark.parametrize("width", [1440, 1920])

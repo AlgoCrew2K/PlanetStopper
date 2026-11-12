@@ -699,7 +699,7 @@ class TestEvidenceItems:
         assert pair["uncertainty_gate"]["text"] in shown.text()
         assert pair["structural_gate"]["text"] in shown.text()
 
-    def test_an_unavailable_item_states_its_reason_and_never_renders_a_null_as_zero(
+    def test_an_unavailable_item_reads_its_status_and_never_renders_a_null_as_zero(
         self, client, isolated_db
     ):
         record = _stored_full_run()
@@ -716,7 +716,9 @@ class TestEvidenceItems:
                 assert shown is not None, where
                 text = shown.text()
                 assert "unavailable" in text.lower(), where
-                assert item["reason"] in text, where
+                assert item["reason"] not in _without_basis_label(shown), (
+                    f"{where}: the cell repeats the reason the missing line states"
+                )
                 bare = text
                 for known in (item["label"], item["subject"], item["source"]):
                     bare = bare.replace(known, " ")
@@ -1465,12 +1467,12 @@ class TestNoRedundantSiblingIsStated:
         for key in ("first", "second"):
             stored = pb.entry_of(record, pb.SMALL_IDS[key])
             item = stored["evidence"]["redundancy"]
-            block = pb.entry_node(panel, stored["symphony_id"]).find(
-                "tenure-review-evidence-redundancy"
-            )
+            card = pb.entry_node(panel, stored["symphony_id"])
+            block = card.find("tenure-review-evidence-redundancy")
             assert "no redundant sibling" not in block.text(), key
             assert item["status"] == "unavailable", key
-            assert item["reason"] in block.text(), key
+            assert item["reason"] not in _without_basis_label(block), key
+            assert item["reason"] in card.find("tenure-review-undecided").text(), key
             if item["pair"] is None:
                 unproven += 1
             else:
@@ -1666,7 +1668,9 @@ class TestEvidenceBlocksHaveDistinctHeadings:
 
 
 class TestAnUnavailableItemStillShowsItsWindow:
-    def test_a_window_the_record_carries_is_rendered_beside_the_reason(self, client, isolated_db):
+    def test_a_window_the_record_carries_is_rendered_in_the_cell_without_the_reason(
+        self, client, isolated_db
+    ):
         record = _stored_full_run()
         panel = _panel(client)
         checked = 0
@@ -1677,9 +1681,10 @@ class TestAnUnavailableItemStillShowsItsWindow:
                 window = item["window"]
                 if item["status"] == "available" or not window:
                     continue
-                text = node.find(f"tenure-review-evidence-{name}").text()
+                cell = node.find(f"tenure-review-evidence-{name}")
+                text = cell.text()
                 where = f"{stored['display_name']} / {name}"
-                assert item["reason"] in text, where
+                assert item["reason"] not in _without_basis_label(cell), where
                 assert window["first"] in text and window["last"] in text, where
                 assert str(window["days"]) in text, where
                 checked += 1
@@ -2176,7 +2181,11 @@ class TestTheCompositeScoreStatesHowManySymphoniesItWasNormalizedOver:
                     "tenure-review-evidence-composite"
                 )
                 assert not re.search(r"\bNone\b|\bnull\b", block.text()), stored["display_name"]
-                assert item["reason"] in block.text(), stored["display_name"]
+                assert item["reason"] not in _without_basis_label(block), stored["display_name"]
+                card = pb.entry_node(panel, stored["symphony_id"])
+                assert item["reason"] in card.find("tenure-review-missing").text(), stored[
+                    "display_name"
+                ]
                 checked += 1
         assert checked >= 4
 
@@ -3772,7 +3781,9 @@ class TestEveryPrintedFieldOfOneBrokenRunIsHonest:
                 continue
             assert pb.entry_node(panel, sid).everything() == texts["entry"], sid
 
-    def test_a_stored_reason_is_printed_as_stored_even_when_it_says_none(self, client, isolated_db):
+    def test_a_stored_reason_is_printed_as_stored_in_the_line_even_when_it_says_none(
+        self, client, isolated_db
+    ):
         reason = "None of the peers could be compared, undefined for this series"
 
         def edit(record):
@@ -3780,11 +3791,11 @@ class TestEveryPrintedFieldOfOneBrokenRunIsHonest:
 
         record, _, panel = _render_edited(client, "full", edit)
         watch = pb.entry_with_verdict(record, "watch")
-        long_vix = pb.entry_node(panel, watch["symphony_id"]).find(
-            "tenure-review-evidence-long_vix"
-        )
-        assert reason in long_vix.text()
-        assert _NOT_RECORDED not in long_vix.text().lower()
+        card = pb.entry_node(panel, watch["symphony_id"])
+        long_vix = card.find("tenure-review-evidence-long_vix")
+        assert f"long vix ({reason})" in card.find("tenure-review-missing").text()
+        assert _NOT_RECORDED not in card.find("tenure-review-missing").text().lower()
+        assert reason not in _without_basis_label(long_vix)
 
 
 # ===========================================================================
@@ -4304,7 +4315,7 @@ class TestPeersNotComparedAreCountedWithTheirReasonAndNeverNamed:
         block = pb.entry_node(panel, watch["symphony_id"]).find("tenure-review-evidence-redundancy")
         assert "not compared" not in block.text()
         assert pb.FULL_NAMES["shadow"] not in block.text()
-        assert not re.search(r"None", block.text())
+        assert not re.search(r"\bNone\b", block.text())
         assert watch["evidence"]["redundancy"]["pair"]["sibling_name"] in block.text()
 
 
@@ -4503,7 +4514,7 @@ class TestTheComparisonPortfolioNamesWhoWasLeftOutAndWhy:
                 "tenure-review-evidence-marginal"
             )
             text = block.text()
-            assert item["reason"] in text, where
+            assert item["reason"] not in _without_basis_label(block), where
             assert words[item["status"]] in text.lower(), where
             bare = _DATE.sub(" ", text)
             for known in (item["label"], item["subject"], item["source"]):
