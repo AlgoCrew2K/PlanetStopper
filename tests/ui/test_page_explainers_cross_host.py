@@ -85,9 +85,15 @@ RULED_REMOVALS = (
 )
 
 # A token one file loses with the element or function it came from while another file keeps it:
-# the script that measured the Retirement pair carried the pair's test id, the template's wrapper
-# element may keep it.
-RULED_FILE_REMOVALS = frozenset({("static/ai_advisor.js", "testid:retirement-pair")})
+# the script that measured the Retirement pair carried the pair's test id and those of its two
+# subsections, the template's elements keep them.
+RULED_FILE_REMOVALS = frozenset(
+    {
+        ("static/ai_advisor.js", "testid:retirement-pair"),
+        ("static/ai_advisor.js", "testid:retirement-recommender-section"),
+        ("static/ai_advisor.js", "testid:tenure-review-section"),
+    }
+)
 
 _CACHE: dict = {}
 
@@ -670,16 +676,27 @@ def _flat(path: pathlib.Path) -> str:
 
 
 @pytest.mark.parametrize(
-    "values", copy.slot_rows(), ids=[f"{v['slot']}-{v['copy_row']}" for v in copy.slot_rows()]
+    "values",
+    copy.new_slot_rows(),
+    ids=[f"{v['slot']}-{v['copy_row']}" for v in copy.new_slot_rows()],
 )
 def test_no_source_types_the_value_a_slot_phrase_holds(values):
-    before, after = values["phrase"].split("{" + values["slot"] + "}")
+    whole_before, whole_after = values["phrase"].split("{" + values["slot"] + "}")
     # A side shorter than a phrase ("at ", " trading days,") appears beside other numbers legitimately.
-    before = before if len(before.strip()) >= MIN_CONTEXT else ""
-    after = after if len(after.strip()) >= MIN_CONTEXT else ""
+    before = whole_before if len(whole_before.strip()) >= MIN_CONTEXT else ""
+    after = whole_after if len(whole_after.strip()) >= MIN_CONTEXT else ""
     flats = {path: _flat(path) for path in SOURCES}
     seen = 0
     problems = []
+    if not before.strip() and not after.strip():
+        # Both sides are short ("at {x} or more"): the phrase as a whole is the context, so a
+        # typed value is the whole phrase with a number in the slot, and the page reads the
+        # slot through its name.
+        typed = re.compile(re.escape(whole_before) + r"-?\d[\d.]*" + re.escape(whole_after))
+        for path, flat in flats.items():
+            if "page_copy." + values["slot"] in flat:
+                seen += 1
+            problems += [f"{path.name}: {m.group(0)!r} is typed" for m in typed.finditer(flat)]
     for path, flat in flats.items():
         if before.strip() and before in flat:
             seen += 1
@@ -711,7 +728,8 @@ SNAPSHOT = """
   const snapshot = () => ({
     explainers: H.$$('[data-explainer]').map((e) => [e.getAttribute('data-explainer'),
         e.textContent.replace(/\\s+/g, ' ').trim()]),
-    disclosures: H.$$('[data-terms]').map((d) => [d.getAttribute('data-terms'),
+    disclosures: H.$$('[data-terms]').map((d) => [d.getAttribute('data-terms') === 'glossary'
+        ? 'glossary:' + d.getAttribute('data-glossary-host') : d.getAttribute('data-terms'),
         d.hasAttribute('open'), d.querySelectorAll('[data-term]').length]),
   });
 """
