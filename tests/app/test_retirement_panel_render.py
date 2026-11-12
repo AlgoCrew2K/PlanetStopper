@@ -3764,14 +3764,23 @@ class TestEveryPrintedFieldOfOneBrokenRunIsHonest:
         keep = pb.entry_with_verdict(record, "keep")
         node = pb.entry_node(panel, keep["symphony_id"])
         assert _NOT_RECORDED in node.find("tenure-review-basis").text().lower()
+        line = node.find("tenure-review-missing").text().lower()
         for name in _PANEL_ITEMS:
-            assert _NOT_RECORDED in node.find(f"tenure-review-evidence-{name}").text().lower(), name
+            cell = node.find(f"tenure-review-evidence-{name}").text().lower()
+            if name in keep["missing_items"]:
+                # The line states "not recorded" for an item it names; the cell reads its status.
+                assert f"{name.replace('_', ' ')} (not recorded)" in line, name
+                assert _NOT_RECORDED not in cell, name
+            else:
+                assert _NOT_RECORDED in cell, name
         assert _NOT_RECORDED in panel.find("tenure-review-threshold").text().lower()
         watch = pb.entry_with_verdict(record, "watch")
         long_vix = pb.entry_node(panel, watch["symphony_id"]).find(
             "tenure-review-evidence-long_vix"
         )
-        assert _NOT_RECORDED in long_vix.text().lower()
+        watch_line = pb.entry_node(panel, watch["symphony_id"]).find("tenure-review-missing")
+        assert "long vix (not recorded)" in watch_line.text().lower()
+        assert _NOT_RECORDED not in long_vix.text().lower(), "the line is the one place"
         for sid, texts in pristine.items():
             if sid in ("[header]", keep["symphony_id"], watch["symphony_id"]):
                 continue
@@ -4527,7 +4536,10 @@ class TestTheComparisonPortfolioNamesWhoWasLeftOutAndWhy:
                 "tenure-review-evidence-marginal"
             )
             text = block.text()
-            assert item["reason"] not in _without_basis_label(block), where
+            if "marginal" in stored["missing_items"]:
+                assert item["reason"] not in _without_basis_label(block), where
+            else:
+                assert item["reason"] in _without_basis_label(block), where
             assert words[item["status"]] in text.lower(), where
             bare = _DATE.sub(" ", text)
             for known in (item["label"], item["subject"], item["source"]):
