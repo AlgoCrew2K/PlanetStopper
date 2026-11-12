@@ -716,9 +716,10 @@ class TestEvidenceItems:
                 assert shown is not None, where
                 text = shown.text()
                 assert "unavailable" in text.lower(), where
-                assert item["reason"] not in _without_basis_label(shown), (
-                    f"{where}: the cell repeats the reason the missing line states"
-                )
+                if name in stored["missing_items"]:
+                    assert item["reason"] not in _without_basis_label(shown), (
+                        f"{where}: the cell repeats the reason the missing line states"
+                    )
                 bare = text
                 for known in (item["label"], item["subject"], item["source"]):
                     bare = bare.replace(known, " ")
@@ -2588,7 +2589,12 @@ def _scoped(panel, victim_id, scope):
     return leaves[0] if leaves else None
 
 
-def _assert_others_unchanged(panel, pristine: dict, victim_id: str, scope: tuple) -> None:
+def _assert_others_unchanged(
+    panel, pristine: dict, victim_id: str, scope: tuple, list_unreadable: bool = False
+) -> None:
+    """``list_unreadable``: the victim's stored missing list is gone or not a list, so no item is
+    named by the line and an item that is not available keeps its reason in its cell (the
+    reference's cell); that is a change the rule requires, and the cell text is not compared."""
     for sid, texts in pristine.items():
         if sid == "[header]":
             if scope[0] != "header":
@@ -2600,6 +2606,8 @@ def _assert_others_unchanged(panel, pristine: dict, victim_id: str, scope: tuple
             continue
         for name in _PANEL_ITEMS:
             if scope[0] in ("block", "line") and scope[1] == name:
+                continue
+            if list_unreadable and "unavailable" in texts[name].lower():
                 continue
             assert node.find(f"tenure-review-evidence-{name}").everything() == texts[name], (
                 f"another block of the entry changed: {name}"
@@ -2933,30 +2941,32 @@ _POISONS = [
         [("evidence.performance.source", _LIST)],
         _line("performance", "source"),
     ),
-    # the reason of an item that is unavailable or not applicable
+    # the reason of an item that is unavailable or not applicable: the item is in the missing
+    # list, so the missing line states "not recorded" for it once and its cell reads its status
     _case(
         "unavailable reason missing",
         "watch",
         [("evidence.long_vix.reason", _GONE)],
-        _line("long_vix", "unavailable"),
+        ("testid", "tenure-review-missing"),
     ),
     _case(
         "unavailable reason null",
         "watch",
         [("evidence.long_vix.reason", None)],
-        _line("long_vix", "unavailable"),
+        ("testid", "tenure-review-missing"),
     ),
     _case(
         "unavailable reason a list",
         "watch",
         [("evidence.long_vix.reason", _LIST)],
-        _line("long_vix", "unavailable"),
+        ("testid", "tenure-review-missing"),
     ),
     _case(
         "not applicable reason null",
         "watch",
         [("evidence.long_vix.status", "not_applicable"), ("evidence.long_vix.reason", None)],
-        _line("long_vix", "not applicable"),
+        _block("long_vix"),
+        not_recorded=False,
     ),
     # the window of an item
     _case(
@@ -3556,7 +3566,7 @@ _POISONS = [
         "unavailable reason blank",
         "watch",
         [("evidence.long_vix.reason", _BLANK)],
-        _line("long_vix", "unavailable"),
+        ("testid", "tenure-review-missing"),
     ),
     _case(
         "window start blank",
@@ -3701,8 +3711,11 @@ class TestAMissingOrWrongTypedFieldReadsNotRecorded:
         for marker in poison.markers:
             assert not re.search(marker, everything), f"the stored value {marker!r} was printed"
         scoped = _scoped(panel, holder["id"], poison.scope)
+        unreadable = not isinstance(
+            pb.entry_of(record, holder["id"]).get("missing_items", _GONE), list
+        )
         if scoped is None and poison.optional:
-            _assert_others_unchanged(panel, pristine, holder["id"], poison.scope)
+            _assert_others_unchanged(panel, pristine, holder["id"], poison.scope, unreadable)
             return
         assert scoped is not None, "the line that prints the field is dropped, not worded"
         text = scoped.text()
@@ -3717,7 +3730,7 @@ class TestAMissingOrWrongTypedFieldReadsNotRecorded:
             assert kept.replace("_", " ") in text.replace("_", " "), (
                 f"the stored text {kept!r} was lost beside the field that reads not recorded: {text!r}"
             )
-        _assert_others_unchanged(panel, pristine, holder["id"], poison.scope)
+        _assert_others_unchanged(panel, pristine, holder["id"], poison.scope, unreadable)
 
     @pytest.mark.parametrize("which", ["full", "small", "edge", "quiet"])
     def test_the_unpoisoned_panels_print_none_of_the_tokens_the_cases_forbid(
