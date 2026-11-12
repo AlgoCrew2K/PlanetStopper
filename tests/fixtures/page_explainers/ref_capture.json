@@ -340,7 +340,7 @@
    "tests/security/test_frontrunner_no_trade_boundary.py": "cd1d4bb46933cba5f73c9c63cf928451e777660dd326f37998d3cd04b25f9188",
    "tests/security/test_model_warmup_no_trade_boundary.py": "1bde3ac90d6cd437543a7e2b3b0e473e0777940135f92e5c8179d00cb2085ce3",
    "tests/security/test_regime_label_job_no_trade_boundary.py": "60721810a7b3df44f025e5911d3a29f163a07169d5a6f3551d9fb8e417322afd",
-   "tests/security/test_retirement_action_no_trade_boundary.py": "c794ea4348a0b8146c8d636c7983a582abef8af432c859af3e730f81c46c0984",
+   "tests/security/test_retirement_action_no_trade_boundary.py": "7fbc8ad315e4dd00bf743a5a37225934b977e8060a57169b0d2d7a0f5a2b1509",
    "tests/security/test_retirement_recommender_no_trade_boundary.py": "174b278091e41dc535cd691903e3dda7ea65e86e8d6aa0e85a79930583adde9c"
   },
   "route_table": {
