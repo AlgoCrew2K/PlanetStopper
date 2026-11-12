@@ -847,14 +847,15 @@
 
     function autotuneOutcomeClause(r) {
         var decision = r.baseline_decision || '';
+        var verdict = r.frozen_eval_verdict || '';
+        var frozen = verdict ? ' (frozen-eval ' + verdict + ')' : '';
         if (Object.prototype.hasOwnProperty.call(AUTOTUNE_OUTCOME_CLAUSES, decision)) {
-            return AUTOTUNE_OUTCOME_CLAUSES[decision];
+            return AUTOTUNE_OUTCOME_CLAUSES[decision] + frozen;
         }
         if (decision === AUTOTUNE_ADOPTED_WORDS) {
-            return 'every symphony took new tuned settings (frozen-eval ' +
-                (r.frozen_eval_verdict || 'not evaluated') + ')';
+            return 'every symphony took new tuned settings (frozen-eval ' + (verdict || 'not evaluated') + ')';
         }
-        return "every run's outcome was " + decisionLabel(decision);
+        return "every run's outcome was " + decisionLabel(decision) + frozen;
     }
 
     // One sentence for what every run shares, or '' when neither the run time nor the outcome is shared.
