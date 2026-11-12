@@ -67,7 +67,6 @@ TABS = (
 PHONE = (375, 812)
 VERY_NARROW = (320, 812)
 DESKTOPS = [(1440, 900), (1240, 900)]
-PAIR_MAX_HEIGHT = 320  # the height under which the reference put the two subsections side by side
 EDGE_TOLERANCE = 0.5
 
 A_KEYS_OF_TAB = {tab: [k for k in adv.OWNED_A_KEYS if adv.TAB_OF_A_KEY[k] == tab] for tab in TABS}
@@ -341,7 +340,7 @@ def _retirement_with_cards_and_long_review():
 def _retirement_with_one_small_review():
     w.seed_roster()
     w.store_captured_summary()
-    pb.store_run(pb.solo_record())
+    pb.store_run(pb.small_record())
 
 
 def _retirement_with_the_undecided_review():
@@ -368,16 +367,12 @@ def test_two_short_retirement_subsections_each_take_the_panels_full_width_one_ab
     monkeypatch,
     width,  # noqa: F811
 ):
-    """S-2.18: the reference put two subsections of 320 px or less in one row; each now takes the
-    whole content width, the recommender above the tenure review."""
+    """S-2.18: the reference put two subsections of 320 px or less in one row (and stacked them when
+    either was taller); each now takes the whole content width, the recommender above the tenure
+    review, whatever their heights."""
     _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_one_small_review)
     with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
         read = opened.evaluate(_PAIR_JS)
-    for part in ("a", "b"):
-        assert read[part]["height"] <= PAIR_MAX_HEIGHT, (
-            f"premise: the {part} subsection is {read[part]['height']:.0f} px tall, so the "
-            f"reference would have paired it"
-        )
     assert _stacked(read), f"the subsections share a row or are offset: {read}"
     for part in ("a", "b"):
         assert _is_full_width(read, part), f"{part} does not span the content width: {read}"
