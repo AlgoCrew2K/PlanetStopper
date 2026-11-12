@@ -4695,8 +4695,11 @@ def _redundancy_problems(stored: dict, block: pb.Node) -> list[str]:
         problems.append(
             "the words 'no redundant sibling' appear on an item that does not carry them"
         )
-    if not available and item["reason"] in _without_basis_label(block):
+    named = "redundancy" in stored["missing_items"]
+    if not available and named and item["reason"] in _without_basis_label(block):
         problems.append("the cell repeats the reason the missing line states")
+    if not available and not named and item["reason"] not in _without_basis_label(block):
+        problems.append("an item the line does not name lost its reason")
     if pair:
         problems += _pair_problems(block, pair)
     lines = _not_used_lines(block)
@@ -5802,23 +5805,26 @@ class TestARedundancyItemStatesItsReasonOnceInTheMissingLine:
                 block = card.find("tenure-review-evidence-redundancy")
                 reason = item["reason"]
                 status_word = "unavailable" if item["status"] == "unavailable" else "not applicable"
+                if "redundancy" not in stored["missing_items"]:
+                    # A card whose line does not name the item keeps its cell as it was.
+                    if reason not in _without_basis_label(block):
+                        problems.append(f"{where}: the unlisted item lost its reason")
+                    if _summary_of(block).text() != f"Redundancy {status_word}: {reason}":
+                        problems.append(f"{where}: summary reads {_summary_of(block).text()!r}")
+                    checked += 1
+                    continue
                 if reason in _without_basis_label(block):
                     problems.append(f"{where}: the cell repeats the reason")
                 if _summary_of(block).text() != f"Redundancy {status_word}":
                     problems.append(f"{where}: summary reads {_summary_of(block).text()!r}")
-                if "redundancy" in stored["missing_items"]:
-                    decided_nothing += 1
-                    line = card.find("tenure-review-missing").text()
-                    expected = pb.expected_redundancy_phrase(reason, NEEDED)
-                    if (
-                        line.count(
-                            f"redundancy ({status_word + ': ' if status_word == 'not applicable' else ''}{expected})"
-                        )
-                        != 1
-                    ):
-                        problems.append(f"{where}: the missing line reads {line!r}")
-                    if [n.text() for n in _not_used_lines(block)] != [_NOT_USED]:
-                        problems.append(f"{where}: the not-used line carries more than its words")
+                decided_nothing += 1
+                line = card.find("tenure-review-missing").text()
+                expected = pb.expected_redundancy_phrase(reason, NEEDED)
+                named = f"redundancy ({status_word + ': ' if status_word == 'not applicable' else ''}{expected})"
+                if line.count(named) != 1:
+                    problems.append(f"{where}: the missing line reads {line!r}")
+                if [n.text() for n in _not_used_lines(block)] != [_NOT_USED]:
+                    problems.append(f"{where}: the not-used line carries more than its words")
                 checked += 1
         assert problems == []
         assert checked >= 20 and decided_nothing >= 10, (checked, decided_nothing)
