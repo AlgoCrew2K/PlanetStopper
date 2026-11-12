@@ -2068,7 +2068,8 @@
             {% set status = item.get('status') %}
             {% set pair = item.get('pair') %}
             {% set figs = item.get('figures') %}
-            {# The missing line states a reason once, so an item's cell reads only its status (and says when no reason was recorded). #}
+            {# An item the missing list names has its reason in the missing line, so its cell reads only its status; any other item keeps its reason. #}
+            {% set named_in_missing = missing_items is sequence and missing_items is not string and missing_items is not mapping and name in missing_items %}
             {% set pair_figured = pair is mapping and (pair.get('correlation') is mapping and pair.get('correlation').get('value') is finite_number or pair.get('ci_lower') is mapping and pair.get('ci_lower').get('value') is finite_number or pair.get('ci_upper') is mapping and pair.get('ci_upper').get('value') is finite_number or pair.get('stressed_correlation') is mapping and pair.get('stressed_correlation').get('value') is finite_number or pair.get('holdings_overlap') is mapping and pair.get('holdings_overlap').get('value') is finite_number) %}
             {% set first_fig = (figs.keys() | list | first) if status == 'available' and figs is mapping and figs else none %}
             {% set paired_with = ((pair.get('sibling_name') if pair.get('sibling_name') is string and pair.get('sibling_name').strip() else (pair.get('sibling_id') | tenure_text)) if pair is mapping else '') %}
@@ -2076,9 +2077,9 @@
             {% set headline %}
                 {%- if headline_kind == 'status' -%}
                     {%- if status == 'not_applicable' -%}
-                    <span class="tenure-review-evidence-meta retirement-rec-meta">not applicable{% if not (item.get('reason') is string and item.get('reason').strip()) %}: not recorded{% endif %}</span>
+                    <span class="tenure-review-evidence-meta retirement-rec-meta">not applicable{% if not named_in_missing %}: {{ item.get('reason') | tenure_text }}{% endif %}</span>
                     {%- else -%}
-                    <span class="tenure-review-evidence-meta retirement-rec-meta">unavailable{% if not (item.get('reason') is string and item.get('reason').strip()) %}: not recorded{% endif %}</span>
+                    <span class="tenure-review-evidence-meta retirement-rec-meta">unavailable{% if not named_in_missing %}: {{ item.get('reason') | tenure_text }}{% endif %}</span>
                     {%- endif -%}
                 {%- elif headline_kind == 'figure' -%}
                     {{ tenure_figure(first_fig, figs.get(first_fig), item.get('population_size'), name == 'composite', 'span') }}
