@@ -1,0 +1,2 @@
+{# One Glossary per page section: a closed disclosure whose lines static/glossary.js reads for titles. #}
+{% macro glossary(host) %}<details class="hp-more" data-terms="glossary" data-testid="glossary" data-glossary-host="{{ host }}"><summary>Glossary</summary>{{ caller() }}</details>{% endmacro %}

@@ -98,6 +98,13 @@ summary:focus-visible,
   .hp-more dd { margin-bottom: 8px; }
 }
 
+/* Aligned columns: a host sets --cols on the table; rows share its columns through subgrid. */
+@media (min-width: 1001px) {
+  .cols-table { display: grid; grid-template-columns: repeat(var(--cols), auto); column-gap: 24px; width: max-content; max-width: 100%; }
+  .cols-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; }
+  .cols-num { justify-self: end; text-align: right; }
+}
+
 /* ---- Shared dashboard primitives (SC-5) ----
    Moved in order from the inline style block of templates/index.html and
    restyled once by the unslop pass: a status is a dot and a word, stat
