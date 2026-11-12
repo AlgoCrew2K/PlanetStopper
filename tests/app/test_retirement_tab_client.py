@@ -598,6 +598,14 @@ _ENTRY_WATCH = {
     "summaries": '[data-testid="tenure-review-entry"] .tenure-review-evidence-summary',
 }
 _STATUS_ONLY = ("unavailable", "not applicable")
+_EVIDENCE_HEADINGS = {
+    "performance": "Performance",
+    "composite": "Composite score",
+    "redundancy": "Redundancy",
+    "backtest": "Backtest",
+    "marginal": "Marginal contribution",
+    "long_vix": "Long VIX hedge",
+}
 
 
 class TestAReviewEntryWithADecisionInProgress:
@@ -606,7 +614,16 @@ class TestAReviewEntryWithADecisionInProgress:
         self, client, isolated_db, tmp_path, action
     ):
         pb.seed_bot_state()
-        pb.store_full_run()
+        record = pb.store_full_run()
+        candidate = pb.entry_with_verdict(record, "retire_candidate")
+        named = [_EVIDENCE_HEADINGS[name] for name in candidate["missing_items"]]
+        watch = {
+            **_ENTRY_WATCH,
+            "candidate_summaries": (
+                f'[data-testid="tenure-review-entry"][data-symphony-id="{candidate["symphony_id"]}"]'
+                " .tenure-review-evidence-summary"
+            ),
+        }
         html = w.get_page(client)
         result = run_advisor_page(
             html,
@@ -620,15 +637,19 @@ class TestAReviewEntryWithADecisionInProgress:
                 }
             ],
             routes={f"/ai-advisor/retirement/{action}": {"body": {"success": True}}},
-            watch=_ENTRY_WATCH,
+            watch=watch,
         )
         before = result["loaded"]["watched"]
         after = result["steps"][0]["obs"]["watched"]
         assert before["missing"], "premise: the retire candidate's card lists missing evidence"
         for key in ("missing", "undecided", "summaries"):
             assert [e["text"] for e in after[key]] == [e["text"] for e in before[key]], key
-        words = {e["text"] for e in before["summaries"]}
-        statuses = [t for t in words if any(f" {s}" in t for s in _STATUS_ONLY)]
+        words = {e["text"] for e in before["candidate_summaries"]}
+        statuses = [
+            t
+            for t in words
+            if t.startswith(tuple(named)) and any(f" {s}" in t for s in _STATUS_ONLY)
+        ]
         assert statuses, "premise: some cell of the card reads unavailable or not applicable"
         for text in statuses:
             assert text.rstrip().endswith(_STATUS_ONLY), (
