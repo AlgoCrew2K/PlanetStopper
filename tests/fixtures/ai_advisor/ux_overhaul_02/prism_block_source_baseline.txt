@@ -21,7 +21,7 @@ lens_pipeline synthesizer; both sets must map. #}
 'neutral':        'prism-sentiment-chip--neutral',
 'limited-inputs': 'prism-sentiment-chip--limited-inputs',
 }.get(_sentiment, 'prism-sentiment-chip--neutral') %}
-<span class="prism-sentiment-chip {{ _chip_class }}"
+<span class="prism-sentiment-chip {{ _chip_class }}" data-glossary="O16"
 data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
 {% endif %}
 <span class="prism-model-badge" data-testid="prism-model-badge">{% if advisor_synthesis_model_known %}Synthesized by {{ advisor_synthesis_model | e }}{% else %}Synthesizing model not known{% endif %}</span>
@@ -30,13 +30,7 @@ data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
 {% endif %}
 </div>
 <div class="prism-intro">
-<p class="adv-explainer" data-explainer="O15">An overnight read of the market through five lenses: technicals, sentiment, derivatives, macro and fundamentals. It is background for your decisions and changes nothing by itself.</p>
-<details class="hp-more" data-terms="O15">
-<summary>What the terms mean</summary>
-<p data-term="O16">risk-on: conditions favor taking risk. risk-off: they favor caution. neutral: no lean either way. limited-inputs: too few lenses had data for a read.</p>
-<p data-term="O19">Lenses: technicals reads price trends and breadth, sentiment reads news tone, derivatives reads volatility measures, macro reads rates, inflation and jobs data, and fundamentals reads company filings.</p>
-<p data-term="O24">Numeric verification: each number the read lists as a cited figure is checked against lens data fetched after the read; verified means it matched, and unverifiable means there was nothing to check it against, not that it is wrong. Numbers that appear only in the prose are not checked.</p>
-</details>
+<p class="adv-explainer" data-explainer="O15">An overnight read of the market through five lenses; it is background for your decisions and changes nothing by itself.</p>
 </div>{# /prism-intro #}
 {% if market_prism_summary %}
 {% if _rationale %}
@@ -172,7 +166,7 @@ data-testid="{{ testid_prefix }}{{ _indicator | e }}">
 {% endmacro %}
 {% if market_prism_verification is not none %}
 <div data-testid="prism-verification" class="prism-verification">
-<div class="prism-verification-header">Numeric verification</div>
+<div class="prism-verification-header" data-glossary="O24">Numeric verification</div>
 {# verdict_label/verdict_class computed in ai_advisor_tab()
 (single source of truth — /review PR #92): the pill
 reuses the 4 existing check-badge classes, and an
@@ -195,7 +189,7 @@ into the count line above. #}
 {% endfor %}
 {% if market_prism_verification.get('checks') %}
 <details class="prism-verify-details" data-testid="prism-verify-details">
-<summary>Show all {{ market_prism_verification.get('checks') | length }} checks</summary>
+<summary>Show all checks</summary>
 <div class="prism-verify-details-list">
 {% for _chk in market_prism_verification.get('checks', []) %}
 {{ render_verify_check(_chk, 'prism-verify-check-full-') }}

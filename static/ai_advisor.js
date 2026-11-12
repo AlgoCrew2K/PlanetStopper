@@ -676,6 +676,14 @@
         return DECISION_LABELS[decision] || decision;
     }
 
+    // The label as markup: the word Fallback names its Glossary line. Every part is escaped text.
+    function decisionPillHtml(label) {
+        var at = String(label).indexOf('Fallback');
+        if (at === -1) return escHtml(label);
+        return escHtml(label.slice(0, at)) + '<span data-glossary="O10">Fallback</span>' +
+            escHtml(label.slice(at + 'Fallback'.length));
+    }
+
     // The status dot's colour, as a modifier class on the word (pos, neg or warn).
     function decisionTone(decision) {
         if (decision === 'apply') return 'pos';
@@ -764,10 +772,10 @@
         // it is the reason there is no verdict, not a word a header already says.
         var frozenText = frozenVerdict ? 'Frozen-eval ' + frozenVerdict : 'Frozen-eval not evaluated';
         var frozenHtml = frozenVerdict
-            ? '<span class="autotune-run-frozen">Frozen-eval ' +
+            ? '<span class="autotune-run-frozen" data-glossary="O11">Frozen-eval ' +
               '<span class="frozen-eval-pill frozen-eval-pill--' + frozenEvalTone(frozenVerdict) + '">' +
               escHtml(frozenVerdict) + '</span></span>'
-            : '<span class="autotune-run-frozen">Frozen-eval not evaluated</span>';
+            : '<span class="autotune-run-frozen" data-glossary="O11">Frozen-eval not evaluated</span>';
         // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal.
         // status == 'streak' with streak_weeks >= 2 (a genuine multi-run pattern, mirrors
         // analytics._NEVER_ADOPTED_MIN_ROWS) or status == 'insufficient_history'
@@ -801,42 +809,80 @@
             {
                 open: '<span class="autotune-run-outcome" role="cell">',
                 inner: '<span class="decision-pill decision-pill--' + decisionTone(decision) + '">' +
-                    escHtml(pillLabel) + '</span>' + frozenHtml,
+                    decisionPillHtml(pillLabel) + '</span>' + frozenHtml,
                 text: pillLabel + ', ' + frozenText,
             },
-            { open: '<span class="autotune-run-streak" role="cell">', inner: streakHtml, text: streakText },
+            { open: '<span class="autotune-run-streak cols-num" role="cell">', inner: streakHtml, text: streakText },
             {
-                open: '<span class="autotune-run-score" role="cell" title="' + escHtml(scoreInfo.tip) + '">',
+                open: '<span class="autotune-run-score cols-num" role="cell" title="' + escHtml(scoreInfo.tip) + '">',
                 inner: '<span class="adv-vh autotune-score-label">' + escHtml(scoreInfo.label) + ' </span>' +
                     '<span class="mono-bold">' + escHtml(scoreValue) + '</span>',
                 text: sharedObjective ? scoreValue : scoreInfo.label + ' ' + scoreValue,
+                absent: scoreValue === 'N/A',
             },
             {
-                open: '<span class="autotune-run-tstat" role="cell">',
+                open: '<span class="autotune-run-tstat cols-num" role="cell">',
                 inner: '<span class="adv-vh">Sel t-stat </span><span class="mono-bold">' + escHtml(tstatValue) + '</span>',
                 text: tstatValue,
+                absent: tstatValue === 'N/A',
             },
         ];
     }
 
-    // The markup of one run: one table row. A column in `lifted` is stated once in the shared line, so
-    // its cell is left out of the row and the grid has no track for it.
-    function autotuneRunRowHtml(cells, lifted) {
-        return '<div class="autotune-row" role="row" data-testid="autotune-run-row">' +
+    // The markup of one run: one subgrid row. A column in `omitted` (stated once in the sentence, or
+    // reading N/A in every row) has no cell, so the table has no column for it.
+    function autotuneRunRowHtml(cells, omitted) {
+        return '<div class="autotune-row cols-row" role="row" data-testid="autotune-run-row">' +
             cells.map(function (cell, i) {
-                return lifted[i] ? '' : cell.open + cell.inner + '</span>';
+                return omitted[i] ? '' : cell.open + cell.inner + '</span>';
             }).join('') + '</div>';
     }
 
-    // The runs as one table with its own header row (the older-runs list is a separate table, so a bare
-    // figure there still has its column name above it). The score column's header names the objective
-    // when every row in the table shares one (the usual case); when they differ it says "Best score" and
-    // each row names its own, so the objective is always on screen. With withSharedLine, a column whose
-    // cell text is the same, and not empty, in every one of two or more rows is stated once in a line
-    // above the rows (its header, then the text) and left out of each row.
-    var AUTOTUNE_STREAK_COLUMN = 3;
+    // What a shared outcome reads as in the sentence: the route's outcome words, a clause each.
+    var AUTOTUNE_OUTCOME_CLAUSES = {
+        'fallback': 'every symphony kept its previous settings',
+        'Reset to Global Default': 'every symphony was reset to the global default settings',
+    };
+    var AUTOTUNE_ADOPTED_WORDS = 'Adopted AI';
 
-    function autotuneTableHtml(rows, withSharedLine) {
+    function autotuneOutcomeClause(r) {
+        var decision = r.baseline_decision || '';
+        if (Object.prototype.hasOwnProperty.call(AUTOTUNE_OUTCOME_CLAUSES, decision)) {
+            return AUTOTUNE_OUTCOME_CLAUSES[decision];
+        }
+        if (decision === AUTOTUNE_ADOPTED_WORDS) {
+            return 'every symphony took new tuned settings (frozen-eval ' +
+                (r.frozen_eval_verdict || 'not evaluated') + ')';
+        }
+        return "every run's outcome was " + decisionLabel(decision);
+    }
+
+    // One sentence for what every run shares, or '' when neither the run time nor the outcome is shared.
+    function autotuneSentence(first, timeShared, outcomeShared, time) {
+        if (timeShared && outcomeShared) {
+            return 'Latest run ' + time + ': ' + autotuneOutcomeClause(first) + '.';
+        }
+        if (timeShared) return 'Latest run ' + time + ' for every symphony.';
+        if (outcomeShared) {
+            var clause = autotuneOutcomeClause(first);
+            return clause.charAt(0).toUpperCase() + clause.slice(1) + ' in its latest run.';
+        }
+        return '';
+    }
+
+    // The runs as one columns table with its own header row (the older-runs list is a separate table, so
+    // a bare figure there still has its column name above it). The score column's header names the
+    // objective when every row in the table shares one (the usual case); when they differ it says
+    // "Best score" and each row names its own, so the objective is always on screen. A score or t-stat
+    // column that reads N/A in every row is left out. With withSentence, a run time or outcome that is the
+    // same in every one of two or more rows is stated once in a sentence above the rows and left out of
+    // each row; no other column is ever lifted.
+    var AUTOTUNE_TIME_COLUMN = 1;
+    var AUTOTUNE_OUTCOME_COLUMN = 2;
+    var AUTOTUNE_SCORE_COLUMN = 4;
+    var AUTOTUNE_TSTAT_COLUMN = 5;
+
+    function autotuneTableHtml(rows, withSentence) {
         var labels = [];
         var scoreTip = '';
         rows.forEach(function (r) {
@@ -849,44 +895,41 @@
         var sharedObjective = labels.length === 1;
         var scoreHead = sharedObjective ? labels[0] : 'Best score';
         var scoreHeadTitle = sharedObjective ? ' title="' + escHtml(scoreTip) + '"' : '';
-        var headers = [
-            'Symphony', 'Run time (ET)', 'Outcome', 'Runs without adopting a tuned config', scoreHead, 'Sel t-stat',
-        ];
         var cellRows = rows.map(function (r) { return autotuneRunCells(r, sharedObjective); });
-        var lifted = headers.map(function () { return false; });
-        var shared = [];
-        if (withSharedLine && cellRows.length > 1) {
-            headers.forEach(function (header, i) {
+        var omitted = [false, false, false, false, false, false];
+        [AUTOTUNE_SCORE_COLUMN, AUTOTUNE_TSTAT_COLUMN].forEach(function (i) {
+            omitted[i] = cellRows.every(function (cells) { return cells[i].absent; });
+        });
+        var sentence = '';
+        if (withSentence && cellRows.length > 1) {
+            var sharedColumn = function (i) {
                 var text = cellRows[0][i].text;
-                var same = text !== '' && cellRows.every(function (cells) { return cells[i].text === text; });
-                // The streak cell is a per-run count; its absence from a row must never read as "no streak".
-                if (same && i !== AUTOTUNE_STREAK_COLUMN) {
-                    lifted[i] = true;
-                    shared.push(header + ' ' + text);
-                }
-            });
+                return text !== '' && cellRows.every(function (cells) { return cells[i].text === text; });
+            };
+            omitted[AUTOTUNE_TIME_COLUMN] = sharedColumn(AUTOTUNE_TIME_COLUMN);
+            omitted[AUTOTUNE_OUTCOME_COLUMN] = sharedColumn(AUTOTUNE_OUTCOME_COLUMN);
+            sentence = autotuneSentence(
+                rows[0], omitted[AUTOTUNE_TIME_COLUMN], omitted[AUTOTUNE_OUTCOME_COLUMN],
+                cellRows[0][AUTOTUNE_TIME_COLUMN].text
+            );
         }
-        var line = shared.length
-            ? '<div class="autotune-shared-line" data-testid="autotune-shared-line">Same for every run: ' +
-              escHtml(shared.join('; ')) + '</div>'
+        var line = sentence
+            ? '<p class="autotune-sentence" data-testid="autotune-sentence">' + escHtml(sentence) + '</p>'
             : '';
         var headCells = [
-            '<span role="columnheader">' + headers[0] + '</span>',
-            '<span role="columnheader">' + headers[1] + '</span>',
-            '<span role="columnheader">' + headers[2] + '</span>',
-            '<span role="columnheader" class="autotune-run-streak">' + headers[3] + '</span>',
-            '<span role="columnheader" class="autotune-run-score"' + scoreHeadTitle + '>' + escHtml(scoreHead) + '</span>',
-            '<span role="columnheader" class="autotune-run-tstat">' + headers[5] + '</span>',
+            '<span role="columnheader">Symphony</span>',
+            '<span role="columnheader">Run time (ET)</span>',
+            '<span role="columnheader">Outcome</span>',
+            '<span role="columnheader" class="autotune-run-streak cols-num" data-glossary="O09a">Runs without adopting a tuned config</span>',
+            '<span role="columnheader" class="autotune-run-score cols-num"' + scoreHeadTitle + '>' + escHtml(scoreHead) + '</span>',
+            '<span role="columnheader" class="autotune-run-tstat cols-num" data-glossary="O09c">Sel t-stat</span>',
         ];
-        var head = '<div class="autotune-row autotune-row--head" role="row">' +
-            headCells.filter(function (c, i) { return !lifted[i]; }).join('') + '</div>';
-        // A modifier per lifted column: the stylesheet gives that column no grid track.
-        var liftedClasses = lifted.map(function (isLifted, i) {
-            return isLifted ? ' autotune-table--lift-' + i : '';
-        }).join('');
-        return line + '<div class="autotune-table' + (sharedObjective ? '' : ' autotune-table--row-objectives') + liftedClasses +
-            '" role="table" aria-label="Autotune runs">' + head +
-            cellRows.map(function (cells) { return autotuneRunRowHtml(cells, lifted); }).join('') + '</div>';
+        var shown = omitted.filter(function (o) { return !o; }).length;
+        var head = '<div class="autotune-row autotune-row--head cols-row" role="row">' +
+            headCells.filter(function (c, i) { return !omitted[i]; }).join('') + '</div>';
+        return line + '<div class="autotune-table cols-table' + (sharedObjective ? '' : ' autotune-table--row-objectives') +
+            '" role="table" aria-label="Autotune runs" style="--cols:' + shown + '">' + head +
+            cellRows.map(function (cells) { return autotuneRunRowHtml(cells, omitted); }).join('') + '</div>';
     }
 
     // The older-runs <details> is static page markup: this writes only its rows container,
@@ -900,7 +943,7 @@
         if (summary) {
             summary.textContent = older.length
                 ? older.length + (older.length === 1 ? ' older run' : ' older runs') +
-                  ' (covers the ' + AUTOTUNE_ROUTE_ROW_LIMIT + ' most recent runs)'
+                  ' from the ' + AUTOTUNE_ROUTE_ROW_LIMIT + ' most recent'
                 : '';
         }
         if (details) details.hidden = older.length === 0;

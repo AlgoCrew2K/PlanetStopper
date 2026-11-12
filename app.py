@@ -7295,10 +7295,15 @@ def _build_retirement_summary_tiles(last_run: object) -> list[dict]:
     ]
 
 
+def _retirement_pointer_result(text: str) -> dict:
+    """The pointer's text and its status, the text without the leading "Retirement: "."""
+    return {"text": text, "status": text.removeprefix("Retirement: ")}
+
+
 def _build_retirement_pointer(
     last_run: object, recommendations: object, review_entries: object = ()
 ) -> dict:
-    """The one line on the Overview that points at the Retirement tab: {"text": ...}.
+    """The line the Retirement row points from: {"text": ..., "status": ...}.
 
     Never run: "Retirement: not run yet". A good run: its Eastern time, its recommendation
     count and how many decisions are still pending. A run that did not finish names its
@@ -7309,14 +7314,14 @@ def _build_retirement_pointer(
     reads only what the page already holds, issues no request.
     """
     if not isinstance(last_run, dict):
-        return {"text": "Retirement: not run yet (use Run recommender)"}
+        return _retirement_pointer_result("Retirement: not run yet (use Run recommender)")
     stamp = analytics.format_et_stamp(last_run.get("run_at"))
     status = last_run.get("status")
     if status != "ok":
         state = (
             status.replace("_", " ") if isinstance(status, str) and status.strip() else "unknown"
         )
-        return {"text": f"Retirement: last run {state}, {stamp}"}
+        return _retirement_pointer_result(f"Retirement: last run {state}, {stamp}")
     pending = sum(
         1
         for rec in (recommendations if isinstance(recommendations, (list, tuple)) else ())
@@ -7331,13 +7336,11 @@ def _build_retirement_pointer(
     )
     count = _retirement_summary_count(last_run.get("recommendations"))
     noun = "recommendation" if count == 1 else "recommendations"
-    return {
-        "text": (
-            f"Retirement: last run {stamp}, "
-            f"{_retirement_summary_count_text(last_run.get('recommendations'))} {noun}, "
-            f"{pending} pending"
-        )
-    }
+    return _retirement_pointer_result(
+        f"Retirement: last run {stamp}, "
+        f"{_retirement_summary_count_text(last_run.get('recommendations'))} {noun}, "
+        f"{pending} pending"
+    )
 
 
 def _retirement_resolve_excluded_symphonies(
@@ -10375,33 +10378,35 @@ def _symphony_display_names_by_key(bot_state) -> "dict[str, str]":
     return names
 
 
-def _build_verification_count_line(
-    summary: "dict",
-    verdict: "str | None" = None,  # noqa: ARG001  # signature stub
-) -> str:
-    """Format the MARKET_PRISM_VERIFICATION summary counts into a compact,
-    human-readable status line for the Overview tab's Numeric Verification
-    section (2026-07 redesign, replaces a flat wall of 25+ pass badges).
+def _build_verification_count_line(summary: "dict", verdict: "str | None" = None) -> str:
+    """Format the MARKET_PRISM_VERIFICATION summary counts into a compact status line.
 
-    e.g. "25 verified · 2 unverifiable", or with actionable catches present,
-    "23 verified · 2 unverifiable · 1 flagged · 1 overridden" — zero flagged/
-    overridden counts are omitted so a clean run reads as just two numbers.
-    Returns "" when there are no checks at all (the no-numeric-claims /
-    no-verifiable-claims verdict states), where "0 verified · 0 unverifiable"
-    would be noise rather than signal.
+    e.g. "3 verified · 2 unverifiable · 1 flagged". A count is printed only when it is an
+    integer above zero (a bool is not one). When the verdict pill already states the verified
+    count ("N of M verified") the verified segment is left out, and so it is when a clean pill
+    cannot state it. Returns "" when the check count is absent, null or zero.
     """
-    n_checks = summary.get("n_checks", 0) or 0
-    if not n_checks:
+    if not summary.get("n_checks"):
         return ""
-    n_pass = summary.get("n_pass", 0) or 0
-    n_flagged = summary.get("n_flagged", 0) or 0
-    n_overridden = summary.get("n_overridden", 0) or 0
-    n_unverifiable = summary.get("n_unverifiable", 0) or 0
-    parts = [f"{n_pass} verified", f"{n_unverifiable} unverifiable"]
-    if n_flagged:
-        parts.append(f"{n_flagged} flagged")
-    if n_overridden:
-        parts.append(f"{n_overridden} overridden")
+    pill_states_count = verdict == "clean"
+    segments = (
+        ("n_pass", "verified"),
+        ("n_unverifiable", "unverifiable"),
+        ("n_flagged", "flagged"),
+        ("n_overridden", "overridden"),
+    )
+    parts = []
+    for key, word in segments:
+        count = summary.get(key)
+        if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+            continue
+        if key == "n_pass" and pill_states_count:
+            counts = _readable_verified_counts(summary)
+            # Readable and partial: the pill says "N of M verified". Readable and complete:
+            # the pill says only "clean", so the count stays. Unreadable: no verified count.
+            if counts is None or counts[0] < counts[1]:
+                continue
+        parts.append(f"{count} {word}")
     return " · ".join(parts)
 
 
@@ -10693,7 +10698,7 @@ def ai_advisor_tab():
                         # Computed here (testable Python) rather than in Jinja.
                         "verdict_label": _verdict_label,
                         "verdict_class": _verdict_class,
-                        "count_line": _build_verification_count_line(_ver_summary),
+                        "count_line": _build_verification_count_line(_ver_summary, _ver_verdict),
                         "actionable_checks": [
                             _c
                             for _c in _annotated_checks

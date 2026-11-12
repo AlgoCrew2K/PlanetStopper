@@ -1,3 +1,4 @@
+{% from '_glossary.html' import glossary -%}
 <!DOCTYPE html>
 <html lang="en" data-theme="">
 
@@ -272,19 +273,6 @@
             margin-bottom: 16px;
         }
         .adv-grid > .adv-controls { grid-column: 1; grid-row: 1; }
-        .adv-pointer {
-            grid-column: 3;
-            grid-row: 1;
-            align-self: center;
-            max-width: 26rem;
-            font-size: 12px;
-            line-height: 1.4;
-            color: var(--studio-accent);
-            text-decoration: underline;
-            text-underline-offset: 0.2em;
-        }
-        .adv-pointer:hover { color: var(--studio-ink); }
-        .adv-pointer:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
         .adv-grid > .summary-strip,
         .adv-grid > .adv-stamp,
         .adv-grid > .autotune-panel { grid-column: 1 / -1; }
@@ -316,7 +304,7 @@
         }
         @media (max-width: 900px) {
             .adv-grid { grid-template-columns: minmax(0, 1fr); padding: 16px; }
-            .adv-grid > .adv-controls, .adv-pointer,
+            .adv-grid > .adv-controls,
             .adv-grid > .suggestions-col:has(> .suggestions-placeholder:only-child) {
                 grid-column: 1;
                 grid-row: auto;
@@ -334,32 +322,17 @@
            text for a reader of one row (shown on a phone, which has no header). */
         .autotune-panel { min-width: 0; }
         .autotune-panel > .autotune-header { margin-top: 0; }
-        .autotune-table { font-size: 12px; --t0: minmax(10rem, 4.2fr); --t1: minmax(9rem, 1.6fr); --t2: minmax(14rem, 0.8fr); --t3: minmax(5rem, 1.7fr); --t4: minmax(7.5rem, 2.55fr); --t5: minmax(4rem, 2.55fr); }
-        /* A column the shared line states once is not in the table: its track is empty. */
-        .autotune-table--lift-0 { --t0: ; }
-        .autotune-table--lift-1 { --t1: ; }
-        .autotune-table--lift-2 { --t2: ; }
-        .autotune-table--lift-3 { --t3: ; }
-        .autotune-table--lift-4 { --t4: ; }
-        .autotune-table--lift-5 { --t5: ; }
+        .autotune-table { font-size: 12px; }
+        /* The columns primitive (layout.css) lays the rows out as subgrids from 1001px up. */
         .autotune-row {
-            display: grid;
-            grid-template-columns: var(--t0) var(--t1) var(--t2) var(--t3) var(--t4) var(--t5);
-            column-gap: 16px;
             align-items: baseline;
             padding: 8px 0;
             border-top: 1px solid var(--studio-rule);
         }
-        /* Only the name and the count remain once the run time, outcome, score and t-stat are said
-           once above: the runs then flow in several columns of name and count, so no wide band
-           lies between a name and its count. */
+        /* The outcome's status dot hangs in the gutter beside the column, so the word starts where the
+           header's text does. */
         @media (min-width: 1001px) {
-            .autotune-table--lift-1.autotune-table--lift-2.autotune-table--lift-4.autotune-table--lift-5 {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
-                column-gap: 32px;
-            }
-            .autotune-table--lift-1.autotune-table--lift-2.autotune-table--lift-4.autotune-table--lift-5 > .autotune-row { grid-template-columns: minmax(0, 1fr) auto; }
+            .autotune-run-outcome .decision-pill::before { margin-left: -12px; }
         }
         .autotune-row--head { border-top: 0; padding: 4px 0; color: var(--studio-ink-dim); }
         .autotune-row--head > * { font-weight: 400; }
@@ -369,6 +342,7 @@
             color: var(--studio-ink);
             overflow-wrap: anywhere;
             min-width: 0;
+            max-width: 28rem; /* a long name wraps inside its own cell, never widening the column past this */
         }
         .autotune-run-time, .autotune-run-streak, .autotune-run-frozen { color: var(--studio-ink-dim); }
         .autotune-run-time, .autotune-run-score, .autotune-run-tstat, .autotune-run-streak { font-variant-numeric: tabular-nums; }
@@ -405,6 +379,7 @@
         }
         @media (max-width: 1000px) {
             .autotune-row {
+                display: grid;
                 grid-template-columns: auto minmax(0, 1fr) auto;
                 grid-template-areas:
                     "name name name"
@@ -445,8 +420,8 @@
         .autotune-spark { position: relative; height: 60px; margin-bottom: 12px; }
         /* No chart (no scored run, or no chart library): the box takes no space either. */
         .autotune-spark:has(> canvas[style*="display: none"]) { display: none; }
-        /* The columns that read the same in every run are said once, above the rows. */
-        .autotune-shared-line { color: var(--studio-ink-dim); font-size: 12px; margin: 0 0 4px; }
+        /* What every run shares is said once, above the rows. */
+        .autotune-sentence { color: var(--studio-ink-dim); font-size: 12px; margin: 0 0 4px; }
         .autotune-notice { color: var(--studio-neg); margin: 0 0 8px; font-size: 12px; }
         .autotune-empty { padding: 16px 0; color: var(--studio-ink-dim); font-size: 13px; text-align: left; }
 
@@ -832,7 +807,7 @@
             display: flex;
             align-items: baseline;
             flex-wrap: wrap;
-            gap: 4px 16px;
+            gap: 4px 8px;
             margin-bottom: 8px;
         }
         /* The title is a .section-header; inside this flex row it carries no outer margin. */
@@ -844,7 +819,6 @@
             color: var(--studio-ink-dim);
             font-variant-numeric: tabular-nums;
         }
-        .prism-block-header .prism-as-of { margin-left: auto; }
 
         /* The rationale takes the width of the block (a long one is a row of its own), so no space
            beside a capped column is left empty. */
@@ -1165,20 +1139,32 @@
             padding: 8px 0;
             font-size: 13px;
         }
-        /* On a wide page four equal columns share the line, each text starting at its column's left
-           edge, so the space beside a short text is never wider than one column; one stretching
-           column would stack a wide empty band down the producers. */
         .obs-producer-label { font-weight: 500; color: var(--studio-ink); margin: 0; }
-        .obs-producer-verdict { min-width: 0; }
+        /* A long status wraps under its first word, not under its dot. */
+        .obs-producer-verdict { min-width: 0; padding-left: 12px; text-indent: -12px; }
         .obs-producer-time, .obs-producer-total { color: var(--studio-ink-dim); font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
-        @media (min-width: 1240px) {
-            .obs-producer-line { grid-template-columns: minmax(0, 1.36fr) minmax(0, 1.52fr) minmax(0, 1.52fr) minmax(0, 0.96fr) minmax(0, 1fr); }
-            .obs-producer-time, .obs-producer-total { text-align: left; }
+        .obs-producer-time { text-align: left; }
+        /* From 1001px up the lines are one columns table: each column is as wide as its widest cell and
+           the history table spans the whole width. */
+        @media (min-width: 1001px) {
+            .obs-lines { width: 100%; justify-content: start; }
+            .obs-producer, .obs-history, .obs-producer-line {
+                grid-column: 1 / -1;
+                display: grid;
+                grid-template-columns: subgrid;
+            }
+            .obs-history > :not(summary) { grid-column: 1 / -1; }
+            .obs-history::details-content { grid-column: 1 / -1; }
         }
-        .obs-history-toggle { color: var(--studio-ink-dim); font-size: 12px; text-align: right; }
-        @media (min-width: 1240px) { .obs-history-toggle { text-align: left; } }
-        .obs-history-toggle::before { content: "+ "; }
-        .obs-history[open] .obs-history-toggle::before { content: "\2212  "; }
+        .obs-history-toggle, .obs-row-link { color: var(--studio-ink-dim); font-size: 12px; text-align: left; }
+        .obs-row-link { color: var(--studio-accent); text-decoration: underline; text-underline-offset: 0.2em; }
+        .obs-row-link:hover { color: var(--studio-ink); }
+        .obs-row-link:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+        /* The marker takes one fixed width, so the toggle's word and the Retirement row's link start at one offset. */
+        .obs-history-toggle::before, .obs-row-link::before { display: inline-block; width: 1em; }
+        .obs-history-toggle::before { content: "+"; }
+        .obs-history[open] .obs-history-toggle::before { content: "\2212"; }
+        .obs-row-link::before { content: "\2192"; }
         @media (max-width: 700px) {
             .obs-producer-line {
                 grid-template-columns: minmax(0, 1fr) auto;
@@ -1188,7 +1174,7 @@
                     "time total";
             }
             .obs-producer-label { grid-area: label; }
-            .obs-history-toggle { grid-area: toggle; }
+            .obs-history-toggle, .obs-row-link { grid-area: toggle; }
             .obs-producer-verdict { grid-area: verdict; }
             .obs-producer-time { grid-area: time; text-align: left; }
             .obs-producer-total { grid-area: total; }
@@ -1204,6 +1190,7 @@
             padding: 4px 12px 4px 0;
             border-bottom: 1px solid var(--studio-border);
         }
+        .obs-table td[data-testid="obs-verdict"]::before { margin-left: -12px; }
         .obs-table td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--studio-border); vertical-align: top; }
         .obs-table tr:last-child td { border-bottom: none; }
         .obs-table .obs-time { white-space: nowrap; }
@@ -1328,22 +1315,8 @@
 
     <div class="page-wrap" data-testid="advisor-page">
 
-        <!-- First panel: the page's description line and the capability tab bar. No title card;
-             the nav marks the page. -->
+        <!-- First panel: the capability tab bar. No title card; the nav marks the page. -->
         <section class="hero-section adv-panel adv-panel--nav" data-testid="advisor-nav-panel">
-            {# AC-1 (F4, Gap D): the page-global "Claude-powered" claim was TRUE
-                   for 3 of 6 tabs and FALSE/MISLEADING for the other 3 — the audit's
-                   likely root cause of operator distrust (first thing rendered on
-                   page load). Replaced with a neutral description; reasoning-mode
-                   attribution now lives per-tab below (cap-tab-attribution), driven
-                   by the same accessors the engine actually calls, never a hardcoded
-                   model-name literal (AC-16 attribution-coherence requirement). #}
-            <p class="legend-as-of adv-caption adv-note" data-testid="advisor-caption" data-explainer="A01">Advisory tools: a suggestion changes nothing until you accept or approve it. The weekly autotune is the one exception: it applies new stop settings by itself when they pass its checks.</p>
-            <details class="hp-more" data-terms="A01">
-                <summary>What the terms mean</summary>
-                <p data-term="A03">Tab dots: green marks low risk; amber marks a tab to read with more care: higher overfitting risk, a real Composer write, or explanations only.</p>
-                <p data-term="A04">Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.</p>
-            </details>
 
         <!-- Capability tab nav — in-place switching via JS (AC2: button not anchor) -->
         <div class="cap-nav-wrap">
@@ -1439,19 +1412,9 @@
            tab; the lens stamp, the run summary and any suggestions follow, then the autotune runs. The
            pointer text comes from _build_retirement_pointer over context this page already reads, so it
            makes no request of its own. #}
-        <p class="adv-explainer" data-explainer="O01">A summary of what the advisor tools have found: suggestions for one symphony on demand, the weekly autotune results, the overnight market read and the latest automated checks. Nothing on this tab changes a symphony until you accept a suggestion.</p>
-        <p class="adv-explainer" data-explainer="O03">Pick a symphony and choose Run Claude advisor for suggested changes to its stop settings. You can accept a suggestion only if it also holds up on recent history the tuning never saw.</p>
-        <details class="hp-more" data-terms="O03">
-            <summary>What the terms mean</summary>
-            <p data-term="O04">OOS: out of sample, recent history the tuning never saw, kept back to check that a result is not fitted to noise.</p>
-            <p data-term="O07a">Confidence: the model's own rating of a suggestion, not a statistical test.</p>
-            <p data-term="O07b">Gates: allowlist checks the setting is one the advisor may suggest; risk direction checks that the direction the model claims for its change, looser or tighter, matches the direction the engine works out; oos frozen eval checks the change holds up on held-back history; locked vars checks the setting is not locked.</p>
-            <p data-term="O06">Fallback OOS: the same held-back score for the settings the symphony had before the latest autotune.</p>
-        </details>
+        <p class="adv-explainer" data-explainer="O03">Run Claude advisor suggests stop-setting changes for one symphony; you can accept one only if it holds up on history the tuning never saw.</p>
 
         <div data-testid="advisor-grid" class="adv-grid">
-
-            <a class="adv-pointer" href="#retirement" data-testid="retirement-pointer">{{ retirement_pointer.text }} <span aria-hidden="true">&rarr;</span></a>
 
             <!-- Controls -->
             <div data-testid="advisor-controls" class="adv-controls">
@@ -1488,7 +1451,7 @@
             <!-- Suggestions: the hint until a run returns -->
             <div data-testid="suggestions-column" class="suggestions-col" id="suggestions-container">
                 <div data-testid="suggestions-placeholder" class="suggestions-placeholder">
-                    Select a symphony and click Run Claude advisor to get suggestions.
+                    No suggestions yet.
                 </div>
             </div>
 
@@ -1497,16 +1460,7 @@
                 <div data-testid="autotune-panel-header" class="section-header autotune-header adv-heading">
                     Recent autotune runs
                 </div>
-                <p class="adv-explainer" data-explainer="O08">Each symphony's latest weekly autotune, which searches past data for better stop settings. New settings are applied only when they also beat the current ones on data the search did not use; Outcome says what each run did.</p>
-                <details class="hp-more" data-terms="O08">
-                    <summary>What the terms mean</summary>
-                    <p data-term="O09a">Runs without adopting a tuned config: how many runs in a row kept the old settings.</p>
-                    <p data-term="O09b">CRRA-EU score: the autotune's score for a set of settings, an average outcome in which losses weigh more than gains of the same size; higher is better.</p>
-                    <p data-term="O09c">Sel t-stat: how clearly the winning settings stand out after correcting for how many settings were tried; higher is stronger.</p>
-                    <p data-term="O10">Fallback: the new settings failed the check on held-back data, so the symphony keeps the settings it had before the run.</p>
-                    <p data-term="O11">Frozen-eval: a final score of the run's best settings on held-back data, under the same objective; not evaluated means the run recorded no such score.</p>
-                    <p data-term="O12">N/A: the run recorded no figure for that column.</p>
-                </details>
+                <p class="adv-explainer" data-explainer="O08">Each symphony's latest weekly autotune, the one advisor tool that applies new stop settings itself, only when they beat the current ones on held-back data.</p>
                 {# The chart sits in a box of its own with a set height: a responsive chart sizes itself from its
                    parent, and a parent that also holds the table would feed its own height back into the chart. #}
                 <div class="autotune-spark"><canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;width:100%;height:100%;"></canvas></div>
@@ -1555,7 +1509,7 @@
                     'neutral':        'prism-sentiment-chip--neutral',
                     'limited-inputs': 'prism-sentiment-chip--limited-inputs',
                 }.get(_sentiment, 'prism-sentiment-chip--neutral') %}
-                <span class="prism-sentiment-chip {{ _chip_class }}"
+                <span class="prism-sentiment-chip {{ _chip_class }}" data-glossary="O16"
                       data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
                 {% endif %}
                 <span class="prism-model-badge" data-testid="prism-model-badge">{% if advisor_synthesis_model_known %}Synthesized by {{ advisor_synthesis_model | e }}{% else %}Synthesizing model not known{% endif %}</span>
@@ -1564,13 +1518,7 @@
                 {% endif %}
             </div>
             <div class="prism-intro">
-            <p class="adv-explainer" data-explainer="O15">An overnight read of the market through five lenses: technicals, sentiment, derivatives, macro and fundamentals. It is background for your decisions and changes nothing by itself.</p>
-            <details class="hp-more" data-terms="O15">
-                <summary>What the terms mean</summary>
-                <p data-term="O16">risk-on: conditions favor taking risk. risk-off: they favor caution. neutral: no lean either way. limited-inputs: too few lenses had data for a read.</p>
-                <p data-term="O19">Lenses: technicals reads price trends and breadth, sentiment reads news tone, derivatives reads volatility measures, macro reads rates, inflation and jobs data, and fundamentals reads company filings.</p>
-                <p data-term="O24">Numeric verification: each number the read lists as a cited figure is checked against lens data fetched after the read; verified means it matched, and unverifiable means there was nothing to check it against, not that it is wrong. Numbers that appear only in the prose are not checked.</p>
-            </details>
+            <p class="adv-explainer" data-explainer="O15">An overnight read of the market through five lenses; it is background for your decisions and changes nothing by itself.</p>
             </div>{# /prism-intro #}
 
             {% if market_prism_summary %}
@@ -1711,7 +1659,7 @@
                 {% endmacro %}
                 {% if market_prism_verification is not none %}
                     <div data-testid="prism-verification" class="prism-verification">
-                        <div class="prism-verification-header">Numeric verification</div>
+                        <div class="prism-verification-header" data-glossary="O24">Numeric verification</div>
 
                         {# verdict_label/verdict_class computed in ai_advisor_tab()
                            (single source of truth — /review PR #92): the pill
@@ -1737,7 +1685,7 @@
 
                         {% if market_prism_verification.get('checks') %}
                             <details class="prism-verify-details" data-testid="prism-verify-details">
-                                <summary>Show all {{ market_prism_verification.get('checks') | length }} checks</summary>
+                                <summary>Show all checks</summary>
                                 <div class="prism-verify-details-list">
                                     {% for _chk in market_prism_verification.get('checks', []) %}
                                         {{ render_verify_check(_chk, 'prism-verify-check-full-') }}
@@ -1790,35 +1738,14 @@
 
         <section data-testid="advisor-observations-section" class="hero-section obs-section adv-panel">
             <div class="section-header obs-section-header adv-heading">Advisor observations<span class="obs-section-note" data-testid="obs-advisory-only" title="Advisory only: nothing here moves money">advisory only, nothing here moves money</span></div>
-            <p class="adv-explainer" data-explainer="O27">The latest verdict from each advisor that records observations: the checks on the tuning process, Market Prism, and the weekly swap and rule-change searches. Each covers something different, so read the note below before you take a Clear as an all-clear.</p>
-            <details class="hp-more" data-terms="O27">
-                <summary>What the terms mean</summary>
-                <p data-term="O28">THEORY spec: the frozen set of objective settings every tuning run shares, such as its risk aversion and utility family. Backtest-selection degrees of freedom: choices made by looking at backtest results, each of which adds overfitting risk.</p>
-                <p data-term="O29">Asset Swap and Logic Change: the weekly searches for a better ticker or rule in each symphony.</p>
-                <p data-term="O30">Clear: the check passed. Watch: worth a look, not a failure. Breach: the check failed. Adopt candidate: a candidate passed the gate and beat the current symphony. Keep incumbent: no candidate beat the current symphony.</p>
-            </details>
-            {# AC-14 (F8, doc-reconciliation.md §1.8): the three guardrail producers are
-               NOT uniform — Spec Critic is a genuine active control (an empty/missing-facet
-               bundle triggers BREACH, not a default CLEAR, so a CLEAR is an evaluated pass);
-               Overfitting Conscience checks exactly one narrow DoF source (BACKTEST_SELECTION)
-               and a CLEAR there does not imply general overfitting protection; Divergence
-               Explainer is disabled by default (SECOND_WINDOW_CVAR_ENABLED) and its rows are
-               informational-only.  Named individually below so an operator can't over-read a
-               uniform "all clear" across three producers with different actual scope. #}
-            <p data-testid="guardrail-uniform-note" class="obs-framing-note">
-                Spec Critic is an active guardrail checking the shared, frozen THEORY spec
-                structure — a CLEAR verdict means the spec was evaluated and passed.
-                Overfitting Conscience checks one narrow overfitting-risk source
-                (backtest-selection degrees of freedom) — a CLEAR here does not mean
-                'no overfitting risk exists,' only that this one source is clean.
-                Divergence Explainer is disabled by default and its rows are
-                informational-only, not currently monitoring anything active.
-                Per-symphony recommendations come from
-                the <strong>Run Claude advisor</strong> button.
-            </p>
+            <p class="adv-explainer" data-explainer="O27">The latest verdict from each advisor check and the last retirement run; each checks something different, so a Clear covers only its own check.</p>
             {% if observations_unavailable %}
             <div class="obs-empty" data-testid="observations-unavailable">Observations could not be loaded.</div>
-            {% elif observation_groups %}
+            {% elif not observation_groups %}
+            <div class="obs-empty" data-testid="obs-empty">No observations from advisors at this time.</div>
+            {% endif %}
+            <div class="obs-lines cols-table" style="--cols:5">
+            {% if not observations_unavailable %}
             {% for group in observation_groups %}
             {% set latest = group.rows[0] %}
             {% set latest_verdict = latest.verdict or _VERDICT_NOT_RECORDED %}
@@ -1879,10 +1806,44 @@
                 </details>
             </div>
             {% endfor %}
-            {% else %}
-            <div class="obs-empty" data-testid="obs-empty">No observations from advisors at this time.</div>
             {% endif %}
+            {# The Retirement row: the same columns as a producer line, its time and count cells empty, its
+               status from _build_retirement_pointer over context this page already reads (no request). #}
+            <div class="obs-producer" data-role="RETIREMENT">
+                <div class="obs-producer-line">
+                    <span class="section-header obs-producer-label adv-heading" data-testid="obs-producer-label">Retirement</span>
+                    <span class="obs-producer-verdict verdict-unknown" data-testid="obs-producer-verdict">{{ retirement_pointer.status | e }}</span>
+                    <span class="obs-producer-time" data-testid="obs-producer-time"></span>
+                    <span class="obs-producer-total" data-testid="obs-producer-total"></span>
+                    <a class="obs-row-link" href="#retirement" data-testid="retirement-pointer">Open tab</a>
+                </div>
+            </div>
+            </div>{# /obs-lines #}
         </section>
+
+        {% call glossary("Overview") %}
+            <p data-term="A03">Tab dots: green marks low risk; amber marks a tab to read with more care: higher overfitting risk, a real Composer write, or explanations only.</p>
+            <p data-term="A04">Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.</p>
+            <p data-term="O04">OOS: out of sample, recent history the tuning never saw, kept back to check that a result is not fitted to noise.</p>
+            <p data-term="O07a">Confidence: the model's own rating of a suggestion, not a statistical test.</p>
+            <p data-term="O07b">Gates: allowlist checks the setting is one the advisor may suggest; risk direction checks that the direction the model claims for its change, looser or tighter, matches the direction the engine works out; oos frozen eval checks the change holds up on held-back history; locked vars checks the setting is not locked.</p>
+            <p data-term="O06">Fallback OOS: the same held-back score for the settings the symphony had before the latest autotune.</p>
+            <p data-term="O09a">Runs without adopting a tuned config: how many runs in a row kept the old settings.</p>
+            <p data-term="O09b">CRRA-EU score: the autotune's score for a set of settings, an average outcome in which losses weigh more than gains of the same size; higher is better.</p>
+            <p data-term="O09c">Sel t-stat: how clearly the winning settings stand out after correcting for how many settings were tried; higher is stronger.</p>
+            <p data-term="O10">Fallback: the new settings failed the check on held-back data, so the symphony keeps the settings it had before the run.</p>
+            <p data-term="O11">Frozen-eval: a final score of the run's best settings on held-back data, under the same objective; not evaluated means the run recorded no such score.</p>
+            <p data-term="O12">N/A: the run recorded no figure for that column.</p>
+            <p data-term="O16">risk-on: conditions favor taking risk. risk-off: they favor caution. neutral: no lean either way. limited-inputs: too few lenses had data for a read.</p>
+            <p data-term="O19">Lenses: technicals reads price trends and breadth, sentiment reads news tone, derivatives reads volatility measures, macro reads rates, inflation and jobs data, and fundamentals reads company filings.</p>
+            <p data-term="O24">Numeric verification: each number the read lists as a cited figure is checked against lens data fetched after the read; verified means it matched, and unverifiable means there was nothing to check it against, not that it is wrong. Numbers that appear only in the prose are not checked.</p>
+            <p data-term="O28">THEORY spec: the frozen set of objective settings every tuning run shares, such as its risk aversion and utility family. Backtest-selection degrees of freedom: choices made by looking at backtest results, each of which adds overfitting risk.</p>
+            <p data-term="O29">Asset Swap and Logic Change: the weekly searches for a better ticker or rule in each symphony.</p>
+            <p data-term="O30">Clear: the check passed. Watch: worth a look, not a failure. Breach: the check failed. Adopt candidate: a candidate passed the gate and beat the current symphony. Keep incumbent: no candidate beat the current symphony.</p>
+            <p data-term="O31a">Spec Critic: an active guardrail checking the shared, frozen THEORY spec structure — a CLEAR verdict means the spec was evaluated and passed.</p>
+            <p data-term="O31b">Overfitting Conscience: checks one narrow overfitting-risk source (backtest-selection degrees of freedom) — a CLEAR here does not mean 'no overfitting risk exists,' only that this one source is clean.</p>
+            <p data-term="O31c">Divergence Explainer: disabled by default and its rows are informational-only, not currently monitoring anything active.</p>
+        {% endcall %}
 
         </div>{# /tab-panel-overview #}
 
@@ -3454,6 +3415,7 @@
     </script>
 
 
+    <script src="{{ url_for('static', filename='glossary.js') }}"></script>
     <script src="{{ url_for('static', filename='ai_advisor.js') }}"></script>
     <script src="{{ url_for('static', filename='ai_advisor_asset_swaps.js') }}"></script>
     <script src="{{ url_for('static', filename='ai_advisor_logic_changes.js') }}"></script>
