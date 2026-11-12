@@ -632,8 +632,10 @@ _ROW_RUN_AT = "2026-11-10T03:51:00Z"
 _NEVER_RUN_STATUS = "not run yet (use Run recommender)"
 
 
-def _retirement_rows(html: str) -> list[pb.Node]:
-    panel = w.tab_panel(html, "overview")
+def _retirement_rows(html: str, panel: pb.Node | None = None) -> list[pb.Node]:
+    """The Retirement rows of the Overview; pass the panel already parsed when nodes of that tree
+    are compared by identity (a second parse is a different tree)."""
+    panel = panel if panel is not None else w.tab_panel(html, "overview")
     return [
         n
         for n in panel.walk()
@@ -641,8 +643,8 @@ def _retirement_rows(html: str) -> list[pb.Node]:
     ]
 
 
-def _retirement_row(html: str) -> pb.Node:
-    rows = _retirement_rows(html)
+def _retirement_row(html: str, panel: pb.Node | None = None) -> pb.Node:
+    rows = _retirement_rows(html, panel)
     assert len(rows) == 1, f"the Overview holds {len(rows)} Retirement rows, not one"
     return rows[0]
 
@@ -676,7 +678,7 @@ class TestRetirementRow:
         html = w.get_page(client)
         panel = w.tab_panel(html, "overview")
         section = panel.find("advisor-observations-section")
-        row = _retirement_row(html)
+        row = _retirement_row(html, panel)
         assert row.is_inside(section), "the Retirement row is outside the observations list"
         order = list(panel.walk())
         others = [n for n in order if "obs-producer" in n.classes() and n is not row]
@@ -707,7 +709,7 @@ class TestRetirementRow:
         empty = panel.find("obs-empty")
         assert empty is not None, "premise: no observations stored"
         order = list(panel.walk())
-        assert order.index(empty) < order.index(_retirement_row(html))
+        assert order.index(empty) < order.index(_retirement_row(html, panel))
 
     def test_its_label_verdict_and_link_read_as_the_plan_words_with_empty_time_and_count_cells(
         self, client, isolated_db
