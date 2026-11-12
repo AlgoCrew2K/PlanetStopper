@@ -465,6 +465,27 @@ class TestAutotuneSentence:
             assert et_label(row["run_timestamp"]) in shown
         assert "kept their previous settings" in shown or "kept its previous settings" in shown
 
+    @pytest.mark.parametrize(
+        ("kind", "verdict"),
+        [("reverted", "passed"), ("reverted", "failed"), ("hold", "failed")],
+        ids=["fallback_passed", "fallback_failed", "unmapped_outcome_failed"],
+    )
+    def test_a_shared_outcome_with_a_frozen_evaluation_keeps_that_fact_on_screen(
+        self, kind, verdict
+    ):
+        """The outcome cell holds the word and the frozen-eval verdict; lifting the cell must not
+        lose the verdict a run recorded (the route's own body, one named field edit per row)."""
+        _seed_batch([kind] * 11)
+        body = adv.autotune_runs_answer()
+        for row in body["json"]:
+            row["frozen_eval_verdict"] = verdict
+        r, _ = _read(body=body)
+        assert len(r["sentences"]) == 1, "premise: the outcome is shared, so one sentence"
+        shown = " ".join([*r["sentences"], *r["rows"]]).lower()
+        assert "frozen-eval" in shown and verdict in shown, (
+            f"the frozen-eval verdict {verdict!r} is on screen nowhere: {r['sentences']!r}"
+        )
+
     def test_no_runs_keep_the_empty_state_and_print_no_sentence(self):
         out = shared_run(
             "return {text: H.pageText(), sentences: sentences(), rows: cards()};",
