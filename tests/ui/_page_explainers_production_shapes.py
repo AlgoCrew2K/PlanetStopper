@@ -169,7 +169,8 @@ PRISM_JS = (
 TENURE_ENTRIES_JS = """() => [...document.querySelectorAll('[data-testid="tenure-review-entry"]')].map((entry) => {
   const items = [...entry.querySelectorAll('.tenure-review-evidence')].map((i) => {
     const r = i.getBoundingClientRect();
-    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    const name = (i.getAttribute('data-testid') || '').replace('tenure-review-evidence-', '');
+    return { name, left: r.left, top: r.top, right: r.right, bottom: r.bottom };
   });
   const e = entry.getBoundingClientRect();
   return { items, left: e.left, right: e.right, top: e.top, bottom: e.bottom };

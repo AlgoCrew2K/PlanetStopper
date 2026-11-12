@@ -4952,6 +4952,33 @@ class TestAnUnavailableItemTheMissingListDoesNotNameKeepsItsReason:
 
 
 # ===========================================================================
+# The six evidence cells are written in the order they are shown, so every card reads the same
+# way from left to right (the browser module pins the positions).
+# ===========================================================================
+
+_VISIBLE_CELL_ORDER = ["performance", "composite", "backtest", "marginal", "long_vix", "redundancy"]
+
+
+class TestTheSixEvidenceCellsAreWrittenInTheVisibleOrder:
+    @pytest.mark.parametrize("which", ["full", "edge", "lone"])
+    def test_every_card_writes_performance_composite_backtest_marginal_long_vix_redundancy(
+        self, client, isolated_db, which
+    ):
+        record = _store_record(which)
+        panel = _panel(client)
+        for stored in record["entries"]:
+            card = pb.entry_node(panel, stored["symphony_id"])
+            written = [
+                n.attrs["data-testid"].removeprefix("tenure-review-evidence-")
+                for n in card.walk()
+                if n.attrs.get("data-testid", "").removeprefix("tenure-review-evidence-")
+                in _VISIBLE_CELL_ORDER
+                and n.attrs.get("data-testid", "").startswith("tenure-review-evidence-")
+            ]
+            assert written == _VISIBLE_CELL_ORDER, (which, stored["display_name"], written)
+
+
+# ===========================================================================
 # A stored reason the plan does not list is the run's own record: it is shown as stored,
 # escaped, and never replaced by "not recorded".
 # ===========================================================================

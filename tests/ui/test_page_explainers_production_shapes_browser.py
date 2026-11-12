@@ -298,6 +298,10 @@ def test_every_tenure_cards_six_evidence_cells_start_at_one_x_in_the_visible_ord
         lefts = [item["left"] for item in entry["items"]]
         tops = [round(item["top"]) for item in entry["items"]]
         assert len(lefts) == 6, f"card {number} holds {len(lefts)} evidence cells"
+        by_position = [item["name"] for item in sorted(entry["items"], key=lambda i: i["left"])]
+        assert by_position == list(_VISIBLE_ORDER), (
+            f"card {number}: the cells read {by_position} from left to right"
+        )
         assert lefts == sorted(lefts) and len(set(round(x) for x in lefts)) == 6, (
             f"card {number}: the cells do not run left to right in the visible order: {lefts}"
         )
