@@ -326,3 +326,29 @@ def test_a_page_without_a_glossary_is_left_alone_and_raises_nothing(firefox):  #
         page.wait_for_timeout(300)
         assert page.evaluate(TITLE_OF, "#x") is None
         assert page.errors == []
+
+
+INHERITED_NAMES = ("constructor", "toString", "valueOf", "hasOwnProperty")
+
+
+def test_a_label_or_key_named_like_an_object_property_is_not_a_term(firefox):  # noqa: F811
+    """A display name or label that happens to be ``constructor`` or ``valueOf`` is no term."""
+    labels = "".join(f'<span id="l-{n}">{n}</span>' for n in INHERITED_NAMES)
+    keyed = "".join(f'<span id="k-{n}" data-glossary="{n}">x</span>' for n in INHERITED_NAMES)
+    body = f"<section>{labels}{keyed}{_glossary('Overview', [('K1', CALMAR_A)])}</section>"
+    with _open(firefox, _page(body)) as page:
+        page.wait_for_timeout(300)
+        for name in INHERITED_NAMES:
+            assert page.evaluate(TITLE_OF, f"#l-{name}") is None, f"label {name} got a title"
+            assert page.evaluate(TITLE_OF, f"#k-{name}") is None, f"key {name} got a title"
+        assert page.errors == []
+
+
+def test_a_line_whose_lead_term_is_an_object_property_name_is_a_term(firefox):  # noqa: F811
+    line = "constructor: a term that shares a name with an object property."
+    body = (
+        f'<section><span id="t">constructor</span>{_glossary("Overview", [("K1", line)])}</section>'
+    )
+    with _open(firefox, _page(body)) as page:
+        page.wait_for_function("document.querySelector('#t').hasAttribute('title')", timeout=3000)
+        assert page.evaluate(TITLE_OF, "#t") == line
