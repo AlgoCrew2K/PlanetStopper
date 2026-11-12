@@ -4895,6 +4895,33 @@ class TestAnUnavailableItemTheMissingListDoesNotNameKeepsItsReason:
             reason = stored["evidence"][name]["reason"]
             assert reason in card.find(f"tenure-review-evidence-{name}").text(), name
 
+    def test_an_unlisted_item_with_no_stored_reason_still_reads_not_recorded_in_its_cell(
+        self, client, isolated_db
+    ):
+        _seed_roster("full")
+        record = pb.full_record()
+        stored = next(e for e in record["entries"] if e["display_name"] == "Young Sprout")
+        _edit(stored, "evidence.performance.reason", _GONE)
+        pb.store_run(record)
+        block = pb.entry_node(_panel(client), stored["symphony_id"]).find(
+            "tenure-review-evidence-performance"
+        )
+        assert _summary_of(block).text() == "Performance unavailable: not recorded"
+
+    def test_a_listed_item_with_no_stored_reason_reads_unavailable_alone_in_its_cell(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_record()
+        gap = pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_BACKTEST_GAP))
+        gap["evidence"]["backtest"].pop("reason")
+        pb.seed_roster_state(record)
+        pb.store_run(record)
+        card = pb.entry_node(_panel(client), gap["symphony_id"])
+        block = card.find("tenure-review-evidence-backtest")
+        assert "backtest (not recorded)" in card.find("tenure-review-missing").text()
+        assert _summary_of(block).text() == "Backtest unavailable", "the line is the one place"
+        assert _NOT_RECORDED not in _without_basis_label(block).lower()
+
 
 # ===========================================================================
 # A stored reason the plan does not list is the run's own record: it is shown as stored,
