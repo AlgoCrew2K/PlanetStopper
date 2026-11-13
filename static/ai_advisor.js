@@ -327,7 +327,7 @@
                 'border-radius:1rem;padding:1.25rem 1.5rem;' +
                 (isOosRejected ? 'opacity:0.7;' : '') + '">' +
 
-                '<div class="suggestion-row" style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">' +
+                '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">' +
 
                 // The text column asks for 12rem before it shrinks: on a phone the actions wrap under it
                 // instead of sitting on top of the config key. min-width:0 lets it shrink if it must.
