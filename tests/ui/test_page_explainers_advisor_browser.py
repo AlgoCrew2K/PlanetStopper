@@ -860,6 +860,34 @@ def test_the_cards_of_a_tab_sit_in_equal_width_tracks_and_none_is_stretched(
     assert max(widths) - min(widths) <= al.TOLERANCE_PX, f"card widths differ: {widths}"
 
 
+@pytest.mark.parametrize("width", [1440, 1920, 2560])
+def test_eight_proposals_sit_in_equal_tracks_with_each_field_at_one_offset(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    width,  # noqa: F811
+):
+    """S-1.20: eight pending proposals wrap onto two rows of a wide panel; the reference stretched
+    the cards of a short last row across it and laid their notes and actions out beside the
+    figures, so those fields started elsewhere than on the first row's cards."""
+    _prepare(
+        tmp_path,
+        monkeypatch,
+        world="empty",
+        seed=lambda: adv.seed_frontrunner_proposals_varied(8),
+    )
+    entry = al.TABLE_GROUPS["pending_proposal_cards"]
+    with _open(firefox, advisor_server, (width, al.VIEWPORT_HEIGHT), FR_CARDS) as opened:
+        found = al.measure(
+            opened.page, al.FIELD_OFFSETS_JS, al.spec_of(entry, name="eight_proposals")
+        )
+        widths = opened.evaluate(_CARD_WIDTHS_JS, entry["rows"])
+    assert found["found"] == 8, f"{found['found']} cards, not 8"
+    assert max(widths) - min(widths) <= al.TOLERANCE_PX, f"card widths differ: {widths}"
+    assert not found["violations"], "\n".join(found["violations"])
+
+
 @pytest.mark.parametrize("width", al.NARROW)
 @pytest.mark.parametrize("tab", [SB_CARDS, FR_CARDS])
 def test_below_1001_px_the_cards_keep_the_references_form_and_their_tab_does_not_scroll_sideways(
