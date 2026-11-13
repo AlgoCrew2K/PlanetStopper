@@ -142,7 +142,9 @@ def test_the_reference_capture_holds_every_world_host_banner_and_route(ref):
 # A banner whose words a Copy table C row rewords keeps its element and its attributes; only the
 # text changes, to that row's new text. (The Credentials warning is the one such banner: its row
 # says the dashboard does not save credentials.)
-REWORDED_BANNERS = {"settings_credential_warning": "S12r"}
+# The Strategy Builder banner is the other: this plan shortens it (Copy table X, CX-9), so its
+# element and attributes are the reference's and its text is that row's.
+REWORDED_BANNERS = {"settings_credential_warning": "S12r", "strategy_builder_risk": "CX-9"}
 
 
 def _reworded_banner_differences(
@@ -157,7 +159,10 @@ def _reworded_banner_differences(
     problems = _differences(
         f"{label} element", [opening_tag(m) for m in got], [opening_tag(m) for m in want]
     )
-    expected = " ".join(page_copy.text(row, "C").split())
+    if row.startswith("CX-"):
+        expected = " ".join(page_copy.x_row(row)["new_text"].split())
+    else:
+        expected = " ".join(page_copy.text(row, "C").split())
     return problems + _differences(f"{label} text", [text(m) for m in got], [expected] * len(want))
 
 

@@ -570,7 +570,7 @@ SPAN_TABLE = """<table id="t"><thead><tr><th>Metric</th><th class="num">Incumben
 SPAN_SPEC = {"name": "t", "group": "#t", "numeric": ["Incumbent", "Candidate"]}
 
 
-def test_a_figure_spanning_the_figure_columns_is_compared_with_the_last_of_them(firefox):  # noqa: F811
+def test_a_cell_covering_the_figure_columns_is_compared_with_the_last_of_them(firefox):  # noqa: F811
     found = _edges(firefox, SPAN_TABLE.format(figure="-6 vs the incumbent"), spec=SPAN_SPEC)
     assert found["violations"] == [], found
 
