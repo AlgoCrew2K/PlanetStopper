@@ -109,6 +109,9 @@ if (!metaBox) {
   out.meta.push('the basis meta has no text on the page');
 } else if (metaBox.top < leadBottom - 2) {
   out.meta.push('the basis meta starts ' + fix(leadBottom - metaBox.top) + ' px above the end of the sentence, not under it');
+} else if (Math.abs(metaBox.left - Math.min(...sentence.map((w) => w.left))) > 2) {
+  // An empty basis label must not leave a gap that pushes the line off the sentence's left edge.
+  out.meta.push('the basis meta starts at x=' + fix(metaBox.left) + ', the sentence at x=' + fix(Math.min(...sentence.map((w) => w.left))));
 }
 const blockRight = Math.max(leadRight, metaBox ? metaBox.right : 0);
 const lines = [...panel.querySelectorAll('.dollar-line')].filter(shown);
