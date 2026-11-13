@@ -681,6 +681,35 @@ def test_the_composite_summary_s_figure_line_is_one_line_on_every_card(
     assert all(x["lines"] == 1 for x in lines), [x for x in lines if x["lines"] != 1]
 
 
+def test_the_run_recommender_button_keeps_its_own_title_after_the_glossary_has_titled_the_page(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,  # noqa: F811
+):
+    """S-4.9 in a browser: an element that carries a title at the reference keeps it. The R12
+    Glossary line names the same button ("Run recommender: ..."), so a script that titled every
+    element a Glossary line names would overwrite this title and mark the button as its own.
+    Rejects dropping the guard that leaves an element's existing title alone."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
+    button = '[data-testid="retirement-run-now-btn"]'
+    with _open(firefox, advisor_server, (1440, 900), "retirement") as opened:
+        opened.page.wait_for_selector(button, state="visible")
+        # the Glossary script titles the labels of the page on load and again as the page changes
+        opened.page.wait_for_selector("[data-glossary-titled]", state="attached")
+        opened.page.wait_for_timeout(300)
+        read = opened.page.eval_on_selector(
+            button,
+            "(el) => ({ title: el.getAttribute('title'), marked: el.hasAttribute('data-glossary-titled') })",
+        )
+    glossary_line = next(x for x in copy_fixture.glossary("Retirement") if x["key"] == "R12")
+    assert read["title"] == (
+        "Runs the same analysis as the nightly 03:45 UTC job; takes a minute or two."
+    )
+    assert read["title"] != glossary_line["text"]
+    assert read["marked"] is False, "the button's title was taken over by the Glossary script"
+
+
 def test_the_run_tiles_and_the_evidence_headings_carry_their_glossary_line_as_their_title(
     firefox,
     advisor_server,

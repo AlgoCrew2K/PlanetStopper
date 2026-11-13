@@ -338,6 +338,9 @@ def _seed_batch(kinds, *, stamp=BATCH_STAMP, **per_kind):
             pe.save_run_like("reverted", key, stamp, baseline_decision=RESET_DECISION)
         elif kind == "hold":
             pe.save_run_like("reverted", key, stamp, baseline_decision="Hold")
+        elif kind in ("Rejected", "Applied"):
+            # the words the producer stored before the route mapped them to its own tokens
+            pe.save_run_like("reverted", key, stamp, baseline_decision=kind)
         else:
             pe.save_run_like(kind, key, stamp)
     return keys
@@ -406,6 +409,19 @@ class TestAutotuneSentence:
         r, _ = _read()
         assert r["sentences"] == [
             f"Latest run {et_label(BATCH_STAMP)}: every run's outcome was Hold."
+        ]
+
+    @pytest.mark.parametrize(("stored", "label"), [("Rejected", "Reject"), ("Applied", "Apply")])
+    def test_a_shared_outcome_the_label_map_translates_reads_the_label_not_the_route_word(
+        self, stored, label
+    ):
+        """S-5.9: the route sends the token ("reject", "apply"); the sentence prints the label the
+        page maps it to. Rejects printing the raw token, which a word the map leaves alone ("Hold")
+        cannot tell from the label."""
+        _seed_batch([stored] * 11)
+        r, _ = _read()
+        assert r["sentences"] == [
+            f"Latest run {et_label(BATCH_STAMP)}: every run's outcome was {label}."
         ]
 
     def test_a_shared_run_time_with_different_outcomes_keeps_the_outcome_in_every_row(self):
