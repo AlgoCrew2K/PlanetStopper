@@ -65,7 +65,7 @@ def _results_html(case: dict, response) -> str:
         routes=[route(case["url"], answer(response), method="POST")],
         pathname="/ai-advisor",
     )
-    assert run.unrouted == [], f"requests nothing answered: {run.unrouted}"
+    assert len(run.posts(case["url"])) == 1, "Evaluate did not send exactly one request"
     assert isinstance(run.result, str) and run.result.strip(), "the script wrote no result"
     return run.result
 

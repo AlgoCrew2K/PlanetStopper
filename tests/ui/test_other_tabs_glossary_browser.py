@@ -131,9 +131,10 @@ def test_a_tab_glossary_hides_its_lines_until_opened_and_shows_each_in_order_aft
         page = probe.page
         lines_selector = f"{_selector(host)} > p[data-term]"
         closed = page.evaluate(_SHOWN_TEXT_JS, lines_selector)
-        assert len(closed) == len(lines) and not any(c["shown"] for c in closed), (
-            "a line shows before the Glossary is opened"
+        assert len(closed) == len(lines), (
+            f"the tab holds {len(closed)} Glossary lines, not {len(lines)}"
         )
+        assert not any(c["shown"] for c in closed), "a line shows before the Glossary is opened"
         page.click(f"{_selector(host)} > summary")
         page.wait_for_timeout(100)
         read = page.evaluate(_SHOWN_TEXT_JS, lines_selector)

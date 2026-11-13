@@ -272,7 +272,8 @@ def test_a_term_is_defined_once_on_its_host_in_the_disclosure_its_row_names(
             problems.append(f"the words of {record['key']} appear twice on {host}")
     assert not problems, "\n".join(problems)
     if world == "full":
-        assert found > 100, f"premise: the full world renders the definitions ({found})"
+        # Every Advisor tab's lines are Glossary lines now and are read by the Glossary tests.
+        assert found > 80, f"premise: the full world renders the definitions ({found})"
 
 
 def test_every_moved_overview_line_is_defined_once_inside_the_glossary(tmp_path, monkeypatch):

@@ -1505,7 +1505,9 @@ def test_the_frontrunner_empty_state_body_reads_the_reworded_text(advisor):
     assert adv.norm(title.get_text(" ")) == "No pending frontrunner proposals."
 
 
-@pytest.mark.parametrize(("testid", "body"), list(UNAVAILABLE_BODIES.items()))
+@pytest.mark.parametrize(
+    ("testid", "body"), list(UNAVAILABLE_BODIES.items()), ids=list(UNAVAILABLE_BODIES)
+)
 def test_without_a_key_each_unavailable_state_reads_as_at_the_reference_and_the_tab_lines_show(
     advisor, testid, body
 ):
@@ -1541,7 +1543,7 @@ def _key_of_cell(cell) -> str | None:
 
 
 def test_the_frontrunner_change_labels_name_their_glossary_lines(advisor):
-    shown = advisor.open("full", key=True, seed=lambda: adv.seed_frontrunner_proposals_varied(2))
+    shown = advisor.open("empty", key=True, seed=lambda: adv.seed_frontrunner_proposals_varied(2))
     cards = shown.page.select('[data-testid="frontrunner-proposal-card"]')
     assert len(cards) == 2, "premise: both proposals render a card"
     seen = set()

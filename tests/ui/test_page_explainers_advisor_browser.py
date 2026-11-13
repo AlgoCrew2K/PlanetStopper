@@ -862,7 +862,7 @@ def test_the_cards_of_a_tab_sit_in_equal_width_tracks_and_none_is_stretched(
 
 @pytest.mark.parametrize("width", al.NARROW)
 @pytest.mark.parametrize("tab", [SB_CARDS, FR_CARDS])
-def test_below_1001_px_the_cards_stack_and_their_tab_does_not_scroll_sideways(
+def test_below_1001_px_the_cards_keep_the_references_form_and_their_tab_does_not_scroll_sideways(
     firefox,
     advisor_server,
     tmp_path,
@@ -870,7 +870,8 @@ def test_below_1001_px_the_cards_stack_and_their_tab_does_not_scroll_sideways(
     tab,
     width,  # noqa: F811
 ):
-    """Guard for AC-8: the narrow widths keep one card per row inside the panel."""
+    """Guard for AC-8: the narrow widths keep the reference's card grid (one card per row on a
+    phone, as many tracks as fit at 1000 px) inside the panel, with no sideways scroll."""
     _prepare_cards(tmp_path, monkeypatch, tab)
     _, entry_name, count = CARD_WORLDS[tab]
     entry = al.TABLE_GROUPS[entry_name]
@@ -882,7 +883,9 @@ def test_below_1001_px_the_cards_stack_and_their_tab_does_not_scroll_sideways(
         )
         sideways = opened.evaluate(_SIDEWAYS_JS)
     assert len(widths) == count
-    assert len(set(tops)) == count, f"cards share a row at {width} px: tops {tops}"
+    if width < 1000:
+        assert len(set(tops)) == count, f"cards share a row at {width} px: tops {tops}"
+    assert max(widths) - min(widths) <= al.TOLERANCE_PX, f"card widths differ: {widths}"
     assert sideways["page"] == sideways["client"], "the page scrolls sideways"
 
 
