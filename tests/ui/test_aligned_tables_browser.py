@@ -538,6 +538,27 @@ LIVE_RUN_ANSWER = {
 }
 
 
+def _draw_suggestions(probe) -> None:
+    """Run Claude advisor with the browser answering the request: the page script draws the cards."""
+    perf_module._fulfil(probe, "**/ai-advisor/suggest", status=200, body=SUGGESTION_ANSWER)
+    open_page(probe, "/ai-advisor")
+    probe.page.evaluate(
+        """() => {
+          const sel = document.getElementById('symphony-id-input');
+          const o = document.createElement('option'); o.value = 'stub'; o.textContent = 'stub';
+          sel.appendChild(o); sel.value = 'stub';
+          document.getElementById('get-suggestions-btn').disabled = false;
+          window.getSuggestions();
+        }"""
+    )
+    probe.page.wait_for_selector("#suggestions-container > [id^=card-]", state="visible")
+    probe.page.wait_for_function(
+        "(n) => document.querySelectorAll('#suggestions-container > [id^=card-]').length === n",
+        arg=len(SUGGESTION_ANSWER["suggestions"]),
+    )
+    probe.page.wait_for_timeout(SETTLE_MS)
+
+
 @pytest.mark.parametrize("width", al.WIDTHS)
 def test_the_suggestion_cards_the_script_writes_meet_their_rule_at_every_width(
     firefox,  # noqa: F811
@@ -548,24 +569,44 @@ def test_the_suggestion_cards_the_script_writes_meet_their_rule_at_every_width(
 ):
     advisor_module._prepare(tmp_path, monkeypatch, world="empty")
     with open_probe(firefox, advisor_server, width=width, height=al.VIEWPORT_HEIGHT) as probe:
-        perf_module._fulfil(probe, "**/ai-advisor/suggest", status=200, body=SUGGESTION_ANSWER)
-        open_page(probe, "/ai-advisor")
-        probe.page.evaluate(
-            """() => {
-              const sel = document.getElementById('symphony-id-input');
-              const o = document.createElement('option'); o.value = 'stub'; o.textContent = 'stub';
-              sel.appendChild(o); sel.value = 'stub';
-              document.getElementById('get-suggestions-btn').disabled = false;
-              window.getSuggestions();
-            }"""
-        )
-        probe.page.wait_for_selector("#suggestions-container > [id^=card-]", state="visible")
-        probe.page.wait_for_function(
-            "(n) => document.querySelectorAll('#suggestions-container > [id^=card-]').length === n",
-            arg=len(SUGGESTION_ANSWER["suggestions"]),
-        )
-        probe.page.wait_for_timeout(SETTLE_MS)
+        _draw_suggestions(probe)
         assert_swept(probe, [_group(TABLE, "suggestion_cards")], width, "suggestion cards")
+
+
+# The width, in rem, the card markup asks its text column to keep before the actions give way.
+SUGGESTION_TEXT_COLUMN_REM = 12
+SUGGESTION_TEXT_COLUMN_JS = r"""() => {
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return [...document.querySelectorAll('#suggestions-container > [id^="card-"]')].map((card) => {
+    const first = card.firstElementChild.firstElementChild;
+    return { id: card.id, width: first.getBoundingClientRect().width, rem };
+  });
+}"""
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_a_suggestion_cards_text_column_keeps_the_width_its_markup_asks_for(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    tmp_path,
+    monkeypatch,
+    width,
+):
+    """Rejects fixed tracks that hold the actions at one offset by squeezing the text beside them
+    (a 96 px column at 1920 px) instead of putting the actions under it on every card alike."""
+    advisor_module._prepare(tmp_path, monkeypatch, world="empty")
+    with open_probe(firefox, advisor_server, width=width, height=al.VIEWPORT_HEIGHT) as probe:
+        _draw_suggestions(probe)
+        columns = probe.page.evaluate(SUGGESTION_TEXT_COLUMN_JS)
+    assert len(columns) == len(SUGGESTION_ANSWER["suggestions"])
+    narrow = [
+        f"{c['id']}: {c['width']:.0f} px"
+        for c in columns
+        if c["width"] < SUGGESTION_TEXT_COLUMN_REM * c["rem"] - al.TOLERANCE_PX
+    ]
+    assert not narrow, (
+        f"the text column is under {SUGGESTION_TEXT_COLUMN_REM}rem at {width}: {narrow}"
+    )
 
 
 @pytest.mark.parametrize("width", al.WIDTHS)

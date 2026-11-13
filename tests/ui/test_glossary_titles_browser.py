@@ -9,9 +9,9 @@ every label whose text is a Glossary line's lead term and on every element carry
 the rule itself, over the live page of every host state, the rows the page scripts write included:
 
 * every shown label whose text, trimmed and without a trailing colon, equals the lead term of a line
-  of the Glossary that owns it has the whole line as its title, and so has every shown element that
-  carries ``data-glossary``; a title the label carried before this change is kept, never replaced;
-* every Glossary line the layout table (Table G3) names is the title of at least one element in the
+  of the Glossary that owns it has the whole line as its title, and so has every element that
+  carries ``data-glossary``, drawn or not; a title the label carried before is kept, never replaced;
+* every Glossary line the fixture's title rows name is the title of at least one element in the
   state that holds it;
 * the same holds again after the page's own refresh has rewritten its rows: three dashboard polls,
   the window picks of Performance and History, the Overview's autotune refresh.
