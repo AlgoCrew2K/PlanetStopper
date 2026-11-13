@@ -885,6 +885,11 @@ HEADER_ONLY_AS_AT_THE_REFERENCE = frozenset(
 )
 
 
+# A group whose layout is not "one line of equal gaps" and which has a module of its own: the dollar
+# summary (a sentence beside a stacked column), measured by test_dashboard_dollar_summary_browser.
+MEASURED_BY_ITS_OWN_MODULE = frozenset({(LINE, "dollar_saved_line")})
+
+
 def _groups_of_host(host: str, tab: str | None) -> list[tuple[str, str, dict]]:
     """Every registry group of ``host`` (of one Advisor tab when ``tab`` is given) the page itself
     holds, a group a user action produces left out."""
@@ -893,6 +898,8 @@ def _groups_of_host(host: str, tab: str | None) -> list[tuple[str, str, dict]]:
         for name, entry in getattr(al, registry).items():
             wanted = entry.get("open", {})
             if entry["host"] != host or "action" in wanted or wanted.get("tab") != tab:
+                continue
+            if (registry, name) in MEASURED_BY_ITS_OWN_MODULE:
                 continue
             if registry == TABLE and entry.get("group") is None and not entry.get("rows"):
                 continue

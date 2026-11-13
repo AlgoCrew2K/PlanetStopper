@@ -258,6 +258,46 @@ def test_figures_at_the_edge_of_their_formats_lie_inside_the_box(firefox, world,
             probe.context.close()
 
 
+@pytest.mark.parametrize("width", [1001, 1440, 1920])
+def test_figures_of_different_widths_still_end_at_one_right_edge_per_column_with_no_wide_gap(
+    firefox,  # noqa: F811
+    world,  # noqa: F811
+    width,
+):
+    """A negative Today and a 899.99 Cumulative make the alpha figures of the four rows different
+    widths. The Bot, Held and alpha figures are numeric: each column's figures end at one right edge
+    (the alpha column too, so it is right-aligned in a column that fits its widest figure, not left
+    aligned in a column that takes the box's spare width), and no gap between a column's widest text
+    and the next column's nearest text is wider than 48 px."""
+    entry = al.TABLE_GROUPS["comparison_rows"]
+    spec = al.spec_of(entry, name="comparison_rows")
+    with running_server() as server:
+        probe = _open(
+            firefox,
+            server,
+            world,
+            width,
+            state=_edge_state(world),
+            strips={"30d": _edge_strip(world)},
+        )
+        try:
+            probe.page.evaluate("window.loadState()")
+            wait_refresh(probe, 2)
+            wait_for(
+                probe,
+                "() => document.querySelector('[data-testid=\"comp-cumulative-bot-text\"]')"
+                ".textContent.includes('899.99')",
+                "the Cumulative row never drew the longest figure",
+            )
+            offsets = al.measure(probe.page, al.FIELD_OFFSETS_JS, spec)
+            gaps = al.measure(probe.page, al.COLUMN_GAPS_JS, spec)
+            assert offsets["found"] >= MIN_ROWS
+            assert not offsets["violations"], f"at {width}: " + "; ".join(offsets["violations"])
+            assert not gaps["violations"], f"at {width}: " + "; ".join(gaps["violations"])
+        finally:
+            probe.context.close()
+
+
 @pytest.mark.parametrize("width", EDGE_WIDTHS)
 def test_dashes_in_every_figure_lie_inside_the_box(firefox, world, width):  # noqa: F811
     """A poll that carries no figure draws a dash in each: the dash keeps its place inside the box."""
