@@ -4938,6 +4938,21 @@ class TestAnUnavailableItemTheMissingListDoesNotNameKeepsItsReason:
         if which == "full":
             assert checked >= 12, "the two ineligible cards were not both checked"
 
+    def test_an_undecided_redundancy_the_list_does_not_name_shows_its_list_once_in_its_cell(
+        self, client, isolated_db
+    ):
+        """The stored undecided-peer list of an item the missing list leaves out is printed in the
+        cell's headline, as for any unlisted item, and not a second time inside its disclosure."""
+        record = pb.undecided_record()
+        keep = pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_KEEP))
+        keep["missing_items"] = []
+        _, _, card = _keep_card(client, record)
+        cell = _redundancy_cell(card)
+        reason = keep["evidence"]["redundancy"]["reason"]
+        assert card.find("tenure-review-missing") is None
+        assert _summary_of(cell).text() == f"Redundancy unavailable: {reason}"
+        assert cell.text().count(reason) == 1, "the stored list shows twice in the cell"
+
     def test_a_card_with_no_missing_line_still_says_why_each_of_its_items_is_unavailable(
         self, client, isolated_db
     ):
