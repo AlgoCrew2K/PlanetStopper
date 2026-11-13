@@ -49,10 +49,11 @@ Every table on every in-scope page lines up under its own header, and every page
 - One description sentence of at most 25 words per section, from Copy table A, and no hint, caption, banner or run note that restates one, from Copy table X (AC-3).
 - One closed Glossary per page, Advisor tab, detail panel and settings modal holding every definition, from Table G; no per-section disclosures; labels that name a term carry its definition as a title (AC-4).
 - Status lines read as one plain statement: the autotune line, columns that are N/A in every row, the numeric verification line and the older-runs summary (AC-5).
-- Tenure cards list each missing item once and state a count and a reason instead of naming symphonies a comparison could not decide (AC-6).
+- Tenure cards list each missing item once and never name symphonies a comparison could not decide; the fleet-wide "too few shared trading days" fact is said once, under the tenure run line; each evidence summary headlines the item's own figure (AC-6).
 - No figure, control, route, JSON body, banner meaning, honesty text, engine or database change (AC-7).
 - Below 1001 px the stacked forms stay, and the copy and Glossary rules hold at 390 px (AC-8).
 - The PM's deploy-gate visual check at 1920, 1440 and 390 px (AC-9).
+- Nothing is clipped: the comparison rows, the swap and logic-change result cards and the exit turnover table keep every figure inside their box, and the header never makes a page scroll sideways (AC-10).
 
 ## Requirements as Given
 [G-1] [Image #1] Are you fucking serious right now? aligned-tables-and-quiet-copy.source.md:1
@@ -60,7 +61,7 @@ Every table on every in-scope page lines up under its own header, and every page
 [G-3] THE TABLES THAT DON'T ACTUALLY ALIGN, RANDOM FU CKING TEXT EVERYWHERE? aligned-tables-and-quiet-copy.source.md:1
 [G-4] THIS IS FUCKING BULLSHIT aligned-tables-and-quiet-copy.source.md:1
 [G-5] (The PM's note on the image, in the source) "(Image #1: the operator's screenshot of the AI Advisor Overview tab on the droplet at c0760e70, about 2000 px wide, saved by the operator at [a file path on the operator's machine, omitted here because a plan names no machine-local path].)" aligned-tables-and-quiet-copy.source.md:3
-G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of the attached image, verbatim apart from the omitted path. G-6 to G-16 are the PM's intake rulings K-1 to K-11, G-17 the PM brief's Not Building line, and G-18 to G-26 to G-31 the PM's rulings on the auditor's findings and questions, G-32 and G-33 its rulings on the architect's raised items, and G-34 its approval of the plan; each is [PM-ASSUMED] and recorded as the PM gave it, and together they supersede feature-plans/page-explainers-and-density.md where they differ.
+G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of the attached image, verbatim apart from the omitted path. G-6 to G-16 are the PM's intake rulings K-1 to K-11, G-17 the PM brief's Not Building line, and G-18 to G-26 to G-31 the PM's rulings on the auditor's findings and questions, G-32 and G-33 its rulings on the architect's raised items, G-34 its approval of the plan, and G-35 to G-55 its rulings on the slice review of 9413e491 (review findings UX-1 to UX-22, CR-1 to CR-5 and the Flask review's A1 and A2), where G-44 replaces the per-card redundancy wording of G-18 and G-29 for the too-few-days case; each is [PM-ASSUMED] and recorded as the PM gave it, and together they supersede feature-plans/page-explainers-and-density.md where they differ.
 [G-6] (PM ruling K-1; [PM-ASSUMED]) "Tables align. In every table, each column's header sits directly above that column, and every row's cells line up under it, at every width of 1001 px and up (narrower widths keep the existing stacked-row form). A table never flows its rows into side-by-side groups. Numeric columns are right-aligned, header included, on every table. Repeated cards that show the same fields (tenure review cards, retirement evidence) place each field at the same x position on every card."
 [G-7] (PM ruling K-2; [PM-ASSUMED]) "Alignment beats filling space. page-explainers-and-density AC-6 (no 240 by 80 px empty region at 1440) is withdrawn. A table or line may end before its panel's right edge. No layout moves text beside the tab bar, to the far end of a toolbar, or into another section's column to fill space. Columns sit at the width their content needs, not stretched to the panel edge with wide gaps between a label and its value."
 [G-8] (PM ruling K-3; [PM-ASSUMED]) "One description per section, at most one sentence of at most 25 words, directly under its heading, saying what the section is and why the operator cares. No page-level description beside or above the Advisor tab bar; no tab-level description when the tab's first section says the same. A fact appears once per screen: no hint, caption, banner or run note restates a description. Fixed boilerplate paragraphs (O-8's) are removed or folded into the glossary."
@@ -95,6 +96,28 @@ G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of th
 [G-33] (PM ruling on the architect's raised item, word-for-word moves; [PM-ASSUMED]) "Glossary word-for-word rule (G2 / S-3.3 area): an entry may drop the term's own name and a leading "is" or "are" from the moved sentence. So O31a reads "Spec Critic: an active guardrail ..." and O31c reads "Divergence Explainer: disabled ...". Every other word stays word for word."
 
 [G-34] (PM approval of the plan, scaffold Step 7, under the operator's standing directive "Fully autonomous, ask nothing"; [PM-ASSUMED]) "Every open question is "default approved": Q-1, Q-3, Q-4, Q-5, Q-7, Q-8, Q-9 and Q-14. Every Not Building entry, NB-1 to NB-13, is approved. Every Narrowed mapping is approved as stated."
+
+[G-35] (PM ruling R1 on review finding UX-1; [PM-ASSUMED], 2026-11-13) "Dashboard comparison rows, from 1001 px: text columns stay aligned and label-to-Bot at most 48 px; the bars and row dividers reach to within 16 px of the bordered box's inner right edge; no figure, α included, is clipped or overflows the box at any Table W width."
+[G-36] (PM ruling R1 on review finding UX-2; [PM-ASSUMED], 2026-11-13) "Dashboard dollar summary, from 1001 px: the lead sentence ("$X lost/saved across N exits") reads with normal word spacing and its basis meta sits on the line under it; the three other figure lines stack in a column beside the lead block, 32 to 48 px from it; each figure on one line, never broken."
+[G-37] (PM ruling R1 on review finding UX-3, pre-existing, a scoped addition; [PM-ASSUMED], 2026-11-13) "From 1001 px up no page scrolls sideways because of the header, and Emergency Liquidate stays wholly inside the viewport whatever the engine label reads."
+[G-38] (PM ruling R1 on review finding UX-4; [PM-ASSUMED], 2026-11-13) "Swap and logic-change result cards: no figure or label is clipped or overflows its card at any Table W width; Baseline and Variant may wrap one under the other when the card is too narrow."
+[G-39] (PM ruling R1 on review finding UX-5; [PM-ASSUMED], 2026-11-13) "The logic-change card shows its apply guidance with "To apply:" said once."
+[G-40] (PM ruling R1 on review finding UX-6; [PM-ASSUMED], 2026-11-13) "Performance: the basis caption and the data stamp sit directly after the element before them or on their own line at the left; never pinned in a far-right column."
+[G-41] (PM ruling R1 on review finding UX-7; [PM-ASSUMED], 2026-11-13) "History: the hero descriptor, Y01 and Y15 follow the plan's placement rules (a description sits under its heading, never in a side column beside the figures, picker or heading)."
+[G-42] (PM ruling R1 on review finding UX-8; [PM-ASSUMED], 2026-11-13) "An opened observation History table spans the observations section's width without moving the observation lines' field offsets; at 1920 a symphony name does not wrap to three lines."
+[G-43] (PM ruling R1 on review finding UX-9; [PM-ASSUMED], 2026-11-13) "The exit turnover table fits its panel at every Table W width from 1001 (no in-panel scroll hiding a column; headers whole)."
+[G-44] (PM ruling R1 on review finding UX-10, amending AC-6; [PM-ASSUMED], 2026-11-13) "one line under the tenure run line, shown only when at least one card's redundancy reason is the undecided-peer form: "Redundancy not decided for {k} of {n} symphonies: too few shared trading days with the other symphonies; {N} are needed." (k counted with the same test the cards use; N from the configured value, never a literal); each card's missing line drops that redundancy entry and shows only when another item is missing; the Redundancy cell keeps "unavailable"; the stored per-peer reason moves from the separate "Comparisons that decided nothing" row into the Redundancy cell's own closed disclosure; any other redundancy reason keeps the AC-6 missing line as today."
+[G-45] (PM ruling R1 on review finding UX-11; [PM-ASSUMED], 2026-11-13) "Frontrunner cards: drop the "On approval" line that restates the risk banner; fold "the incumbent is never modified" into the Identity line."
+[G-46] (PM ruling R1 on review finding UX-12; [PM-ASSUMED], 2026-11-13) "Market Prism rationale capped at 110ch (the 65185aaa width)."
+[G-47] (PM ruling R1 on review finding UX-13; [PM-ASSUMED], 2026-11-13) "Tenure Marginal contribution summary headlines the symphony's own figure (total_return_difference), not the portfolio's with-total-return figure. No figure's value changes; only which stored figure is the summary."
+[G-48] (PM ruling R1 on review finding UX-14; [PM-ASSUMED], 2026-11-13) "Tenure Backtest summary headlines the backtest's own figure (the gap), not the realized total return that Performance already shows."
+[G-49] (PM ruling R1 on review finding UX-15; [PM-ASSUMED], 2026-11-13) "Tenure Composite summary says normalized once and fits one line at 1920."
+[G-50] (PM ruling R1 on review finding UX-16; [PM-ASSUMED], 2026-11-13) "Chat: the title and T02 no longer both say how a conversation opens; say it once."
+[G-51] (PM ruling R1 on review finding UX-18; [PM-ASSUMED], 2026-11-13) "Each Frontrunner stats label that names a defined term carries only its own definition as its title (Calmar, CAGR, Max DD separately); the X11 Glossary line is split into one line per term."
+[G-52] (PM ruling R1 on review finding UX-19; [PM-ASSUMED], 2026-11-13) "History's "What the exit reasons mean" disclosure is removed; its definitions move into the History Glossary (G-9)."
+[G-53] (PM ruling R1 on review finding UX-21; [PM-ASSUMED], 2026-11-13) "The Overview "Open tab" pointer's arrow is separated from its text by a normal gap."
+[G-54] (PM ruling R1 on code review findings CR-1, CR-2 and CR-4; [PM-ASSUMED], 2026-11-13) "Hygiene, no visible change: CSS rules left without markup by this slice's removals are deleted; the retirement pointer's unread "text" key is dropped; the new page-copy resolver for the redundancy day count is covered by the no-trade-boundary scans (scans gain entries only)."
+[G-55] (PM ruling R1 on the review's backlog; [PM-ASSUMED], 2026-11-13) "BACKLOG (record in the plan's backlog or Items Raised section, not as ACs): CR-5 (glossary observer rescans the whole document per mutation; measure first), CR-3 (accepted, drift tests pin the copies), UX-17 (LC-3 N=1 twice, LC-4 16-digit floats, frozen by AC-7), UX-20, UX-22, flask A1/A2 (flask.json), older _copy_* resolvers' scan gap, and the pre-existing behaviour that picking a symphony on the Overview auto-fires the suggest request (C-11)."
 
 ## Requirement Inventory
 | R-n | Requirement item | Source (G ids) | Maps to (AC ids, or NB-n) | Scope (full, or narrowed: what is left out) |
@@ -133,7 +156,7 @@ G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of th
 | R-32 | Each jargon term still has a plain definition on its page | G-15 | AC-4 | full |
 | R-33 | The deploy gate adds the PM's visual check at 1920, 1440 and 390 px of every page and Advisor tab, listing the three kinds of hit per screenshot, any hit blocking the deploy | G-16, G-19 | AC-9 | narrowed: a control at a row's end (Settings Save and Discard, the dashboard window picker, Run buttons) is not a hit; the check judges text, links and status only (G-19) |
 | R-34 | No new visual direction or token change; both themes stay legible | G-17 | AC-7, NB-3 | full |
-| R-35 | A tenure card states the missing redundancy once, in one short line: not compared for too few shared trading days, with the required count when a value for it exists; the stored reason stays behind one closed disclosure; no producer or stored row changes | G-18 | AC-6, AC-7 | full |
+| R-35 | A tenure card states the missing redundancy once, in one short line: not compared for too few shared trading days, with the required count when a value for it exists; the stored reason stays behind one closed disclosure; no producer or stored row changes | G-18 | AC-6, AC-7 | narrowed: when the too-few-days test holds the fact is stated once per screen, in the line under the tenure run line, not on each card, and the stored reason sits in the Redundancy cell's disclosure (G-44) |
 | R-36 | A control is a button, select, input, checkbox or segmented picker and may sit at a heading or form row's end; text, links, status words and stamps may not sit beside the tab bar or at a toolbar row's far end | G-19 | AC-2, AC-9 | full |
 | R-37 | Every breakpoint from 1001 px is enumerated and one width inside each band, plus 2560, is measured; the PM check stays at 1920, 1440 and 390 | G-20 | AC-1, AC-2, AC-9 | full |
 | R-38 | A column edge is the bounding box of the text or control in the cell, padding excluded; left edges for left-aligned and right edges for right-aligned columns, header included, within 2 px | G-21 | AC-1 | full |
@@ -144,11 +167,33 @@ G-1 to G-4 are the operator's source, verbatim. G-5 is the PM's annotation of th
 | R-43 | A definition moved word for word into a Glossary is allowed; one that stays in or is restated in a section body is not | G-26 | AC-3 | full |
 | R-44 | A tenure card names its paired sibling only when the pair carries at least one computed figure; otherwise it names no sibling and the Redundancy cell reads "unavailable" | G-27 | AC-6 | full |
 | R-45 | S01 drops the clause S02 states; a control at a row's end is not a hit; the subsections stack and CVaR and sleeves keep their static row; G-17 stands as recorded | G-28 | AC-2, AC-3, AC-9 | full |
-| R-46 | The tenure line reads "not decided", with N from its derivation, never a literal | G-29 | AC-6 | full |
+| R-46 | The tenure line reads "not decided", with N from its derivation, never a literal | G-29 | AC-6 | narrowed: the "not decided" wording and N now read in the one line under the tenure run line, not in each card's missing line (G-44) |
 | R-48 | The AC-1 matrix cell for the hosts the page script builds names S-1.20 and S-1.21 | G-32 | AC-1 | full |
 | R-49 | A sentence moved into a Glossary may drop the term's own name and a leading "is" or "are"; every other word stays | G-33 | AC-3, AC-4 | full |
 | R-50 | The plan is approved: every open question default approved, every Not Building entry approved, every narrowed mapping approved as stated | G-34 | NB-11 | full |
 | R-47 | Table W measures the 1401 to 1439 band at 1420; Table T classes the suggestion, swap result, logic-change proposal and detail variable groups; TT-16 cites the server-rendered rows | G-31 | AC-1, AC-2 | full |
+| R-51 | From 1001 px the comparison rows keep their text columns aligned with label to Bot at most 48 px, and each bar and row divider ends within 16 px of the bordered box's inner right edge | G-35 | AC-2 | full |
+| R-52 | No comparison-row figure, α included, is clipped by or overflows the box at any Table W width | G-35 | AC-10 | full |
+| R-53 | From 1001 px the dollar summary's lead sentence reads with normal word spacing with its basis meta on the next line, the three other figure lines stack in a column 32 to 48 px beside the lead block, and no figure breaks across lines | G-36 | AC-2 | full |
+| R-54 | From 1001 px no page scrolls sideways because of the header, and Emergency Liquidate stays wholly inside the viewport whatever the engine label reads | G-37 | AC-10 | full |
+| R-55 | No figure or label of a swap or logic-change result card is clipped or overflows its card at any Table W width; Variant may sit under Baseline when the card is too narrow | G-38 | AC-10 | full |
+| R-56 | The logic-change card says "To apply:" once on its apply line | G-39 | AC-3 | full |
+| R-57 | Performance's basis caption and data stamp sit directly after the element before them or on their own line at the left, never in a far-right column | G-40 | AC-2 | full |
+| R-58 | History's hero descriptor, Y01 and Y15 sit under their heading or element, never in a side column beside the figures, picker or heading | G-41 | AC-2, AC-3 | full |
+| R-59 | An opened observation History table spans the observations section's width, the observation lines keep their field offsets, and at 1920 no symphony name in it wraps to three lines | G-42 | AC-1 | full |
+| R-60 | The exit turnover table fits its panel at every Table W width from 1001, with no in-panel scroll hiding a column and every header whole | G-43 | AC-10 | full |
+| R-61 | One line under the tenure run line states the too-few-days redundancy fact for k of n symphonies with N, shown only when k is at least 1; those cards drop the redundancy entry from their missing line; the stored peer list sits only in the Redundancy cell's closed disclosure; any other redundancy reason keeps the AC-6 missing line | G-44 | AC-6 | full |
+| R-62 | The Frontrunner "On approval" line is removed and the Identity line says the incumbent is never modified | G-45 | AC-3 | full |
+| R-63 | The Market Prism rationale is no wider than 110 characters of its font | G-46 | AC-2 | full |
+| R-64 | The tenure Marginal contribution summary headlines the stored total return difference; no figure changes value | G-47 | AC-6 | full |
+| R-65 | The tenure Backtest summary headlines the stored total return gap | G-48 | AC-6 | full |
+| R-66 | The tenure Composite summary says "normalized" once and fits one line at 1920 | G-49 | AC-6 | full |
+| R-67 | The Chat tab says how a conversation opens once | G-50 | AC-3 | full |
+| R-68 | Each Frontrunner stats label carries only its own term's definition as its title; X11 becomes one Glossary line per term | G-51 | AC-4 | full |
+| R-69 | History's "What the exit reasons mean" disclosure is removed and its definitions are History Glossary lines | G-52 | AC-4 | full |
+| R-70 | The Retirement row's arrow is separated from "Open tab" by a normal gap | G-53 | AC-2 | full |
+| R-71 | No stylesheet rule is left matching nothing after this slice's removals, the Retirement row's context carries no key no consumer reads, and the no-trade-boundary scans reach the redundancy day-count resolver, gaining entries only | G-54 | AC-7 | full |
+| R-72 | The review's backlog items are recorded as follow-ups, not criteria | G-55 | NB-14 | full |
 
 ## User Tasks
 Workflow (AI Advisor, all eight tabs): no workflow file: `.claude/workflows/` does not exist at the ref
@@ -169,9 +214,9 @@ Workflow (Settings and the settings modal): no workflow file: `.claude/workflows
 ### T-2: Read a tenure review card
 | Step | User action | Input | Expected result | Scenario (S id) |
 |---|---|---|---|---|
-| 1 | Choose the Retirement tab | a click | The tenure run line is one compact line; the run-stats tiles sit on one row | S-2.9, S-2.10 |
-| 2 | Read a keep card | none | One missing line, "missing: redundancy (not decided: too few shared trading days with the other symphonies; 181 are needed)"; no peer is named on the closed card; the Redundancy cell reads "unavailable" | S-6.1, S-6.2 |
-| 3 | Open "Comparisons that decided nothing" | a click or Enter | The stored reason shows word for word | S-6.3 |
+| 1 | Choose the Retirement tab | a click | The tenure run line is one compact line, and under it one line reads "Redundancy not decided for 10 of 11 symphonies: too few shared trading days with the other symphonies; 181 are needed."; the run-stats tiles sit on one row | S-2.9, S-2.10, S-6.1 |
+| 2 | Read a keep card | none | No missing line; no peer is named on the closed card; the Redundancy cell reads "unavailable" | S-6.2 |
+| 3 | Open the Redundancy cell | a click or Enter | The stored reason shows word for word | S-6.3 |
 | 4 | Scan down the cards | none | Performance, Composite score, Backtest, Marginal contribution, Long VIX hedge and Redundancy sit at the same x on every card | S-1.8 |
 
 ### T-3: Compare a table's numbers
@@ -183,8 +228,8 @@ Workflow (Settings and the settings modal): no workflow file: `.claude/workflows
 ### T-4: Look up a term
 | Step | User action | Input | Expected result | Scenario (S id) |
 |---|---|---|---|---|
-| 1 | Hover the "Calmar" header of a Frontrunner card's figures | a pointer hover | The title shows the X11 definition | S-4.8 |
-| 2 | Open the Frontrunner tab's Glossary | a click | The X06, X08, X09, X11 and X12 lines show, in that order | S-4.1 |
+| 1 | Hover the "Calmar" header of a Frontrunner card's figures | a pointer hover | The title shows the X11a definition, and only it | S-4.8, S-4.17 |
+| 2 | Open the Frontrunner tab's Glossary | a click | The X06, X08, X09, X11a, X11b, X11c and X12 lines show, in that order | S-4.1 |
 
 ## Earlier criteria on the same surface
 Searched every `feature-plans/*.md` with the `.completed.md` and `.obsolete.md` families and the suite folders (`ux-overhaul/`, `refresh-timing/`, `decision-science.completed/`, `approach/`), `DECISIONS.md`, `docs/generated/`, `docs/audit/` and `tests/ui/`, `tests/app/`, `tests/ai_advisor/` for the touched templates, `data-explainer`, `data-terms`, "What the terms mean", "Same for every run", `count_line`, "covers the", "decides nothing", `retirement-pointer`, `metrics-th-repeat`, `guardrail-uniform-note`, "of 18 verified" and the touched section headings.
@@ -199,6 +244,8 @@ Searched every `feature-plans/*.md` with the `.completed.md` and `.obsolete.md` 
 | feature-plans/page-explainers-and-density.md AC-6 (no empty region of 240 by 80 px at 1440; CVaR with sleeves and the two Retirement subsections share a row; figure rows span 90 percent of their width) | every in-scope host | contradicted | Withdrawn by G-7; figure rows sit at the width their content needs with gaps of at most 48 px (AC-2) |
 | feature-plans/page-explainers-and-density.md AC-7 (at 375 px a page grows only by the added copy; the Advisor tab strip shows that more tabs exist) | every host at narrow width | changed | The height bound is not carried (the copy shrinks); the no-sideways-scroll rule and the tab strip cue are kept at 390 px (AC-8) |
 | feature-plans/page-explainers-and-density.md AC-8 (a column identical in every autotune row is stated once in a "Same for every run" line; frontrunner titles carry the proposal number) | Overview autotune, Frontrunner cards | changed | The line becomes one sentence about run time and outcome only; N/A columns are hidden; score and t-stat are never lifted (AC-5); the frontrunner titles are kept |
+| feature-plans/page-explainers-and-density.md Copy table C row Y14b (History's exit reason definitions in a "What the exit reasons mean" disclosure, `static/history.js:227-232`, `templates/history.html:552`) | History | changed | The disclosure is removed; its four definitions are History Glossary lines D29b, D29a, D29c and D29d word for word (AC-4, G-52) |
+| The Market Prism rationale's measure: capped at 110ch at 65185aaa, uncapped at the ref (`templates/ai_advisor.html:851`, `:1279`) | Overview | changed | Capped again at 110 characters (AC-2, G-46) |
 | feature-plans/ux-overhaul/02-advisor-overview.md AC-1 (observations as one status line per producer) | Overview observations | kept | One line per producer stays; its columns sit at content width and align (AC-1, AC-2) |
 | feature-plans/ux-overhaul/02-advisor-overview.md AC-2 (one autotune card per symphony, older runs behind an expander whose label states it covers the route's 50 most recent runs) | Overview autotune | changed | The label wording changes to "{n} older runs from the 50 most recent" and still states the coverage (AC-5) |
 | feature-plans/ux-overhaul/02-advisor-overview.md AC-5 (one Retirement pointer line that opens the Retirement tab) | Overview | changed | Its text (less the "Retirement: " prefix) and the link to the tab are kept; it becomes the last row of the observations list (AC-2, G-24) |
@@ -228,8 +275,8 @@ Searched every `feature-plans/*.md` with the `.completed.md` and `.obsolete.md` 
 ## Acceptance Criteria (Building)
 
 ### AC-1: Every table lines up under one header
-Requirement items: R-1, R-2, R-3, R-5, R-6, R-7, R-28, R-37, R-38, R-39, R-47, R-48
-Rule: When an in-scope host renders at each width of Table W, every Table T group of kind table shall show exactly one header row, above all its body rows, whose body rows neither overlap vertically nor sit side by side, and in each of its columns the bounding box of the text or control inside every cell, cell padding excluded, header included, shall share its left edge (a text column) or its right edge (a numeric column, D-4) within 2 px; and in every Table T group of kind repeated fields, each named field's bounding box shall start (or, for a numeric field, end) at the same offset from its row's or card's left edge on every row or card, within 2 px.
+Requirement items: R-1, R-2, R-3, R-5, R-6, R-7, R-28, R-37, R-38, R-39, R-47, R-48, R-59
+Rule: When an in-scope host renders at each width of Table W, every Table T group of kind table shall show exactly one header row, above all its body rows, whose body rows neither overlap vertically nor sit side by side, and in each of its columns the bounding box of the text or control inside every cell, cell padding excluded, header included, shall share its left edge (a text column) or its right edge (a numeric column, D-4) within 2 px; in every Table T group of kind repeated fields, each named field's bounding box shall start (or, for a numeric field, end) at the same offset from its row's or card's left edge on every row or card, within 2 px; and an opened TT-9h history table shall span the observations section's content width while the TT-9 lines keep the field offsets they have with it closed.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
@@ -254,6 +301,7 @@ Rule: When an in-scope host renders at each width of Table W, every Table T grou
 | S-1.16 | N6 | `/api/autotune-runs` fails on a refresh | the Overview is read | the last rendered table and its notice stay, still aligned |
 | S-1.17 | N7 | every Table T group | each host renders | every cell's text and every figure value is as at the ref (AC-7), apart from the N/A columns AC-5 removes |
 | S-1.18 | N8 | an observation history or a tenure evidence disclosure is open | the hosts are measured | the other lines and cards keep their field positions; the open one's fields keep theirs |
+| S-1.22 | B | the production-shape Overview with one producer's History opened | the Overview renders at 1920 and 1440 | the history table's left and right edges lie within 2 px of the observations section's content edges; every TT-9 line, the opened one and the Retirement row included, keeps the offsets S-1.10 measures with the History closed; at 1920 no symphony name in the table wraps to three lines (G-42) |
 
 Negative coverage: N1 S-1.3, S-1.4, S-1.13 · N2 n/a: layout refuses nothing · N3 S-1.14 · N4 n/a: every host sits behind the unchanged global auth hook, pinned by S-7.8 · N5 S-1.15 · N6 S-1.16 · N7 S-1.17 · N8 S-1.18
 Questions: Q-4, Q-9
@@ -312,8 +360,8 @@ Kind table: one header row and the column rule. Kind repeated fields: not a tabl
 | TT-28 | Chat | the conversation (written by the page script, static/ai_advisor_chat.js) | no repeated fields | alternating messages of free text | none | none |
 
 ### AC-2: Nothing is moved to fill space
-Requirement items: R-1, R-8, R-9, R-10, R-11, R-26, R-27, R-28, R-36, R-37, R-40, R-41, R-45, R-47
-Rule: When an in-scope host renders at each width of Table W, the Advisor navigation panel shall hold only the tab bar; in each row of Table L every element that is not a control (D-7) shall start no more than 24 px after the right edge of the element before it on the same line, or begin a new line at the row's left edge, while a control may sit at the row's end; in each TT-1, TT-3, TT-4, TT-5, TT-7, TT-8, TT-9 and TT-14 group whose content is narrower than its panel, the space between the right edge of the widest text in one column and the left edge of the nearest text in the next column shall be at most 48 px; in each line of Table F the gaps between adjacent items shall be equal within 2 px and each at most 48 px, and no figure's label or value shall break across lines at 1440 and wider; the two Retirement subsections shall each take the panel's full content width, one above the other, whatever their heights; and the Retirement pointer shall leave the Overview toolbar and render only as the last row of the Advisor observations list: label "Retirement", verdict cell the pointer text without its leading "Retirement: ", empty time and count cells, and in the last cell a link "Open tab" that opens the Retirement tab, with no request added.
+Requirement items: R-1, R-8, R-9, R-10, R-11, R-26, R-27, R-28, R-36, R-37, R-40, R-41, R-45, R-47, R-51, R-53, R-57, R-58, R-63, R-70
+Rule: When an in-scope host renders at each width of Table W, the Advisor navigation panel shall hold only the tab bar; in each row of Table L every element that is not a control (D-7) shall start no more than 24 px after the right edge of the element before it on the same line, or begin a new line at the row's left edge, while a control may sit at the row's end; in each TT-1, TT-3, TT-4, TT-5, TT-7, TT-8, TT-9 and TT-14 group whose content is narrower than its panel, the space between the right edge of the widest text in one column and the left edge of the nearest text in the next column shall be at most 48 px; in each TT-1 row each bar and the row divider shall end within 16 px of the bordered box's inner right edge; in each line of Table F other than TF-2 the gaps between adjacent items shall be equal within 2 px and each at most 48 px, and no figure's label or value shall break across lines at 1440 and wider; in TF-2 the lead sentence's adjacent words shall be no further apart than one space of its font plus 1 px, its basis meta shall start on the line under it, and the three other figure lines shall stack one under another in one column whose left edge is 32 to 48 px right of the lead block's right edge, no figure breaking across lines; no description, caption or stamp shall sit in a column beside the figures, picker or heading of its own section, so that Performance's basis caption and data stamp and History's hero descriptor, Y01 and Y15 each sit directly after the element before them or on their own line at the left content edge; the Market Prism rationale shall be no wider than 110 characters of its own font; the two Retirement subsections shall each take the panel's full content width, one above the other, whatever their heights; and the Retirement pointer shall leave the Overview toolbar and render only as the last row of the Advisor observations list: label "Retirement", verdict cell the pointer text without its leading "Retirement: ", empty time and count cells, and in the last cell a link "Open tab", its arrow 4 to 8 px before the text, that opens the Retirement tab, with no request added.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
@@ -323,7 +371,7 @@ Rule: When an in-scope host renders at each width of Table W, the Advisor naviga
 | S-2.4 | B | a stored ok retirement run at 2026-11-09 22:51 ET with 0 recommendations and 0 pending | the Overview renders | the observations list's last row reads "Retirement", then "last run 2026-11-09 22:51 ET, 0 recommendations, 0 pending", then empty time and count cells, then "Open tab"; no other Retirement pointer is on the Overview |
 | S-2.5 | B | the Retirement row's "Open tab" link | it is chosen by click and by Enter | the Retirement tab opens; the page makes no request it does not make at the ref |
 | S-2.6 | B | the production-shape state | Performance, History and the Overview render at 1920 | in TT-3, TT-4, TT-5, TT-7, TT-8 and TT-9 no gap between adjacent columns' text exceeds 48 px; in TT-1 the gap between the label and the Bot figure is at most 48 px |
-| S-2.7 | B | the seeded dashboard | `/` renders at 1920 and 1440 | Tracked, Armed and Triggered sit with equal gaps of at most 48 px; the four dollar figures sit on one line each with equal gaps of at most 48 px |
+| S-2.7 | B | the seeded dashboard | `/` renders at 1920 and 1440 | Tracked, Armed and Triggered sit with equal gaps of at most 48 px; the dollar summary meets S-2.21 |
 | S-2.8 | B | Performance and History | each renders at 1920 and 1440 | the headline strip and the History hero figures sit with equal gaps of at most 48 px and no label or value wraps |
 | S-2.9 | B | a stored ok retirement run | the Retirement tab renders at 1920 and 1440 | the five tiles' values start at tops within 2 px of each other on one line with equal gaps of at most 48 px; the Blocked breakdown sits on its own line below the tiles |
 | S-2.10 | B | a stored tenure review | the Retirement tab renders | the tenure run line's items sit with equal gaps of at most 48 px, starting at the row's left edge |
@@ -331,14 +379,21 @@ Rule: When an in-scope host renders at each width of Table W, the Advisor naviga
 | S-2.12 | N3 | a failed latest retirement run | the Overview renders | the verdict cell names the failed state and its time, as the ref's pointer does |
 | S-2.20 | N3 | no observations, and observations that could not be loaded | the Overview renders | the empty or unavailable line shows as at the ref and the Retirement row follows it |
 | S-2.13 | N5 | the dashboard poll runs and the window picker moves from 30d to 1y and back | `/` is measured again | S-2.7 still holds |
-| S-2.14 | N6 | `/api/guard-alpha-summary` answers 500 | `/` shows its dashes | the dollar figures keep equal gaps of at most 48 px |
+| S-2.14 | N6 | `/api/guard-alpha-summary` answers 500 | `/` shows its dashes | the dollar summary keeps the S-2.21 layout with its dashes |
 | S-2.15 | N7 | every host | it renders | no rule asserts an empty-region bound; the earlier 240 by 80 px tests are removed, not loosened |
 | S-2.16 | N7 | every host at 1920 and 1440 | it renders | no description, note or stamp from one section is placed inside another section's box |
 | S-2.18 | B | a stored retirement run and a stored tenure review whose subsections are each 320 px tall or less | the Retirement tab renders at 1920 | Correlated pairs and Symphony tenure review each take the panel's full content width, Correlated pairs above (EV-R2, EV-R3; the ref pairs them side by side, `static/ai_advisor.js:1156-1160`) |
 | S-2.19 | B | Market Prism, a sleeve card and a tenure card | each renders at 1920 | the Prism as-of stamp starts within 24 px of the item before it; a sleeve line's items and a tenure card's head and lifecycle items sit with gaps of at most 48 px (`templates/ai_advisor.html:847`, `:1112-1113`; `templates/index.html:1158`) |
 | S-2.17 | N8 | a symphony picked but Run not yet pressed, and a Run in progress | the Overview toolbar is measured | S-2.3 holds in both states |
+| S-2.21 | B | the seeded dashboard with a window total of "$X lost across N exits" and its three other figure lines | `/` renders at 1001, 1120, 1290, 1350, 1400, 1420, 1440, 1920 and 2560 | the lead sentence's adjacent words are no further apart than one space of its font plus 1 px; its basis meta starts on the line under it; the three other figure lines sit one under another in one column whose left edge is 32 to 48 px right of the lead block's right edge; no figure's label or value breaks across lines (G-36; the ref's lead at `templates/index.html:1637`) |
+| S-2.22 | B | the seeded dashboard | `/` renders at each Table W width from 1001 | on each of the four comparison rows the bar and the row divider end within 16 px of the bordered box's inner right edge; the label to Bot gap is at most 48 px; label, Bot, Held and α keep the S-1.12 offsets (G-35; the ref's rows at `templates/index.html:1418`) |
+| S-2.23 | B | Performance with its basis caption and data stamp | `/performance` renders at each Table W width | the caption and the stamp each start no more than 24 px after the right edge of the element before them on the same line, or on their own line at the panel's left content edge; neither sits in a column at the row's right side (G-40) |
+| S-2.24 | B | History with exits in the window | `/history` renders at each Table W width | the hero descriptor sits on its own line at the panel's left content edge, not in a column beside the hero figures; Y01 sits at the top of its panel, not in a column beside the window picker; Y15 sits on the line under the exits heading, not on the heading's row (G-41) |
+| S-2.25 | B | a stored Market Prism rationale of more than 1000 characters | the Overview renders at 1920 and 2560 | the rationale's box is no wider than 110 characters of its own font, as at 65185aaa (G-46) |
+| S-2.26 | B | the Retirement row of the observations list | the Overview renders at 1920 | the arrow glyph ends 4 to 8 px before "Open tab" starts (G-53) |
+| S-2.27 | N1 | dollar figures at the edge of their formats: a saved and a lost total, a five-figure total, and a dash | `/` renders at 1001 and 1440 | S-2.21 holds; no figure breaks across lines |
 
-Negative coverage: N1 S-2.2 (1001 px boundary) · N2 n/a: layout refuses nothing · N3 S-2.11, S-2.12, S-2.20 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-2.13 · N6 S-2.14 · N7 S-2.15, S-2.16 · N8 S-2.17
+Negative coverage: N1 S-2.2 (1001 px boundary), S-2.27 · N2 n/a: layout refuses nothing · N3 S-2.11, S-2.12, S-2.20 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-2.13 · N6 S-2.14 · N7 S-2.15, S-2.16 · N8 S-2.17
 Questions: Q-14
 
 #### Table L: toolbar rows
@@ -368,8 +423,8 @@ Questions: Q-14
 | TF-8 | `/` | each sleeve card's line (`templates/index.html:1158`, `:1941`) |
 
 ### AC-3: One short description per section, said once
-Requirement items: R-1, R-12, R-13, R-14, R-15, R-16, R-28, R-30, R-43, R-45, R-49
-Rule: When an in-scope host renders, each section of Copy table A shall show, directly under its heading (or at the top of a section or panel with no heading), exactly the row's new text as its only description, or no description where the row reads none; each new text shall be one sentence of at most 25 words with the slot filled or its fallback phrase in place; no element of the Advisor navigation panel shall carry a description; each row of Copy table X shall show its new text or be absent as the row says; and the old text of every removed or shortened row shall be absent from the host.
+Requirement items: R-1, R-12, R-13, R-14, R-15, R-16, R-28, R-30, R-43, R-45, R-49, R-56, R-58, R-62, R-67
+Rule: When an in-scope host renders, each section of Copy table A shall show, directly under its heading (or at the top of a section or panel with no heading), exactly the row's new text as its only description, or no description where the row reads none; each new text shall be one sentence of at most 25 words with the slot filled or its fallback phrase in place; no element of the Advisor navigation panel shall carry a description; each row of Copy table X shall show its new text or be absent as the row says; the old text of every removed or shortened row shall be absent from the host; and a logic-change result card's apply line shall contain "To apply:" exactly once, followed by the stored apply guidance without a leading "To apply:" of its own.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
@@ -387,8 +442,13 @@ Rule: When an in-scope host renders, each section of Copy table A shall show, di
 | S-3.12 | N7 | every banner other than the Strategy Builder banner: the crisis caveat, the advise-only banner, the logic-change FDR banner, the Frontrunner risk banner, the Settings warnings and maintenance note, the two CVaR notes and the fleet banner | each renders | each is byte-identical to the ref |
 | S-3.13 | N8 | an unsaved edit on `/settings` or a pending live toggle in the modal | the operator switches section or reads the modal | the descriptions are the Copy table A text and the pending edit is kept |
 | S-3.14 | B | the settings modal opens (the page script writes it on open) | it renders | M04, M05, M06 and M07 show their exact text |
+| S-3.15 | B | a logic-change result whose apply guidance, as the engine writes it (`advisors/logic_change_engine.py:104`), begins "To apply:" | the Logic Changes tab renders the result | the card's text contains "To apply:" exactly once, followed by the rest of the guidance word for word (CX-20, G-39) |
+| S-3.16 | N1 | apply guidance that does not begin with "To apply:", and apply guidance that is empty or absent | the card renders | "To apply:" appears exactly once, before the guidance; with empty or absent guidance no apply line shows, as at the ref (`static/ai_advisor_logic_changes.js:242-247`) |
+| S-3.17 | B | five pending frontrunner proposals and one Strategy Builder retrofit proposal | the Frontrunner Builder tab renders | the Identity line reads the CX-16 text after its "Identity" label; no "On approval" line shows; "the incumbent is never modified" appears once on the tab; the risk banner is byte-identical to the ref (S-3.12) |
+| S-3.18 | N3 | only Strategy Builder retrofit proposals pending, and no proposals | the Frontrunner Builder tab renders | no Identity line and no "On approval" line; the risk banner and the empty state show as at the ref |
+| S-3.19 | B | the Chat tab in its default state | it renders | T02 and the example prompts show; the CX-18 title is absent; how a conversation opens is said once on the tab (G-50) |
 
-Negative coverage: N1 S-3.4 · N2 n/a: a description refuses nothing · N3 S-3.7, S-3.8, S-3.9 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-3.10 · N6 S-3.11 · N7 S-3.3, S-3.12 · N8 S-3.13
+Negative coverage: N1 S-3.4, S-3.16 · N2 n/a: a description refuses nothing · N3 S-3.7, S-3.8, S-3.9, S-3.18 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-3.10 · N6 S-3.11 · N7 S-3.3, S-3.12 · N8 S-3.13
 Questions: none
 
 #### Copy table A: section descriptions
@@ -478,10 +538,16 @@ Every other slot of the earlier plan's Values table (`stress_fraction_pct`, `wat
 | CX-12 | Retirement, Run recommender hint (`templates/ai_advisor.html:2378-2380`) | server render | kept; Glossary R12 no longer restates it | (unchanged) | G-8 |
 | CX-13 | `/`, the hero descriptor (`templates/index.html:1279`) | server render | kept: honesty text (window, basis and cost basis); dash.hero no longer restates it | (unchanged) | G-14 |
 | CX-14 | every host, each "What the terms mean" disclosure | server render and page scripts | removed; its lines move to the host's Glossary | none | G-9 |
+| CX-15 | Retirement, a new line directly under the tenure run line (the run line at `templates/ai_advisor.html:2422-2435`) | server render | added: shown only when k is at least 1 (AC-6); {k} is the number of too-few-days cards, {n} the number of tenure cards on the tab, {needs_days} is N | Redundancy not decided for {k} of {n} symphonies: too few shared trading days with the other symphonies; {needs_days} are needed. | G-44: the fact is said once per screen instead of on each card |
+| CX-16 | Frontrunner Builder, the Identity line's sentence after its "Identity" label (`templates/ai_advisor.html:3278`) | server render | reworded: takes the incumbent clause of the removed On approval line | Each frontrunner proposal is a full standalone copy of its incumbent with one new frontrunner overlay; the incumbent is never modified. | G-45 |
+| CX-17 | Frontrunner Builder, the "On approval" line (`templates/ai_advisor.html:3280`) | server render | removed: the risk banner says approving creates an undeployed symphony, and CX-16 says the incumbent is never modified | none | G-45 |
+| CX-18 | Chat, the default state's title "Select a recommendation or diagnostic figure to open a contextual explanation." (`templates/ai_advisor.html:2680-2682`) | server render | removed: T02 says how a conversation opens | none | G-50 |
+| CX-19 | History, the "What the exit reasons mean" disclosure under By exit reason (`templates/history.html:552`; its lines from `static/history.js:227-232`) | server render and page script | removed; its four definitions are History Glossary lines D29b, D29a, D29c and D29d | none | G-52 |
+| CX-20 | Logic Changes, a result card's apply line (`static/ai_advisor_logic_changes.js:246`) | page script | reworded per AC-3: "To apply:" said once | per AC-3 S-3.15 | G-39 |
 
 ### AC-4: Every definition is in one Glossary at the end of its host
-Requirement items: R-1, R-16, R-17, R-18, R-19, R-20, R-28, R-32, R-49
-Rule: When an in-scope host renders, it shall carry exactly one closed disclosure whose summary reads "Glossary", as the last element of the host (Table G), holding one paragraph per Table G line for that host in Table G order with exactly the text Table G gives; no host shall carry a "What the terms mean" disclosure; and each label element (a table header cell, a figure or tile label, a tenure evidence heading, a comparison row label, or an element whose whole text is a term followed by ":") whose text, trimmed and without a trailing ":", equals the lead term of a Glossary line of that host (the text before the line's first ": "), and each element Table G3 lists, shall carry as its `title` the full text of that Glossary line, unless it carries a `title` at the ref.
+Requirement items: R-1, R-16, R-17, R-18, R-19, R-20, R-28, R-32, R-49, R-68, R-69
+Rule: When an in-scope host renders, it shall carry exactly one closed disclosure whose summary reads "Glossary", as the last element of the host (Table G), holding one paragraph per Table G line for that host in Table G order with exactly the text Table G gives; no host shall carry a "What the terms mean" disclosure or any other disclosure of definitions ("What the exit reasons mean" included); and each label element (a table header cell, a figure or tile label, a tenure evidence heading, a comparison row label, or an element whose whole text is a term followed by ":") whose text, trimmed and without a trailing ":", equals the lead term of a Glossary line of that host (the text before the line's first ": "), and each element Table G3 lists, shall carry as its `title` the full text of that Glossary line, unless it carries a `title` at the ref.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
@@ -500,6 +566,8 @@ Rule: When an in-scope host renders, it shall carry exactly one closed disclosur
 | S-4.13 | N8 | a pending live toggle in the settings modal | the modal Glossary is opened and closed | the pending toggle and its confirm dialog behave as at the ref |
 | S-4.14 | N6 | the modal's settings fetch fails | the error state shows | the modal shows its error text as at the ref and no Glossary |
 | S-4.15 | N7 | the header on every page | it renders | the header carries its definitions as `title` or accessible description exactly as at the ref (copy.json rows H02, H07, H08, H09, H10) and gains no Glossary |
+| S-4.16 | B | History with exits of all four reasons | `/history` renders and its Glossary is opened | no "What the exit reasons mean" disclosure is on the page; the Glossary holds D29b, D29a, D29c and D29d in Table G order, each word for word as the ref's definition with its reason name as the lead term (G-52) |
+| S-4.17 | B | five pending frontrunner proposals | the Frontrunner Builder tab renders | the "Calmar" label's `title` is the X11a line, the "CAGR" label's the X11b line and the "Max DD" label's the X11c line; no label's `title` holds a second term's definition (G-51) |
 
 Negative coverage: N1 S-4.4 · N2 n/a: a definition refuses nothing · N3 S-4.11 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-4.10 · N6 S-4.12, S-4.14 · N7 S-4.3, S-4.7, S-4.9, S-4.15 · N8 S-4.13
 Questions: Q-3, Q-5, Q-8
@@ -512,7 +580,7 @@ A key stands for the `new_text` of that row in `tests/fixtures/page_explainers/c
 | `/` | D02*, D04, D06a, D06b, D07, D05, D03, D10, D12, D13, D14, D15, D16, D17, D18, D19, D20t*, D22, D23, D24, D25, D26, D28a, D28b, D29a, D29b, D29c, D29d, D29e, D29f, D29g, D30, D31, D32, D33, D34, D35, D36, D37, D38, D39, D42, D43, D44, D46, D49, D50a, D50b, D50c, D50d, D50e* |
 | detail panel | D53, D54, D55, D56, D58a, D58b, D58c, D58d, D63, D64, D65, D67t |
 | Performance | F03, F04t, F07, F09, F08, F15a, F15b, F15c, F15d, F15e, F15f, F15g, F15h*, F17a*, F17b, F17c, F17d, F17e, F17h*, F19a, F19b, F19c, F19d, F19e, F20, F23, F24 |
-| History | Y03, Y04, Y08, Y05, Y07, Y13, Y16* |
+| History | Y03, Y04, Y08, Y05, Y07, Y13, D29b, D29a, D29c, D29d, Y16* |
 | Settings | S13a, S13b, S13c, S14s*, S14p*, S15, S16, S18 |
 | settings modal | M01, M08 |
 | Overview | A03, A04, O04, O07a, O07b, O06, O09a, O09b, O09c, O10, O11, O12, O16, O19, O24, O28, O29, O30, O31a*, O31b*, O31c* |
@@ -522,9 +590,9 @@ A key stands for the `new_text` of that row in `tests/fixtures/page_explainers/c
 | Logic Changes | A04, L02a, L02b, L03, L05, L06 |
 | Chat | A04 |
 | Strategy Builder | A04, B01, B02, B03o, B03u, B08, B07t, B12 |
-| Frontrunner Builder | X06, X08, X09, X11, X12 |
+| Frontrunner Builder | X06, X08, X09, X11a*, X11b*, X11c*, X12 |
 
-Removed definition rows: D40t (the Standby description itself says what Standby is) and the earlier plan's V placement of D02, D20t and Y16 (each is now a Glossary line).
+Removed definition rows: D40t (the Standby description itself says what Standby is), the earlier plan's V placement of D02, D20t and Y16 (each is now a Glossary line), and X11, split into X11a, X11b and X11c (G-51). The History lines D29b, D29a, D29c and D29d follow the page's reason order (Take-profit, Trailing stop, VWAP breakdown, VWAP bleed; `static/history.js:193`) and replace the removed exit reasons disclosure (CX-19).
 
 #### Table G2: Glossary lines whose text changes or is new
 | Key | Host | Disposition | Text (exact) | Why, and true of |
@@ -542,6 +610,9 @@ Removed definition rows: D40t (the Standby description itself says what Standby 
 | O31b | Overview | new: the second guardrail sentence, word for word apart from its leading "Overfitting Conscience " (G-33) | "Overfitting Conscience: checks one narrow overfitting-risk source" followed by the rest of the sentence of `templates/ai_advisor.html:1811-1813`, every word as at the ref | DECISIONS.md "AC-14 Guardrail honesty" |
 | O31c | Overview | new: the third guardrail sentence, word for word apart from its leading "Divergence Explainer is " (G-33) | "Divergence Explainer: disabled by default" followed by the rest of the sentence of `templates/ai_advisor.html:1814-1815`, every word as at the ref | DECISIONS.md "AC-14 Guardrail honesty" |
 | R12 | Retirement | changed: K-3 forces it, the CX-12 hint says the market-hours refusal | Run recommender: runs the nightly analysis now; it takes a minute or two. | `app.py:12451` (`ai_advisor_retirement_run`) |
+| X11a | Frontrunner Builder | new: the first term of the ref's X11, word for word (G-51) | Calmar: yearly return divided by the deepest fall; higher is better. | the ref's X11 row in `tests/fixtures/page_explainers/copy.json` |
+| X11b | Frontrunner Builder | new: the second term of the ref's X11, word for word (G-51) | CAGR: the yearly growth rate. | the ref's X11 row in `tests/fixtures/page_explainers/copy.json` |
+| X11c | Frontrunner Builder | new: the third term of the ref's X11, word for word (G-51) | Max DD: the deepest fall from a high to a later low. | the ref's X11 row in `tests/fixtures/page_explainers/copy.json` |
 
 #### Table G3: labels that carry a Glossary line as their title
 These are the labels the lead-term match of the AC-4 rule does not reach by itself, or that sit in a page script's rows; the match covers every other label.
@@ -561,7 +632,7 @@ These are the labels the lead-term match of the AC-4 rule does not reach by itse
 | TG3-12 | History | "Dollar result" and "Win rate" hero labels (`templates/history.html:440`, `:447`); the Detail header (`:572`); the "Wins" and "Avg per exit" headers (`:503`, `:505`) | Y05, Y07, Y16, Y13 |
 | TG3-13 | Retirement | the tile labels Analysed, History, Pairs screened, Blocked (`templates/ai_advisor.html:2320`); the six evidence headings (`:2152`) | R06, R07, R08, R09; R29a to R29f |
 | TG3-14 | Settings | the override badge words "lock" and "override", and "No longer held" (static/settings.js) | S15, S16 |
-| TG3-15 | Strategy Builder, Frontrunner Builder | the "Live Baseline" column header of the stats tables; the Calmar, CAGR, Max DD and Node count change labels on Frontrunner cards (`templates/ai_advisor.html:3297-3330`) | B07t; X11, X12 |
+| TG3-15 | Strategy Builder, Frontrunner Builder | the "Live Baseline" column header of the stats tables; the Calmar, CAGR, Max DD and Node count change labels on Frontrunner cards (`templates/ai_advisor.html:3297-3330`) | B07t; X11a to X11c, X12 |
 | TG3-16 | Asset Swaps, Logic Changes | the Baseline and Variant labels of a result (static/ai_advisor_asset_swaps.js, static/ai_advisor_logic_changes.js) | W06; L05 |
 
 ### AC-5: Status lines read as one plain statement
@@ -606,24 +677,32 @@ The autotune sentence, for a main table of two or more rows. T is the run time c
 Negative coverage: N1 S-5.4 to S-5.9, S-5.12 to S-5.14 · N2 n/a: no status line refuses anything · N3 S-5.15, S-5.16, S-5.17, S-5.22 to S-5.26 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-5.18 · N6 S-5.19 · N7 S-5.20, S-5.21 · N8 n/a: no edit is held open on the Overview's status lines
 Questions: Q-1
 
-### AC-6: Tenure cards state the missing redundancy once, without names
-Requirement items: R-1, R-24, R-25, R-35, R-42, R-44, R-46
-Rule: When the Retirement tab renders a tenure card, its missing line shall name each missing item once; when the redundancy item's stored reason is the undecided-peer list (it begins "comparison decides nothing for: "), its entry in the missing line shall read "redundancy (not decided: too few shared trading days with the other symphonies; {N} are needed)" if N can be read, every listed peer's aligned-day count is below N and no listed peer carries a gate suffix, and "redundancy (no comparison with the other symphonies reached a result)" otherwise, where N is the fewest aligned days the review's redundancy comparison needs, printed from its derivation and never typed as a literal (Authorities Touched); that stored reason shall be shown, word for word, only inside one closed disclosure on the card, directly after the missing line, whose summary reads "Comparisons that decided nothing"; every evidence cell of an item in the missing list shall read "unavailable" or "not applicable" in its summary with no reason, whether or not the item keeps a shown pair, and its "not used in the verdict" line shall carry no reason; the peers on another basis, listed inside the Redundancy cell's disclosure, shall render as one line "not compared: {k} other symphony, bases differ" or "not compared: {k} other symphonies, bases differ"; and the Redundancy cell shall name its shown pair's sibling ("paired with:" and the pair's figures) only when at least one of the pair's correlation, interval bounds, stressed correlation or holdings overlap holds a number, and otherwise shall name no sibling (D-8).
+### AC-6: Tenure cards say each fact once, without names
+Requirement items: R-1, R-24, R-25, R-35, R-42, R-44, R-46, R-61, R-64, R-65, R-66
+Rule: When the Retirement tab renders a stored tenure review, a card is too-few-days when redundancy is in its stored missing list, its redundancy item's stored reason is the undecided-peer list (it begins "comparison decides nothing for: "), N can be read, every listed peer's aligned-day count is below N and no listed peer carries a gate suffix, where N is the fewest aligned days the review's redundancy comparison needs, printed from its derivation and never typed as a literal (Authorities Touched); when at least one card is too-few-days, exactly one line directly under the tenure run line shall read the CX-15 text with k the number of too-few-days cards, n the number of tenure cards on the tab and N, and when none is, no such line shall show; a too-few-days card's missing line shall leave the redundancy entry out and show only when another item is missing; every card's missing line shall name each item it shows once, and a card that is not too-few-days whose stored redundancy reason is the undecided-peer list shall read its redundancy entry as "redundancy (no comparison with the other symphonies reached a result)"; an undecided-peer list stored as the redundancy reason shall be shown, word for word, once, only inside the Redundancy cell's closed disclosure, and the card shall carry no "Comparisons that decided nothing" disclosure; every evidence cell of an item in the stored missing list shall read "unavailable" or "not applicable" in its summary with no reason, whether or not the item keeps a shown pair, and its "not used in the verdict" line shall carry no reason; the peers on another basis, listed inside the Redundancy cell's disclosure, shall render as one line "not compared: {k} other symphony, bases differ" or "not compared: {k} other symphonies, bases differ"; the Redundancy cell shall name its shown pair's sibling ("paired with:" and the pair's figures) only when at least one of the pair's correlation, interval bounds, stressed correlation or holdings overlap holds a number, and otherwise shall name no sibling (D-8); and the summary of an available Marginal contribution cell shall headline the stored total return difference, that of an available Backtest cell the stored total return gap, each printed as the cell prints that figure at the ref, and that of an available Composite score cell the composite with its value, its 0 to 1 scale and its population count, the word "normalized" once, on one line at 1920, while every other figure of the three cells stays inside the cell's disclosure with its value and wording as at the ref.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
-| S-6.1 | B | the production shape: a keep card whose only missing item is redundancy, whose redundancy item keeps a shown pair, with 6 undecided peers of 153 to 170 aligned days and no gate suffix, N being 181 | the tab renders | the missing line reads exactly "missing: redundancy (not decided: too few shared trading days with the other symphonies; 181 are needed)" |
-| S-6.2 | B | the same card | the tab renders | the Redundancy cell's summary reads "Redundancy" then "unavailable" with no reason (the ref prints the 6 names there); inside, "not used in the verdict" carries no reason, and because the pair's correlation holds a number (0.75 with its interval in production) "paired with:" names the shown sibling with its figures as at the ref (D-8); with every disclosure closed none of the 6 peer names is visible on the card |
+| S-6.1 | B | the production shape: 11 cards, 10 of them too-few-days (undecided peers of 153 to 170 aligned days, no gate suffix, N being 181) and 1 not yet eligible | the tab renders | directly under the tenure run line one line reads exactly "Redundancy not decided for 10 of 11 symphonies: too few shared trading days with the other symphonies; 181 are needed."; the line shows once on the tab |
+| S-6.2 | B | a keep card of the same review whose only missing item is redundancy and whose redundancy item keeps a shown pair, with 6 undecided peers | the tab renders | the card shows no missing line; the Redundancy cell's summary reads "Redundancy" then "unavailable" with no reason (the ref prints the 6 names there); inside, "not used in the verdict" carries no reason, and because the pair's correlation holds a number (0.75 with its interval in production) "paired with:" names the shown sibling with its figures as at the ref (D-8); with every disclosure closed none of the 6 peer names is visible on the card; no "Comparisons that decided nothing" disclosure is on the tab |
 | S-6.23 | N3 | a redundancy item that keeps a shown pair whose correlation, interval bounds, stressed correlation and holdings overlap all hold no number | the tab renders | the Redundancy cell's summary reads "unavailable" with no reason; no "paired with:" line and no sibling name appear anywhere in the cell; its aligned days and gate lines name no symphony |
 | S-6.24 | N1 | a shown pair with only one computed figure, for example holdings overlap with a number and every correlation figure without one | the tab renders | "paired with:" names the sibling, with that one figure |
-| S-6.3 | B | the same card | "Comparisons that decided nothing" is opened by click, by Enter and by Space | it shows the stored reason word for word; it is closed on load and after a reload |
-| S-6.4 | N1 | a listed peer with exactly N aligned days | the tab renders | the line reads "missing: redundancy (no comparison with the other symphonies reached a result)" |
-| S-6.5 | N1 | a listed peer whose stored text carries a gate suffix (", uncertainty gate undefined" or ", structural gate undefined") | the tab renders | the line reads the S-6.4 form |
-| S-6.16 | N1 | exactly one listed peer, with 170 aligned days | the tab renders | the S-6.1 form, unchanged |
-| S-6.22 | N1 | a listed peer whose display name holds a comma, parentheses or the words "aligned days" | the tab renders | the line reads the S-6.1 form when every listed count is below N, else the S-6.4 form; the name shows only inside the disclosure |
-| S-6.6 | B | the production card with missing items redundancy and backtest, no shown pair, the backtest reason "backtest dates do not match the realized window" | the tab renders | "missing: redundancy (not decided: too few shared trading days with the other symphonies; 181 are needed); backtest (backtest dates do not match the realized window)"; the Backtest cell reads "unavailable" with no reason |
-| S-6.7 | N3 | N cannot be read | the tab renders | the line reads the S-6.4 form, with no number |
-| S-6.27 | N7 | the templates and scripts after the change | they are searched next to the tenure line | the number 181 is not typed as a literal; the line prints N from its derivation |
+| S-6.3 | B | the same card | the Redundancy cell's disclosure is opened by click, by Enter and by Space | it shows the stored reason word for word, once; it is closed on load and after a reload |
+| S-6.4 | N1 | a card one of whose listed peers has exactly N aligned days | the tab renders | the card is not too-few-days and is not counted in k; its missing line reads "missing: redundancy (no comparison with the other symphonies reached a result)"; its stored reason shows only inside its Redundancy cell's disclosure |
+| S-6.5 | N1 | a card one of whose listed peers carries a gate suffix (", uncertainty gate undefined" or ", structural gate undefined") | the tab renders | as S-6.4 |
+| S-6.16 | N1 | a card with exactly one listed peer, with 170 aligned days | the tab renders | the card is too-few-days: it is counted in k and its missing line has no redundancy entry |
+| S-6.22 | N1 | a listed peer whose display name holds a comma, parentheses or the words "aligned days" | the tab renders | the card is too-few-days when every listed count is below N, else it reads the S-6.4 form; the name shows only inside the Redundancy cell's disclosure |
+| S-6.6 | B | the production card with missing items redundancy and backtest, no shown pair, the backtest reason "backtest dates do not match the realized window" | the tab renders | the card is counted in k; its missing line reads exactly "missing: backtest (backtest dates do not match the realized window)"; the Backtest and Redundancy cells read "unavailable" with no reason |
+| S-6.7 | N3 | N cannot be read | the tab renders | no card is too-few-days; no line shows under the tenure run line; each card whose stored redundancy reason is the undecided-peer list reads the S-6.4 form, with no number |
+| S-6.27 | N7 | the templates and scripts after the change | they are searched next to the tenure run line and the missing line | the number 181 is not typed as a literal; the CX-15 line prints N from its derivation |
+| S-6.28 | N1 | a review of 11 cards of which exactly 1 is too-few-days | the tab renders | the line reads "Redundancy not decided for 1 of 11 symphonies: too few shared trading days with the other symphonies; 181 are needed." |
+| S-6.29 | N1 | a review of 11 cards with 3 too-few-days cards and 2 cards in the S-6.4 form | the tab renders | the line reads "Redundancy not decided for 3 of 11 symphonies: too few shared trading days with the other symphonies; 181 are needed."; the 3 cards show no redundancy entry; the 2 cards keep the S-6.4 redundancy entry |
+| S-6.30 | N3 | a review in which no card's stored redundancy reason is the undecided-peer list | the tab renders | no line shows under the tenure run line; each card's missing line is as S-6.8 says |
+| S-6.31 | B | an eligible card whose Marginal contribution item is available with a total return difference of 0.32 and a with total return of 24.32 | the tab renders | the cell's summary headlines "total return difference" with 0.32, printed as the cell prints that figure at the ref; "with total return" and its 24.32 show inside the cell's disclosure, wording and value as at the ref (G-47) |
+| S-6.32 | B | the same card's Backtest item, available, with a realized total return of 42.75 and a total return gap | the tab renders | the cell's summary headlines "total return gap" with its value, printed as the cell prints it at the ref; the realized total return shows inside the cell's disclosure (G-48) |
+| S-6.33 | B | the same card's Composite score item, available, with a composite of 0.34 over a population of 10 | the tab renders at 1920 | the cell's summary holds the value 0.34, the scale "0 to 1" and "10 symphonies", contains "normalized" exactly once, and lies on one line (G-49) |
+| S-6.34 | N3 | a Marginal contribution item whose total return difference is null with a stored reason, and a Backtest item whose total return gap is absent | the tab renders | each summary headlines that figure in the not computable or not recorded form the cell prints for it at the ref; no other figure takes its place |
+| S-6.35 | N7 | every figure of the Marginal contribution, Backtest and Composite score cells | the tab renders and each cell is opened | each figure the cell showed at the ref still shows once, in the summary or the disclosure, with the same value (AC-7) |
 | S-6.8 | N3 | a redundancy reason that is not the undecided-peer list ("this symphony has no composite", "no same-basis peer has a composite", "no other symphonies to compare") | the tab renders | the reason prints once, in the missing line, as at the ref; no "Comparisons that decided nothing" disclosure; the cell reads "unavailable" or "not applicable" |
 | S-6.9 | N3 | missing_items absent | the tab renders | no missing line, as at the ref |
 | S-6.19 | N3 | missing_items an empty list | the tab renders | no missing line, as at the ref |
@@ -631,7 +710,7 @@ Rule: When the Retirement tab renders a tenure card, its missing line shall name
 | S-6.21 | N3 | missing_items a string or a mapping | the tab renders | "missing: not recorded", as at the ref |
 | S-6.10 | N3 | an item in the missing list whose cell has no stored reason | the tab renders | the missing line prints "not recorded" for it, as at the ref |
 | S-6.17 | N1 | the production card whose redundancy item keeps no shown pair | the tab renders | its summary reads "unavailable" with no reason, as at the ref; its "not used in the verdict" line carries no reason (the ref prints the peer list there) |
-| S-6.11 | N7 | an evidence item that is not in the missing list | the tab renders | its cell's summary and body are as at the ref |
+| S-6.11 | N7 | an evidence item that is not in the missing list | the tab renders | its cell's summary and body are as at the ref, apart from the Marginal contribution, Backtest and Composite score headlines of S-6.31 to S-6.33 |
 | S-6.18 | N7 | a card whose Marginal contribution cell lists a symphony left out, and the last run's excluded list | each disclosure opens | the "left out" and excluded lines are as at the ref (NB-8, G-25) |
 | S-6.25 | B | a card whose Redundancy cell lists 3 peers on another basis (production holds none) | its disclosure opens | one line reads "not compared: 3 other symphonies, bases differ"; no peer name anywhere on the card, the closed and open disclosures included (the ref prints one line per name, `templates/ai_advisor.html:2192-2197`) |
 | S-6.26 | N1 | exactly one peer on another basis | its disclosure opens | "not compared: 1 other symphony, bases differ" |
@@ -640,11 +719,11 @@ Rule: When the Retirement tab renders a tenure card, its missing line shall name
 | S-6.14 | N6 | the stored review cannot be read | the tab renders | "Review unavailable: the stored review could not be read." as at the ref |
 | S-6.15 | N8 | an approve or reject on a retire-candidate card is in progress | the card is read | the missing line, the disclosure and the cells follow the rule; the lifecycle block behaves as at the ref |
 
-Negative coverage: N1 S-6.4, S-6.5, S-6.16, S-6.17, S-6.22, S-6.24, S-6.26 · N2 n/a: no refusal is added; Run tenure review's refusal is unchanged (S-7.5) · N3 S-6.7, S-6.8, S-6.9, S-6.10, S-6.19, S-6.20, S-6.21, S-6.23 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-6.13 · N6 S-6.14 · N7 S-6.11, S-6.12, S-6.18, S-6.27 · N8 S-6.15
+Negative coverage: N1 S-6.4, S-6.5, S-6.16, S-6.17, S-6.22, S-6.24, S-6.26, S-6.28, S-6.29 · N2 n/a: no refusal is added; Run tenure review's refusal is unchanged (S-7.5) · N3 S-6.7, S-6.8, S-6.9, S-6.10, S-6.19, S-6.20, S-6.21, S-6.23, S-6.30, S-6.34 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-6.13 · N6 S-6.14 · N7 S-6.11, S-6.12, S-6.18, S-6.27, S-6.35 · N8 S-6.15
 Questions: none
 
 ### AC-7: No figure, control, contract or protected surface changes
-Requirement items: R-29, R-31, R-34, R-35
+Requirement items: R-29, R-31, R-34, R-35, R-71
 Rule: If this change is applied, then every figure, control, route, JSON body, database read and write, banner meaning, honesty text, engine file and migration shall stay as it is at c0760e70, apart from the copy and layout this plan's tables and AC-5 and AC-6 name.
 
 | ID | Kind | Given | When | Then |
@@ -655,7 +734,10 @@ Rule: If this change is applied, then every figure, control, route, JSON body, d
 | S-7.4 | N7 | the honesty text: every basis label, window label, as-of stamp, caveat and exclusion reason | each host renders | each is present, word for word, in its place or, for the F16 and guardrail sentences, in the Glossary |
 | S-7.5 | N2 | Run recommender or Run tenure review chosen while the market is open | the route answers 409 | the refusal text is the same as at the ref |
 | S-7.6 | N7 | `alpha_bot_execution.py`, `math_engine.py`, `database.py`, `advisors/tenure_review.py`, `migrations/` | a test hashes each file with line endings normalized to LF | each SHA-256 equals its value at c0760e70; no route signature or scheduler slot changes |
-| S-7.7 | N7 | `tests/app/test_dashboard_no_order_path.py` and every `tests/security/*no_trade_boundary*.py` | they run | they pass unchanged |
+| S-7.7 | N7 | `tests/app/test_dashboard_no_order_path.py` and every `tests/security/*no_trade_boundary*.py` | they run | they pass; each file is unchanged apart from added entries in its lists of functions to scan (G-54), and no entry or assertion is removed or loosened |
+| S-7.16 | N7 | the page-copy resolver that supplies N to the AC-6 line on every AI Advisor load | the no-trade-boundary scans run | the resolver is an entry the scans walk, covered by the list's non-vacuity check, and the scans pass (G-54, CR-4) |
+| S-7.17 | N7 | the stylesheets of every in-scope template and `static/` after the change | each selector this slice's removals left behind is matched against the rendered hosts | no selector that matched an element at the ref and matches none after the change remains, and no comment describes removed markup (G-54, CR-1) |
+| S-7.18 | N7 | the Retirement row's context value | the Overview renders | the value carries only the keys the page reads; the unread "text" key is gone and the row prints as S-2.4 (G-54, CR-2) |
 | S-7.8 | N4 | no session | each host is requested | the HTML request redirects to `/login` and an `/api/` or XHR request gets 401, as at the ref |
 | S-7.9 | N7 | every host in light and dark themes | it renders | only existing tokens, the two font weights 400 and 500 and the existing type sizes are used; every text keeps the contrast the ref's contrast tests require |
 | S-7.10 | N7 | the login page, the logout confirm page and a Discord post | each is produced | each is byte-identical to the ref |
@@ -665,7 +747,7 @@ Rule: If this change is applied, then every figure, control, route, JSON body, d
 | S-7.14 | N6 | `/api/state`, `/api/performance` or `/api/history/N` answers 500 | the page's refresh runs | the page shows the ref's error state |
 | S-7.15 | N1 | figures at the edge of their formats: a negative, a zero, the longest value in the copy, and a dash | each host renders | each prints as at the ref, in its aligned column |
 
-Negative coverage: N1 S-7.15 · N2 S-7.5 · N3 S-7.11 · N4 S-7.8 · N5 S-7.13 · N6 S-7.14 · N7 S-7.1 to S-7.4, S-7.6, S-7.7, S-7.9, S-7.10 · N8 S-7.12
+Negative coverage: N1 S-7.15 · N2 S-7.5 · N3 S-7.11 · N4 S-7.8 · N5 S-7.13 · N6 S-7.14 · N7 S-7.1 to S-7.4, S-7.6, S-7.7, S-7.9, S-7.10, S-7.16, S-7.17, S-7.18 · N8 S-7.12
 Questions: none
 
 ### AC-8: Narrow widths keep the stacked forms
@@ -705,6 +787,27 @@ Rule: When the branch is ready to deploy, the PM shall take full-page screenshot
 Negative coverage: N1 S-9.5 · N2 S-9.2, S-9.3, S-9.4 · N3 S-9.6 · N4 n/a: the check is run by the PM on a read-only local server · N5 n/a: a second run replaces the record for the same SHA · N6 n/a: a server that cannot start leaves no screenshots and so no deploy · N7 S-9.7 · N8 n/a: no edit state
 Questions: Q-7
 
+### AC-10: Nothing is clipped and the header never widens a page
+Requirement items: R-52, R-54, R-55, R-60
+Rule: When an in-scope host renders at each width of Table W, every figure and label of the TT-1 comparison rows, α included, and of the TT-14, TT-31 and TT-32 result cards shall lie wholly inside the inner edges of the box or card that holds it, a result card's Variant column sitting under its Baseline column when the card is too narrow for both side by side; the TT-5 exit turnover table shall fit its panel's content width, with no scroll inside the panel and every header text whole; and no page shall be wider than the viewport because of the header, with Emergency Liquidate lying wholly inside the viewport whatever the header's engine label reads.
+
+| ID | Kind | Given | When | Then |
+|---|---|---|---|---|
+| S-10.1 | B | the seeded dashboard | `/` renders at each Table W width, 1001 included | every label, Bot, Held and α figure of the four comparison rows lies wholly inside the bordered box (G-35; at 1001 the review saw α cut by the box edge) |
+| S-10.2 | B | a swap result and a logic-change result, each with five cards | each tab renders its result at each Table W width | every label and value of Baseline and Variant lies wholly inside its card; where both columns do not fit side by side, Variant sits under Baseline and each column keeps S-1.19 (G-38) |
+| S-10.3 | B | 11 exit turnover rows | `/performance` renders at each Table W width, 1001 included | the table's right edge lies inside the panel's content edge; no scroll bar or hidden overflow is inside the panel; "Est. annual trading-cost drag" and every other header show whole; every drag figure is visible (G-43) |
+| S-10.4 | B | each in-scope page | it renders at each Table W width and at 1460 | the document's `scrollWidth` equals the viewport width; Emergency Liquidate's box lies wholly inside the viewport (G-37; the ref's header band at `templates/_chrome.html:121`) |
+| S-10.5 | N1 | the header's engine label short (for example "Degraded") and the longest label the header can show | each page renders at 1401, 1420, 1440 and 1460 | S-10.4 holds for both labels |
+| S-10.6 | N1 | comparison-row and result-card figures at the edge of their formats: a negative, a zero, the longest value and a dash | each host renders at 1001 and 1120 | each figure lies wholly inside its box or card |
+| S-10.7 | N5 | the dashboard poll runs three times and the window picker moves from 30d to 1y and back | `/` is measured again at 1001 and 1920 | S-10.1 still holds |
+| S-10.8 | N6 | `/api/state` answers 500 on a poll | `/` shows its error state | the comparison rows' dashes and figures still lie inside the box |
+| S-10.9 | N3 | no turnover rows, no swap result and no logic-change result | each host renders | each empty state shows as at the ref, inside its panel |
+| S-10.10 | N7 | each page at 1366 and 1500, where the ref has no sideways scroll | it renders | S-10.4 still holds; the header's controls are present as at the ref (S-7.2) |
+| S-10.11 | N8 | a logic-change Evaluate pressed while earlier result cards show | the new results replace them | every new card meets S-10.2 |
+
+Negative coverage: N1 S-10.5, S-10.6 · N2 n/a: layout refuses nothing · N3 S-10.9 · N4 n/a: unchanged auth hook (S-7.8) · N5 S-10.7 · N6 S-10.8 · N7 S-10.10 · N8 S-10.11
+Questions: none
+
 ## Rule-by-Entry-Point Matrix
 | Rule | Server first paint | Page script refresh or poll | Host the page script builds (Settings overrides, settings modal) | Below 1001 px |
 |---|---|---|---|---|
@@ -715,6 +818,7 @@ Questions: Q-7
 | AC-5 autotune sentence and N/A columns | n/a: the page script alone writes the table | S-5.1, S-5.18 | n/a: those hosts carry no autotune rows | S-8.2 |
 | AC-5 verification count line | S-5.11 | n/a: the Overview does not re-render it | n/a: those hosts carry no verification line | S-8.2 |
 | AC-6 tenure counts | S-6.1 | S-6.13 | n/a: those hosts carry no tenure cards | S-8.2 |
+| AC-10 nothing clipped | S-10.1, S-10.4 | S-10.2, S-10.7 | n/a: Settings and the settings modal carry none of the AC-10 groups; the header above Settings is server rendered and covered by S-10.4 | n/a: below 1001 px AC-8 S-8.1 holds the viewport rule |
 
 ## Not Building
 Non-goals:
@@ -725,7 +829,7 @@ Non-goals:
 - NB-5: No change to how the stored tenure review words its reasons; the card renders the stored text differently (AC-6).
 
 Behaviour that stays exactly as it is:
-- NB-6: Every Copy table C label of the earlier plan except MU5 (CX-10).
+- NB-6: Every Copy table C label of the earlier plan except MU5 (CX-10) and Y14b, whose disclosure is removed and whose definitions are History Glossary lines (CX-19).
 - NB-7: The header's definitions, carried as titles (copy.json rows H02, H07 to H10).
 - NB-8: The "left out" lines of the Marginal contribution cell and the last run's excluded list, which name symphonies with their reasons; G-25 keeps them (S-6.18). The "not compared" lines are covered by AC-6 (S-6.25).
 - NB-9: The order of sections on every host, and the CVaR and Managed sleeves panels sharing one row where the ref places them: each is a whole panel in its own box, so no text sits in another section's column (D-10). The Retirement subsections stop sharing a row (AC-2, S-2.18).
@@ -733,27 +837,31 @@ Behaviour that stays exactly as it is:
 
 Deferred:
 - NB-11: A proper table for the dashboard detail panel's Risk Profile, which static/index.js fills with rows that are not a table element; it is outside Table T (approved by the PM [PM-ASSUMED]: a follow-up if the PM's visual check finds it misaligned).
+- NB-14: The slice review's backlog (G-55), each item a follow-up, not a criterion of this plan: the Glossary script's whole-document rescan on each change (CR-5, measured first); the second copies of the producer's floor and reason format, pinned by drift tests (CR-3, accepted); the Logic Changes cards' twice-said N=1 and unrounded figures (UX-17, figure formatting frozen by AC-7); the status text at a panel header's far end outside Table L (UX-20); the stretched Asset Swaps and Strategy Builder form fields (UX-22); the Flask review's A1 (the no-number form when N cannot be read) and A2 (a private producer name read across modules); the older page-copy resolvers no no-trade scan reaches; and the Overview symphony picker firing the suggest request on change (C-11, pre-existing). Approved by the PM [PM-ASSUMED] (G-55).
 
 Protected surfaces consumed but not changed:
 - NB-12: `alpha_bot_execution.py`, `math_engine.py`, `database.py`, `advisors/tenure_review.py` and `migrations/` (S-7.6).
-- NB-13: The no-trade boundary: the panic-sell route `/api/sell_account` is the only dashboard trade path; the proposal-approve route alone reaches Composer symphony creation and creates an undeployed symphony; the Managed Sleeves arming ladder; `LIVE_EXECUTION` and credentials stay out of the settings allowlist. `tests/app/test_dashboard_no_order_path.py` and every `tests/security/*no_trade_boundary*.py` run unchanged (S-7.7).
+- NB-13: The no-trade boundary: the panic-sell route `/api/sell_account` is the only dashboard trade path; the proposal-approve route alone reaches Composer symphony creation and creates an undeployed symphony; the Managed Sleeves arming ladder; `LIVE_EXECUTION` and credentials stay out of the settings allowlist. `tests/app/test_dashboard_no_order_path.py` and every `tests/security/*no_trade_boundary*.py` run, changed only by added scan entries (S-7.7, S-7.16).
 
 ## Defect Classes
 | DC-n | Class (what goes wrong) | Trigger (B or N1-N8) | Sibling search (tool, query, scope) | Scenarios | Raised in review as |
 |---|---|---|---|---|---|
 | DC-1 | A rule holds on the server render and is lost when a script re-renders the same element | N5 | grep `innerHTML\|textContent\|createElement` in static/ai_advisor.js, static/index.js, static/performance.js, static/history.js, static/settings.js, static/settings-modal.js against every Table T, Table F and Copy table row | S-1.15, S-3.10, S-4.10, S-5.18, S-6.13 | none yet |
-| DC-2 | The fix lands on one host or tab and misses a sibling | N7 | grep `What the terms mean`, `data-terms`, `data-explainer`, `<table`, `role="table"`, `stats-table`, `justify-content: space-between`, `margin-left: auto` in templates/ and static/ | S-1.1, S-2.2, S-4.3 | none yet |
+| DC-2 | The fix lands on one host or tab and misses a sibling | N7 | grep `What the terms mean`, `data-terms`, `data-explainer`, `<table`, `role="table"`, `stats-table`, `justify-content: space-between`, `margin-left: auto` in templates/ and static/ | S-1.1, S-2.2, S-4.3, S-2.23, S-2.24, S-4.16 | UX-6, UX-7, UX-19 (9413e491) |
 | DC-3 | A narrow assertion licenses an unlisted sibling of a family (zero and non-zero counts; one, several and equal peer counts; each outcome label) | N1 | the AC-5 and AC-6 scenario families listed whole | S-5.2 to S-5.16, S-6.3 to S-6.5 | none yet |
 | DC-4 | A shortened sentence says something the code does not do | B | for each Copy table A and G2 row, read its "True of" citation at the ref | S-3.1, S-4.5 | none yet |
-| DC-5 | Old text survives in a hidden tab panel or a second copy of a string | N7 | grep each removed sentence's distinctive words in templates/, static/ and app.py | S-3.3 | none yet |
-| DC-6 | A layout fixed at one width breaks at another media-query band | N1 | list every `@media` in templates/*.html, static/layout.css and static/tokens.css and measure at each Table W width | S-1.3, S-2.2, S-8.4 | none yet |
+| DC-5 | Old text survives in a hidden tab panel or a second copy of a string | N7 | grep each removed sentence's distinctive words in templates/, static/ and app.py | S-3.3, S-3.17, S-3.19 | UX-11, UX-16 (9413e491) |
+| DC-6 | A layout fixed at one width breaks at another media-query band | N1 | list every `@media` in templates/*.html, static/layout.css and static/tokens.css and measure at each Table W width | S-1.3, S-2.2, S-8.4, S-10.3 | UX-9 (9413e491) |
 | DC-7 | A script-built header lacks the title its template sibling carries | B | grep `columnheader` and `<th` in static/*.js against Table G3 | S-4.8 | none yet |
 | DC-8 | Reading aligned days from a stored text misreads a name that holds a comma, parentheses or the words "aligned days" | N1 | the stored reason format at `advisors/tenure_review.py:1500-1540` | S-6.22 | none yet |
+| DC-9 | A content-width layout fixed for one band clips a figure, overflows its box or leaves a bar short at another | N1 | grep `max-content`, `nowrap`, `contain: inline-size`, `overflow: hidden` and `minmax(0,1fr)` in templates/ and static/, then measure each AC-10 group at each Table W width | S-2.22, S-10.1, S-10.2, S-10.3, S-10.6 | UX-1, UX-4, UX-8, UX-9 (9413e491) |
+| DC-10 | One fleet-wide fact is printed on every card or line of a repeated group | B | for each TT group, collect the text each row or card shows and list any sentence shown identically on two or more | S-6.1, S-6.2 | UX-10 (9413e491) |
+| DC-11 | A summary headline shows the first stored figure rather than the item's own figure | B | read the headline rule of each tenure evidence item against its figure list at `advisors/tenure_review.py:167-196` | S-6.31, S-6.32, S-6.33 | UX-13, UX-14, UX-15 (9413e491) |
 
 ## Worked Example
 The Overview of the production database copy at 1920 px. The tab bar stands alone in its row. Under the tab bar the Overview shows O03, then the toolbar with the symphony picker, Run Claude advisor and "No suggestions yet." (S-2.3). Under "Recent autotune runs" one sentence reads "Latest run 2026-11-06 19:08 ET: every symphony kept its previous settings." and one table follows with the header "Symphony | Runs without adopting a tuned config" and 12 rows below it, such as "Example Northwind Rotation | 4" (S-5.1, S-1.5); "38 older runs from the 50 most recent" closes it (S-5.10). Market Prism's verification reads "15 of 18 verified" and "3 unverifiable", then "Show all checks" (S-5.11). Advisor observations ends with the row "Retirement | last run 2026-11-09 22:51 ET, 0 recommendations, 0 pending | Open tab" (S-2.4). The tab ends with "Glossary", closed (S-4.2).
 
-The main failure case: the Retirement tab, where a keep card for an invented symphony "Example Harbor Ladder" has redundancy undecided against 6 peers. The ref shows the 6 names twice; after the change its missing line reads "missing: redundancy (not decided: too few shared trading days with the other symphonies; 181 are needed)", the Redundancy cell reads "Redundancy unavailable", and the 6 names show only when "Comparisons that decided nothing" is opened (S-6.1, S-6.2, S-6.3).
+The main failure case: the Retirement tab, where a keep card for an invented symphony "Example Harbor Ladder" has redundancy undecided against 6 peers. The ref shows the 6 names twice; after the change one line under the tenure run line reads "Redundancy not decided for 10 of 11 symphonies: too few shared trading days with the other symphonies; 181 are needed.", the card shows no missing line, the Redundancy cell reads "Redundancy unavailable", and the 6 names show only when the Redundancy cell is opened (S-6.1, S-6.2, S-6.3). Its Marginal contribution summary reads its own total return difference, not the portfolio's with total return (S-6.31).
 
 ## Fail-Closed Behaviour
 none: no input is judged and nothing refuses; a value the copy cannot read falls back to its whole fallback phrase (Values table), and the existing 409 refusals of Run recommender and Run tenure review are unchanged (S-7.5).
@@ -767,6 +875,8 @@ none: no input is judged and nothing refuses; a value the copy cannot read falls
 | the autotune row limit in the older-runs summary | the route's row limit, 50 (`static/ai_advisor.js:725-728`) | the same value | S-5.10 |
 | N, the fewest aligned days the tenure review's redundancy comparison needs | the review's own floor, `max(_structural_needs_days(), retirement_recommender.MIN_OBS_FLOOR)` (`advisors/tenure_review.py:1533`), derived from the named constants `MIN_OBS_FLOOR`, `STRESS_MIN_OBS` and `STRESS_WINDOW_FRACTION` (`advisors/retirement_recommender.py:65`, `:88`, `:97`); 181 at the ref (feature-plans/symphony-tenure-review.md S-3.2); not in the page context at the ref, so Gate 2 says how it reaches the page; it is not stored in the review row | the printed list of names | S-6.1, S-6.7; KU-1 |
 | each listed peer's aligned days and gate suffix | the stored redundancy reason (`advisors/tenure_review.py:1500-1540`) | the same text, now read rather than printed | S-6.4, S-6.5, S-6.22 |
+| k and n of the CX-15 line | k: the cards that pass the same too-few-days test the cards use (AC-6); n: the tenure cards of the stored review shown on the tab | the per-card redundancy line | S-6.1, S-6.28, S-6.29; one test decides both the count and each card's form |
+| the Marginal contribution, Backtest and Composite score headlines | the stored figures `total_return_difference`, `total_return_gap` and `composite` with its stored population (`advisors/tenure_review.py:177-196`) | the first stored figure of each item | S-6.31 to S-6.35; no figure is computed on the page |
 | the Retirement row's verdict text | the pointer context the page already reads (`app.py:7298`, `_build_retirement_pointer`) | the toolbar link | S-2.4, S-2.11, S-2.12 |
 
 ## Contract Changes and Consumers
@@ -807,15 +917,16 @@ none: no runtime, service or provider is added; the browser tests use the existi
 ## Definition of Done (Verification)
 | AC | Scenarios | Test level | Real-entrypoint test |
 |---|---|---|---|
-| AC-1 | S-1.1, S-1.2, S-1.3, S-1.4, S-1.5, S-1.6, S-1.7, S-1.8, S-1.9, S-1.10, S-1.11, S-1.12, S-1.13, S-1.14, S-1.15, S-1.16, S-1.17, S-1.18, S-1.19, S-1.20, S-1.21 | browser layout tests on rendered pages | each host requested through the Flask app and measured in the browser |
-| AC-2 | S-2.1, S-2.2, S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.10, S-2.11, S-2.12, S-2.13, S-2.14, S-2.15, S-2.16, S-2.17, S-2.18, S-2.19, S-2.20 | browser layout tests | the same |
-| AC-3 | S-3.1, S-3.2, S-3.3, S-3.4, S-3.5, S-3.6, S-3.7, S-3.8, S-3.9, S-3.10, S-3.11, S-3.12, S-3.13, S-3.14 | template render tests and browser tests | `GET` of each host through the Flask test client and in the browser |
-| AC-4 | S-4.1, S-4.2, S-4.3, S-4.4, S-4.5, S-4.6, S-4.7, S-4.8, S-4.9, S-4.10, S-4.11, S-4.12, S-4.13, S-4.14, S-4.15 | template render tests and browser tests | the same, with the modal and detail panel opened by their real controls |
+| AC-1 | S-1.1, S-1.2, S-1.3, S-1.4, S-1.5, S-1.6, S-1.7, S-1.8, S-1.9, S-1.10, S-1.11, S-1.12, S-1.13, S-1.14, S-1.15, S-1.16, S-1.17, S-1.18, S-1.19, S-1.20, S-1.21, S-1.22 | browser layout tests on rendered pages | each host requested through the Flask app and measured in the browser |
+| AC-2 | S-2.1, S-2.2, S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.10, S-2.11, S-2.12, S-2.13, S-2.14, S-2.15, S-2.16, S-2.17, S-2.18, S-2.19, S-2.20, S-2.21, S-2.22, S-2.23, S-2.24, S-2.25, S-2.26, S-2.27 | browser layout tests | the same |
+| AC-3 | S-3.1, S-3.2, S-3.3, S-3.4, S-3.5, S-3.6, S-3.7, S-3.8, S-3.9, S-3.10, S-3.11, S-3.12, S-3.13, S-3.14, S-3.15, S-3.16, S-3.17, S-3.18, S-3.19 | template render tests, script tests on the logic-change card and browser tests | `GET` of each host through the Flask test client and in the browser |
+| AC-4 | S-4.1, S-4.2, S-4.3, S-4.4, S-4.5, S-4.6, S-4.7, S-4.8, S-4.9, S-4.10, S-4.11, S-4.12, S-4.13, S-4.14, S-4.15, S-4.16, S-4.17 | template render tests and browser tests | the same, with the modal and detail panel opened by their real controls |
 | AC-5 | S-5.1, S-5.2, S-5.3, S-5.4, S-5.5, S-5.6, S-5.7, S-5.8, S-5.9, S-5.10, S-5.11, S-5.12, S-5.13, S-5.14, S-5.15, S-5.16, S-5.17, S-5.18, S-5.19, S-5.20, S-5.21, S-5.22, S-5.23, S-5.24, S-5.25, S-5.26 | script tests on static/ai_advisor.js and render tests of the verification line | the Overview in the browser fed by `GET /api/autotune-runs` |
-| AC-6 | S-6.1, S-6.2, S-6.3, S-6.4, S-6.5, S-6.6, S-6.7, S-6.8, S-6.9, S-6.10, S-6.11, S-6.12, S-6.13, S-6.14, S-6.15, S-6.16, S-6.17, S-6.18, S-6.19, S-6.20, S-6.21, S-6.22, S-6.23, S-6.24, S-6.25, S-6.26, S-6.27 | template render tests | `GET /ai-advisor` with a stored tenure review |
-| AC-7 | S-7.1, S-7.2, S-7.3, S-7.4, S-7.5, S-7.6, S-7.7, S-7.8, S-7.9, S-7.10, S-7.11, S-7.12, S-7.13, S-7.14, S-7.15 | byte-equality, hash and diff tests | the route requests of S-7.3 |
+| AC-6 | S-6.1, S-6.2, S-6.3, S-6.4, S-6.5, S-6.6, S-6.7, S-6.8, S-6.9, S-6.10, S-6.11, S-6.12, S-6.13, S-6.14, S-6.15, S-6.16, S-6.17, S-6.18, S-6.19, S-6.20, S-6.21, S-6.22, S-6.23, S-6.24, S-6.25, S-6.26, S-6.27, S-6.28, S-6.29, S-6.30, S-6.31, S-6.32, S-6.33, S-6.34, S-6.35 | template render tests, and a browser test for the one-line S-6.33 | `GET /ai-advisor` with a stored tenure review |
+| AC-7 | S-7.1, S-7.2, S-7.3, S-7.4, S-7.5, S-7.6, S-7.7, S-7.8, S-7.9, S-7.10, S-7.11, S-7.12, S-7.13, S-7.14, S-7.15, S-7.16, S-7.17, S-7.18 | byte-equality, hash, diff and scan tests | the route requests of S-7.3 |
 | AC-8 | S-8.1, S-8.2, S-8.3, S-8.4, S-8.5, S-8.6, S-8.7, S-8.8, S-8.9, S-8.10 | browser tests at 390, 320 and 1000 | each host in the browser |
 | AC-9 | S-9.1, S-9.2, S-9.3, S-9.4, S-9.5, S-9.6, S-9.7 | PM manual check | the PM's screenshots of the deploy SHA |
+| AC-10 | S-10.1, S-10.2, S-10.3, S-10.4, S-10.5, S-10.6, S-10.7, S-10.8, S-10.9, S-10.10, S-10.11 | browser layout tests at each Table W width | each host requested through the Flask app and measured in the browser, the result cards fed through their real Evaluate controls |
 
 Gates: `ruff format --check`, `ruff check`, a scoped pytest run over the touched test folders (never `-n auto` and never more than 4 workers), CI green on the exact SHA, then the PM's live functional check after the code review, then AC-9. Tests-green is necessary and never sufficient.
 
@@ -864,6 +975,10 @@ The operator reads each page without finding a header off its column or a senten
 | D-9 | Row groups classed not-table get the same-offset rule, not a header row | G-22 |
 | D-10 | The Retirement subsections stack; the CVaR and Managed sleeves panels keep sharing a row | G-23 withdraws the script-measured pairing; CVaR and sleeves are two whole panels in their own boxes, placed side by side by the page grid, not by a measured fill rule |
 | D-11 | The tenure line's count is N, the aligned days required, not the number of peers | G-18 asks for the required count; the peer count needs a parse of names, and the stored list stays in the disclosure |
+| D-12 | In the CX-15 line, n is the number of tenure cards on the tab (11 in production, the not-yet-eligible card included) and k the cards that pass the card's too-few-days test; a card whose undecided-peer reason fails that test keeps the AC-6 missing line and is not counted | G-44 names k's test but not n; the reader counts the cards on screen, and a card that fails the test is "any other redundancy reason" under G-44 |
+| D-13 | The CX-15 slot for N is written {needs_days} in the copy table | the copy extractor reads lower-case slot names; the text is the reviewer's wording with N in that slot (G-44) |
+| D-14 | Chat says how a conversation opens in T02 alone; the default state's title is removed rather than T02 reworded | T02 names the real buttons and where they sit; the title's "recommendation or diagnostic figure" is the less exact of the two (G-50) |
+| D-15 | The Composite summary's exact wording is left to Gate 2 within S-6.33's bounds: its value, "0 to 1", the population count, "normalized" once, one line at 1920 | G-49 fixes what the line says, not its words; the stored unit "score (0 to 1, fleet-normalized)" (`advisors/tenure_review.py:164`) is what doubles it |
 
 ## Docs to Update
 - `docs/generated/page_explainers.md` (the copy, the Glossary and the withdrawn density rule), `docs/generated/app.md` (the verification count line), `docs/generated/static_ai_advisor_js.md` or the file that documents static/ai_advisor.js (the autotune sentence and columns), and one file per other touched module.
@@ -874,3 +989,4 @@ The operator reads each page without finding a header off its column or a senten
 
 ## Follow-Ups
 - NB-11 (detail panel Risk Profile as a table): tracked as a backlog line if the AC-9 check flags it.
+- NB-14, the slice review's backlog (G-55), one backlog line each: CR-5 (the Glossary script rescans the whole document on each change; measure on the dashboard and Overview polls first); CR-3 (accepted: the producer's floor and reason format are restated at render, pinned by drift tests); UX-17 (Logic Changes cards say N=1 twice, and print 16-digit figures, which AC-7 freezes); UX-20 (the Atlas cache badge on Managed sleeves and the detail panel footer note at a header's far end, outside Table L); UX-22 (Asset Swaps and Strategy Builder form fields stretched across the panel); Flask A1 (the no-number form when N cannot be read) and A2 (a private producer name read across modules); the older page-copy resolvers no no-trade scan reaches; C-11 (choosing a symphony on the Overview fires the suggest request).
