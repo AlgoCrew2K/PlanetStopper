@@ -38,7 +38,9 @@ from tests.ui._shell_support import (  # noqa: F401  (the overrides and the empt
     _stub_database_load_state_for_advisor_routes,
     _stub_get_api_state_dict,
 )
+from tests.ui.test_page_copy_advisor import _sentences
 from tests.ui.test_page_explainers_cross_host import render_hosts
+from tests.ui.test_page_explainers_dashboard_browser import _slots
 
 # host name (the fixture's key and the macro's argument) -> (page, the element the Glossary ends)
 HOSTS = {
@@ -51,19 +53,6 @@ HOSTS = {
 PAGES = ("/", "/performance", "/history", "/settings")
 WORLDS = ("empty", "full")
 SUMMARY = "Glossary"
-
-
-def _plain(value: float) -> str:
-    return f"{value:.6f}".rstrip("0").rstrip(".")
-
-
-def _slots() -> dict[str, str]:
-    import autotuner
-
-    return {
-        "shadow_retention_days": "180",
-        "friction_pct": _plain(autotuner.SIM_EXIT_FRICTION_PCT),
-    }
 
 
 def _page(world: str, path: str, tmp_path, monkeypatch):
@@ -83,10 +72,6 @@ def _without_glossaries(page) -> str:
     for glossary in clone.select('details[data-terms="glossary"]'):
         glossary.decompose()
     return adv.norm(clone.get_text(" "))
-
-
-def _sentences(text: str) -> list[str]:
-    return [s for s in re.split(r"(?<=[.?!])\s+", adv.norm(text)) if s]
 
 
 def _line_text(line: dict) -> str:
