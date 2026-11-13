@@ -6634,7 +6634,7 @@ def _set_reason(stored: dict, reason: str) -> None:
     stored["evidence"]["redundancy"]["reason"] = reason
 
 
-def _expect_cards(client, record: dict, needed: int = NEEDED) -> pb.Node:
+def _expect_cards(client, record: dict, needed: int | None = NEEDED) -> pb.Node:
     """The panel of a stored record with every card checked against the plan's rule for the
     missing line: each stored item once, a too-few-days redundancy left out, no line when nothing
     else is missing. Returns the panel."""
@@ -7083,7 +7083,9 @@ class TestTheResolverFailingLeavesNoFleetLineAndEveryCardInTheNoResultForm:
             raising if failure == "raises" else (lambda: sys.maxsize),
         )
         _, _, card = _keep_card(client, record)
-        panel = _panel(client)
+        # no card is too-few-days without a number to compare against: every card follows the plan's
+        # rule for it (the oracle reads a missing number as none), and the stored list sits in the cell
+        panel = _expect_cards(client, record, None)
         assert _fleet_lines(panel) == [] and _FLEET_START not in panel.text()
         line = card.find("tenure-review-missing").text()
         assert line == _NO_RESULT_LINE, line
