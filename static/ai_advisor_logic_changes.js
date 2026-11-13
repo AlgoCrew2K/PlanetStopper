@@ -140,7 +140,7 @@
             statsHtml = `
             <div class="stats-grid">
               <div>
-                <div class="stats-col-label">Baseline</div>
+                <div class="stats-col-label" data-glossary="L05">Baseline</div>
                 <div class="stat-row">
                   <span class="stat-label">Sharpe</span>
                   ${_statVal(b.sharpe_ratio, true)}
@@ -159,7 +159,7 @@
                 </div>
               </div>
               <div>
-                <div class="stats-col-label">Variant</div>
+                <div class="stats-col-label" data-glossary="L05">Variant</div>
                 <div class="stat-row">
                   <span class="stat-label">Sharpe</span>
                   ${_statVal(v.sharpe_ratio, true)}

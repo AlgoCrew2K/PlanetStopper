@@ -710,26 +710,10 @@
         /* No run yet (or a refused or failed one): nothing to show, so no band between the propose card and the rejected list. */
         #sb-run-results:empty { display: none; }
         .proposal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 12px; }
-        /* Cards that wrap onto a last row stretch across it, so the grid holds no empty cell. */
-        .proposal-cards--fill { display: flex; flex-wrap: wrap; }
-        .proposal-cards--fill > .proposal-card { flex: 1 1 min(100%, 22rem); min-width: 0; container-type: inline-size; }
-        /* A card at least 44 rem wide lays its figures on the left and its overlay line and actions on
-           the right; a narrower one stacks them. */
-        @container (min-width: 44rem) {
-            /* Three columns: the figures, the overlay lines and the actions. The two narrow ones sit level
-               with the middle of the figures, so no block wider than its text lies beside them. */
-            .proposal-card-body { display: grid; grid-template-columns: minmax(0, 1fr) 18rem 18rem; gap: 0 24px; align-items: center; }
-            .proposal-card-body > .fr-card-flow { flex-direction: column; align-items: flex-start; }
-            .sym-card.proposal-card .proposal-card-body > .proposal-actions { margin-top: 0; flex-direction: column; align-items: flex-start; gap: 12px; }
-        }
-        /* A stretched card keeps its short lines in rows that fill its width instead of down its left edge. */
         .fr-card-flow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
         .fr-card-flow > * { min-width: 0; }
         .fr-card-flow > .fr-line { margin: 0; }
         .fr-card-flow > .backtest-error { flex: 1 1 100%; }
-        .proposal-cards--fill .proposal-actions { justify-content: flex-end; }
-        /* Equal columns: a stretched card's labels and figures stay close, with no wide gap between them. */
-        .proposal-cards--fill .stats-table { table-layout: fixed; }
         /* The build panel's button and its note share a row. */
         .run-controls-panel--inline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
         .run-controls-panel--inline > .run-controls-header { flex: 1 1 100%; }
@@ -773,6 +757,20 @@
         .stats-table th { font-size: 12px; font-weight: 400; color: var(--studio-ink-dim); padding: 4px 8px 4px 0; border-bottom: 1px solid var(--studio-border); text-align: left; }
         .stats-table td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--studio-border); color: var(--studio-ink); font-variant-numeric: tabular-nums; }
         .stats-table td:first-child { font-size: 12px; color: var(--studio-ink-dim); font-weight: 400; }
+        @media (min-width: 1001px) {
+            /* Fixed columns: Metric has one width and the figure columns share the rest equally, so
+               every column sits at the same offset on every card whatever the figures print. Figures
+               and their headers end at the column's right edge. */
+            .stats-table { table-layout: fixed; }
+            .stats-table th:first-child { width: 8.5rem; }
+            .stats-table th:not(:first-child), .stats-table td:not(:first-child) { text-align: right; }
+            /* A result card's Baseline and Variant columns: a label track and a value track sized to
+               their content, the value on the right of its track. */
+            .stats-grid > div { display: grid; grid-template-columns: max-content max-content; justify-content: start; gap: 6px 12px; align-content: start; }
+            .stats-grid > div > .stats-col-label { grid-column: 1 / -1; }
+            .stats-grid .stat-row { display: contents; }
+            .stats-grid .stat-value { text-align: right; }
+        }
         .stat-pos { color: var(--studio-pos); }
         .stat-neg { color: var(--studio-neg); }
         .stat-nil { color: var(--studio-ink-muted); }
@@ -1835,13 +1833,7 @@
              data-tab="correlations"
              class="tab-panel">
 
-            <p class="adv-explainer" data-explainer="C01">How closely your symphonies' daily returns move together, from the latest successful retirement run; this tab only measures. Two symphonies that move as one add risk without adding diversification; the Retirement tab uses this to suggest which one to drop.</p>
-            <details class="hp-more" data-terms="C01">
-                <summary>What the terms mean</summary>
-                <p data-term="C05">Correlation: a number from minus 1 to 1 for how closely two return series move together; 1 is in lockstep and 0 is unrelated.</p>
-                <p data-term="C03">Stored no pairs: the run analysed the symphonies but saved no pair figures, so there is nothing to draw until a newer run saves them.</p>
-                <p data-term="C07">Fill and markers: the fill deepens as the correlation gets stronger; a thin marker means the pair shares few days, so its figure is rough.</p>
-            </details>
+            <p class="adv-explainer" data-explainer="C01">How closely your symphonies' daily returns move together, from the latest successful retirement run; the Retirement tab uses it to suggest a symphony to drop.</p>
 
             <!-- Crisis caveat banner — always on (AC-1.4) -->
             <div class="crisis-caveat" data-testid="crisis-caveat-banner" role="note">
@@ -1951,6 +1943,12 @@
             </section>
 
             {% endif %}{# matrix state #}
+
+            {% call glossary("Correlations") %}
+                <p data-term="C05">Correlation: a number from minus 1 to 1 for how closely two return series move together; 1 is in lockstep and 0 is unrelated.</p>
+                <p data-term="C03">Stored no pairs: the run analysed the symphonies but saved no pair figures, so there is nothing to draw until a newer run saves them.</p>
+                <p data-term="C07">Fill and markers: the fill deepens as the correlation gets stronger; a thin marker means the pair shares few days, so its figure is rough.</p>
+            {% endcall %}
 
         </div>{# /tab-panel-correlations #}
 
@@ -2462,14 +2460,7 @@
              class="tab-panel">
 
             <p class="cap-tab-attribution">{% if advisor_suggestion_model_known %}{{ advisor_suggestion_model | e }} · reasons over your symphony's current rules{% else %}Reasons over your symphony's current rules; model not known{% endif %}</p>
-            <p class="adv-explainer" data-explainer="W01">Test whether replacing one ticker in a symphony with another would have helped, against a statistical gate built to reject lucky results. Leave both tickers blank to let the advisor propose swaps; you make any change yourself in Composer.</p>
-            <details class="hp-more" data-terms="W01">
-                <summary>What the terms mean</summary>
-                <p data-term="W02">The gate: a candidate must beat the current symphony on history held back from the test, beat SPY over the same period, pass the overfitting check, and survive a correction for how many candidates were tested.</p>
-                <p data-term="W06">Baseline: the symphony as it is. Variant: the symphony with the change.</p>
-                <p data-term="W07">PBO: probability of backtest overfitting, the chance the best-looking candidate looked best by luck; a high PBO vetoes the candidate.</p>
-                <p data-term="W09">Model and context: which model reasoned and which evidence it was given.</p>
-            </details>
+            <p class="adv-explainer" data-explainer="W01">Test whether swapping one ticker in a symphony for another would have helped; leave both tickers blank and the advisor proposes swaps.</p>
 
             <div class="advise-only-banner" data-testid="advise-only-banner" role="note">
                 <span class="advise-only-banner-icon" aria-hidden="true"></span>
@@ -2527,6 +2518,14 @@
             <div id="swap-results-area" data-testid="swap-results-area"></div>
             {% endif %}{# no_api_key #}
 
+            {% call glossary("Asset Swaps") %}
+                <p data-term="A04">Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.</p>
+                <p data-term="W02">The gate: a candidate must beat the current symphony on history held back from the test, beat SPY over the same period, pass the overfitting check, and survive a correction for how many candidates were tested.</p>
+                <p data-term="W06">Baseline: the symphony as it is. Variant: the symphony with the change.</p>
+                <p data-term="W07">PBO: probability of backtest overfitting, the chance the best-looking candidate looked best by luck; a high PBO vetoes the candidate.</p>
+                <p data-term="W09">Model and context: which model reasoned and which evidence it was given.</p>
+            {% endcall %}
+
         </div>{# /tab-panel-asset-swaps #}
 
         <!-- ============================================================ -->
@@ -2539,15 +2538,7 @@
              class="tab-panel">
 
             <p class="cap-tab-attribution">{% if advisor_suggestion_model_known %}{{ advisor_suggestion_model | e }} · reasons over your symphony's current rules{% else %}Reasons over your symphony's current rules; model not known{% endif %}</p>
-            <p class="adv-explainer" data-explainer="L01">Test a change to a symphony's rules, such as a different lookback, against the same statistical gate: the advisor edits your current rule tree, backtests it and judges the result. Rule changes are the easiest to overfit, so read any pass as a lead to check.</p>
-            <details class="hp-more" data-terms="L01">
-                <summary>What the terms mean</summary>
-                <p data-term="L02a">FDR/Yekutieli correction: raises the bar each candidate must clear as more candidates are tested, so one lucky result among many tries is not taken for skill.</p>
-                <p data-term="L02b">Sound-but-unprovable: passed every check, which still does not prove it will work live.</p>
-                <p data-term="L03">Objectives: reduce drawdown aims for shallower falls, lift risk-adjusted return aims for more return per unit of risk, and reduce turnover aims for fewer trades.</p>
-                <p data-term="L05">Baseline: the symphony as it is. Variant: the symphony with the change. Ann. return: yearly return.</p>
-                <p data-term="L06">Adjusted threshold α: the p-value bar after the correction for how many candidates were tested. p: the candidate's p-value, which must be under the bar to pass.</p>
-            </details>
+            <p class="adv-explainer" data-explainer="L01">Test a change to one of a symphony's rules, such as a different lookback, before you make it yourself in Composer.</p>
 
             <div class="fdr-warning-banner"
                  data-testid="fdr-warning-banner"
@@ -2616,6 +2607,15 @@
             <div id="logic-results-area" data-testid="logic-results-area"></div>
             {% endif %}{# no_api_key #}
 
+            {% call glossary("Logic Changes") %}
+                <p data-term="A04">Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.</p>
+                <p data-term="L02a">FDR/Yekutieli correction: raises the bar each candidate must clear as more candidates are tested, so one lucky result among many tries is not taken for skill.</p>
+                <p data-term="L02b">Sound-but-unprovable: passed every check, which still does not prove it will work live.</p>
+                <p data-term="L03">Objectives: reduce drawdown aims for shallower falls, lift risk-adjusted return aims for more return per unit of risk, and reduce turnover aims for fewer trades.</p>
+                <p data-term="L05">Baseline: the symphony as it is. Variant: the symphony with the change. Ann. return: yearly return.</p>
+                <p data-term="L06">Adjusted threshold α: the p-value bar after the correction for how many candidates were tested. p: the candidate's p-value, which must be under the bar to pass.</p>
+            {% endcall %}
+
         </div>{# /tab-panel-logic-changes #}
 
         <!-- ============================================================ -->
@@ -2633,13 +2633,17 @@
                 <div class="chat-default-title">
                     Select a recommendation or diagnostic figure to open a contextual explanation.
                 </div>
-                <p class="chat-default-body" data-explainer="T02">Chat explains what the advisor found and why. Use Discuss this proposal or Chat about this on a proposal or suggestion card to start a conversation about it; Chat explains and changes nothing.</p>
+                <p class="chat-default-body" data-explainer="T02">Chat explains and changes nothing; the Discuss this proposal and Chat about this buttons on proposal and suggestion cards open it.</p>
                 <ul class="chat-example-prompts" aria-label="Example questions">
                     <li>"Why did the gate reject this swap?"</li>
                     <li>"Why did this Strategy Builder proposal pass the gate?"</li>
                     <li>"Why is this logic change considered high overfitting risk?"</li>
                 </ul>
             </div>
+
+            {% call glossary("Chat") %}
+                <p data-term="A04">Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.</p>
+            {% endcall %}
 
         </div>{# /tab-panel-chat #}
 
@@ -2662,7 +2666,7 @@
              class="tab-panel">
 
             <p class="cap-tab-attribution">{% if advisor_suggestion_model_known %}{{ advisor_suggestion_model | e }} and community strategies, statistically gated{% else %}Claude and community strategies, statistically gated; model not known{% endif %}</p>
-            <p class="adv-explainer" data-explainer="B00">Ask the advisor for new strategies for one goal: it designs some from scratch, adds ranked community strategies, tests them all and keeps only the strongest that clears the gate. A survivor is a suggestion you would build yourself in Composer.</p>
+            <p class="adv-explainer" data-explainer="B00">Ask for new strategies toward one goal; the strongest candidate that clears the gate, at most one per run, is promoted as a suggestion.</p>
 
             <!--
                 Persistent non-dismissible risk warning (AC-3.2 + AC-3.3).
@@ -2677,9 +2681,7 @@
                 <span class="sb-risk-banner-icon" aria-hidden="true"></span>
                 <p class="sb-risk-banner-text">
                     <strong>Strategy Builder proposals carry the highest overfitting risk.</strong>
-                    A multiple-testing correction (FDR/Yekutieli) is applied across ALL
-                    backtested candidates — raising the number of candidates raises the bar
-                    each must clear. Survivors are <strong>sound-but-unprovable</strong>:
+                    Survivors are <strong>sound-but-unprovable:</strong>
                     a clean gate pass is not proof of a live edge. Strategy Builder proposals
                     are built entirely from scratch, maximising selection-bias exposure.
                 </p>
@@ -2746,27 +2748,6 @@
                         Run analysis
                     </button>
                 </div>
-                {# AC-3 (F5, Gap A/E; doc-reconciliation.md §1.3): the old copy
-                   described the retired 7-template stamper (T1-T7, dead code since
-                   DE-SB-GEN-001), omitted the Atlas community source entirely, and
-                   implied a plural "candidates are surfaced" when the gate caps
-                   ADOPT_CANDIDATE at exactly one survivor per run. Corrected + made
-                   accessor-driven per AC-16 (never a hardcoded model-name literal). #}
-                <p class="run-controls-note" data-explainer="B03">
-                    The advisor generates candidate strategies {% if advisor_suggestion_model_known %}via {{ advisor_suggestion_model | e }}{% else %}with its Claude model{% endif %}
-                    (plus ranked community strategies from the Atlas library), compiles
-                    and backtests each one, and applies an FDR/Yekutieli-calibrated
-                    significance bar. Only the single strongest candidate that clears
-                    the bar is ever promoted per run.
-                </p>
-                <details class="hp-more" data-terms="B03">
-                    <summary>What the terms mean</summary>
-                    <p data-term="B01">Community: strategies from the Atlas library, a public catalog of Composer strategies, ranked for your goal.</p>
-                    <p data-term="B02">FDR/Yekutieli correction: raises the bar each candidate must clear as more candidates are tested, so one lucky result among many tries is not taken for skill.</p>
-                    <p data-term="B03o">Objectives: diversify favors strategies that share few holdings with yours, cut drawdown favors shallow falls, and lift risk-adjusted return favors a higher Sharpe ratio.</p>
-                    <p data-term="B03u">Universe (tickers): the tickers the designed strategies may use; leave it empty to allow every tradeable US-listed stock and fund.</p>
-                    <p data-term="B08">PBO: probability of backtest overfitting, the chance the best-looking candidate looked best by luck; a high PBO vetoes the candidate.</p>
-                </details>
                 <div id="sb-run-error"
                      class="run-error"
                      data-testid="sb-run-error"
@@ -2895,12 +2876,7 @@
             <!-- Survivor cards (ADOPT_CANDIDATE) — ZERO action affordances -->
             {% if sb_survivors %}
             <div class="section-header adv-heading">Strategy proposals — gate passed</div>
-            <p class="adv-explainer" data-explainer="B07">Strategies that cleared the statistical gate. To use one, build it in Composer yourself from the rules on its card.</p>
-            <details class="hp-more" data-terms="B07">
-                <summary>What the terms mean</summary>
-                <p data-term="B07t">Live Baseline: the same figures for your live symphony over the same days as the candidate's backtest.</p>
-                <p data-term="B12">Incubating: paper-tracked forward before it is shown as a recommendation. Promoted: its forward results held up. Failed: they did not, or its fall went too deep. Expired: tracking stopped.</p>
-            </details>
+            <p class="adv-explainer" data-explainer="B07">Strategies that cleared the gate; to use one, build it in Composer yourself from the rules on its card.</p>
             <div class="proposal-cards" data-testid="survivor-cards">
                 {% for obs in sb_survivors %}
                 {% set rr = obs.raw_response %}
@@ -2931,7 +2907,7 @@
                             <tr>
                                 <th>Metric</th>
                                 <th>Candidate</th>
-                                {% if live_baseline %}<th data-testid="baseline-col-header">Live Baseline</th>{% endif %}
+                                {% if live_baseline %}<th data-testid="baseline-col-header" data-glossary="B07t">Live Baseline</th>{% endif %}
                             </tr>
                         </thead>
                         <tbody>
@@ -3040,7 +3016,7 @@
             <!-- Backtest-failed cards -->
             {% if sb_bt_failed %}
             <div class="section-header adv-heading">Backtest failures</div>
-            <p class="adv-explainer" data-explainer="B10">Candidates Composer could not backtest, with the error it returned. The gate never judged them.</p>
+            <p class="adv-explainer" data-explainer="B10">Candidates Composer could not backtest, with the error it returned; the gate never judged them.</p>
             <div class="proposal-cards">
                 {% for obs in sb_bt_failed %}
                 {% set rr = obs.raw_response %}
@@ -3076,7 +3052,7 @@
                             {% set live_baseline = rr.get('live_baseline') %}
                             <table class="stats-table" data-testid="stats-table">
                                 <caption class="stats-caption" data-testid="stats-backtest-label">Backtest figures</caption>
-                                <thead><tr><th>Metric</th><th>Candidate</th>{% if live_baseline %}<th data-testid="baseline-col-header">Live Baseline</th>{% endif %}</tr></thead>
+                                <thead><tr><th>Metric</th><th>Candidate</th>{% if live_baseline %}<th data-testid="baseline-col-header" data-glossary="B07t">Live Baseline</th>{% endif %}</tr></thead>
                                 <tbody>
                                     {% set sharpe = rr.get('sharpe') if rr.get('sharpe') is not none else metrics.get('sharpe_ratio') %}
                                     <tr><td>Sharpe</td><td class="stat-nil">{% if sharpe is not none %}{{ "%.3f" | format(sharpe) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-sharpe">—</td>{% endif %}</tr>
@@ -3130,6 +3106,17 @@
 
             {% endif %}{# sb_observations #}
 
+            {% call glossary("Strategy Builder") %}
+                <p data-term="A04">Model not known: the page has no Claude model name to show, because the lookup has not run yet, failed, or found no model of that family.</p>
+                <p data-term="B01">Community: strategies from the Atlas library, a public catalog of Composer strategies, ranked for your goal.</p>
+                <p data-term="B02">FDR/Yekutieli correction: raises the bar each candidate must clear as more candidates are tested, so one lucky result among many tries is not taken for skill.</p>
+                <p data-term="B03o">Objectives: diversify favors strategies that share few holdings with yours, cut drawdown favors shallow falls, and lift risk-adjusted return favors a higher Sharpe ratio.</p>
+                <p data-term="B03u">Universe (tickers): the tickers the designed strategies may use; leave it empty to allow every tradeable US-listed stock and fund.</p>
+                <p data-term="B08">PBO: probability of backtest overfitting, the chance the best-looking candidate looked best by luck; a high PBO vetoes the candidate.</p>
+                <p data-term="B07t">Live Baseline: the same figures for your live symphony over the same days as the candidate's backtest.</p>
+                <p data-term="B12">Incubating: paper-tracked forward before it is shown as a recommendation. Promoted: its forward results held up. Failed: they did not, or its fall went too deep. Expired: tracking stopped.</p>
+            {% endcall %}
+
         </div>{# /tab-panel-strategy-builder #}
 
         <!-- ============================================================ -->
@@ -3141,7 +3128,7 @@
              data-tab="frontrunner-builder"
              class="tab-panel">
 
-            <p class="adv-explainer" data-explainer="X01">Proposes copies of your symphonies with one frontrunner overlay added: a rule placed ahead of the symphony's own logic that switches into VIX-linked funds when its conditions are met, for example a watched ticker's RSI rising above a set level. You approve or reject each copy.</p>
+            <p class="adv-explainer" data-explainer="X01">Proposes copies of your symphonies with one frontrunner overlay added, for you to approve or reject.</p>
 
             <!--
                 Persistent non-dismissible notice. Unlike every other tab on this
@@ -3187,11 +3174,7 @@
                         Run build
                     </button>
                 </div>
-                <p class="run-controls-note" data-explainer="X03">
-                    Runs over every live symphony in the background (this can take
-                    several minutes) — reload this tab afterward to see newly-queued
-                    proposals below. Also runs automatically on the weekly schedule.
-                </p>
+                <p class="run-controls-note" data-explainer="X03">Runs over every live symphony in the background, which can take several minutes, and also runs on the weekly schedule; reload this tab afterward.</p>
                 <div id="fr-run-status" class="run-controls-note" data-testid="fr-run-status"></div>
                 <div id="fr-run-error"
                      class="run-error"
@@ -3207,23 +3190,12 @@
             <!-- Empty state: no pending proposals — a valid, non-error outcome -->
             <div class="empty-state" data-testid="frontrunner-builder-empty-state">
                 <div class="empty-state-title">No pending frontrunner proposals.</div>
-                <div class="empty-state-body">
-                    Run a build above, or check back after the weekly scheduled run.
-                </div>
+                <div class="empty-state-body">Proposals appear here after a build.</div>
             </div>
 
             {% else %}
 
             <div class="section-header adv-heading">Pending approval ({{ frontrunner_proposals | length }})</div>
-            <p class="adv-explainer" data-explainer="X05">Copies waiting for your decision. Compare each copy's Calmar, CAGR and drawdown with the original before you approve; approving creates a new undeployed symphony and trades nothing.</p>
-            <details class="hp-more" data-terms="X05">
-                <summary>What the terms mean</summary>
-                <p data-term="X06">Incumbent: your current symphony. Frontrunner overlay: a rule placed ahead of the symphony's own logic that switches into VIX-linked funds when its conditions are met, for example a watched ticker's RSI rising above a set level.</p>
-                <p data-term="X08">Same title: several cards can copy the same symphony; they differ in their overlay and figures, which View the added overlay shows.</p>
-                <p data-term="X09">Strategy Builder (retrofit): a from-scratch Strategy Builder design offered for this symphony; it does not contain the incumbent's logic.</p>
-                <p data-term="X11">Calmar: yearly return divided by the deepest fall; higher is better. CAGR: the yearly growth rate. Max DD: the deepest fall from a high to a later low.</p>
-                <p data-term="X12">Node count change: how many more or fewer steps the copy's rule tree has than the original; fewer is simpler.</p>
-            </details>
             {# What is the same on every card is said once here; a card keeps only what differs (the incumbent,
                its overlay, its figures). Identity applies to frontrunner proposals; the approval line to all. #}
             <div class="fr-shared" data-testid="fr-shared-notes">
@@ -3232,7 +3204,7 @@
                 {% endif %}
                 <p class="fr-line fr-explainer-line" data-testid="fr-explainer-line"><span class="fr-shared-label">On approval</span>Approve creates a NEW undeployed Composer symphony &mdash; the incumbent is never modified.</p>
             </div>
-            <div class="proposal-cards proposal-cards--fill" data-testid="frontrunner-proposal-cards">
+            <div class="proposal-cards" data-testid="frontrunner-proposal-cards">
                 {% for p in frontrunner_proposals %}
                 {% set m = p.metrics_json or {} %}
                 {% set is_fr = p.proposal_source == 'frontrunner_builder' %}
@@ -3259,7 +3231,7 @@
                         </thead>
                         <tbody>
                             <tr>
-                                <td>Calmar</td>
+                                <td data-glossary="X11">Calmar</td>
                                 {% if is_fr %}
                                 <td data-testid="fr-incumbent-calmar">{% if m.incumbent_calmar is defined and m.incumbent_calmar is not none %}{{ "%.3f" | format(m.incumbent_calmar) }}{% else %}—{% endif %}</td>
                                 {% endif %}
@@ -3267,7 +3239,7 @@
                                 <td data-testid="fr-candidate-calmar">{% if _cand_calmar is defined and _cand_calmar is not none %}{{ "%.3f" | format(_cand_calmar) }}{% else %}—{% endif %}</td>
                             </tr>
                             <tr>
-                                <td>CAGR</td>
+                                <td data-glossary="X11">CAGR</td>
                                 {% if is_fr %}
                                 <td data-testid="fr-incumbent-cagr">{% if m.incumbent_cagr is defined and m.incumbent_cagr is not none %}{{ "%.2f%%" | format(m.incumbent_cagr * 100) }}{% else %}—{% endif %}</td>
                                 {% endif %}
@@ -3275,7 +3247,7 @@
                                 <td data-testid="fr-candidate-cagr">{% if _cand_cagr is defined and _cand_cagr is not none %}{{ "%.2f%%" | format(_cand_cagr * 100) }}{% else %}—{% endif %}</td>
                             </tr>
                             <tr>
-                                <td>Max DD</td>
+                                <td data-glossary="X11">Max DD</td>
                                 {% if is_fr %}
                                 <td data-testid="fr-incumbent-mdd">{% if m.incumbent_max_drawdown is defined and m.incumbent_max_drawdown is not none %}{{ "%.2f%%" | format((m.incumbent_max_drawdown | abs) * 100) }}{% else %}—{% endif %}</td>
                                 {% endif %}
@@ -3284,7 +3256,7 @@
                             </tr>
                             {% if is_fr %}
                             <tr data-testid="fr-node-count-delta">
-                                <td>Node count change</td>
+                                <td data-glossary="X12">Node count change</td>
                                 <td colspan="2">{% set _ncd = m.node_count_delta if m.node_count_delta is defined else none %}{% if _ncd is number %}{% if _ncd > 0 %}+{{ _ncd }}{% elif _ncd < 0 %}&minus;{{ _ncd | abs }}{% else %}{{ _ncd }}{% endif %}{% else %}{{ _ncd if _ncd is not none else '—' }}{% endif %} <span class="stat-nil">vs the incumbent</span></td>
                             </tr>
                             {% endif %}
@@ -3328,6 +3300,14 @@
             </div>
 
             {% endif %}{# frontrunner_proposals #}
+
+            {% call glossary("Frontrunner Builder") %}
+                <p data-term="X06">Incumbent: your current symphony. Frontrunner overlay: a rule placed ahead of the symphony's own logic that switches into VIX-linked funds when its conditions are met, for example a watched ticker's RSI rising above a set level.</p>
+                <p data-term="X08">Same title: several cards can copy the same symphony; they differ in their overlay and figures, which View the added overlay shows.</p>
+                <p data-term="X09">Strategy Builder (retrofit): a from-scratch Strategy Builder design offered for this symphony; it does not contain the incumbent's logic.</p>
+                <p data-term="X11">Calmar: yearly return divided by the deepest fall; higher is better. CAGR: the yearly growth rate. Max DD: the deepest fall from a high to a later low.</p>
+                <p data-term="X12">Node count change: how many more or fewer steps the copy's rule tree has than the original; fewer is simpler.</p>
+            {% endcall %}
 
         </div>{# /tab-panel-frontrunner-builder #}
 

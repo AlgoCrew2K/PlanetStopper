@@ -155,7 +155,7 @@
             '<div class="stats-grid" data-testid="stats-grid">' +
 
             '<div>' +
-            '<div class="stats-col-label">Baseline</div>' +
+            '<div class="stats-col-label" data-glossary="W06">Baseline</div>' +
             '<div class="stat-row">' +
             '<span class="stat-label">Sharpe</span>' +
             '<span class="stat-value">' + escHtml(fmtStat(baseStats.sharpe_ratio)) + '</span>' +
@@ -171,7 +171,7 @@
             '</div>' +
 
             '<div>' +
-            '<div class="stats-col-label">Variant</div>' +
+            '<div class="stats-col-label" data-glossary="W06">Variant</div>' +
             '<div class="stat-row">' +
             '<span class="stat-label">Sharpe</span>' +
             '<span class="stat-value">' + escHtml(fmtStat(varStats.sharpe_ratio)) + '</span>' +
