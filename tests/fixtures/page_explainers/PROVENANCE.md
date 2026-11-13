@@ -6,11 +6,13 @@ match a parser or a test.
 ## copy.json (the expected text of every copy row, Glossary line and Glossary title)
 
 - **Sources**, both read through `git show` and never from the working tree:
-  - the approved plan `feature-plans/aligned-tables-and-quiet-copy.md`, read at commit
-    `f1d07c75f9c1f26f298c94791bb5f6e3632394e9` (`f1d07c75`, "record approval of the aligned-tables
-    spec; status ready"). The tables read (Copy table A, Copy table X, the Values table, Table G,
-    Table G2 and Table G3) are byte-equal to the plan at `ac4563cb`, the commit that last changed
-    them: `extract_copy.py --check ac4563cb` and `--check f1d07c75` both report no difference;
+  - the plan `feature-plans/aligned-tables-and-quiet-copy.md`, read at commit
+    `75243235526c367d6b09b0da245b7794f8ddf63d` (`75243235`, "record the PM's slice-review rulings R1
+    for the fix round"). The tables read (Copy table A, Copy table X, the Values table, Table G,
+    Table G2 and Table G3) equal the plan as approved at `f1d07c75` (itself byte-equal to `ac4563cb`)
+    apart from what the R1 rulings add: Copy table X rows CX-15 to CX-20, the Frontrunner Builder
+    Glossary's X11 split into X11a to X11c, History's four exit reason lines and their Table G3
+    titles. `extract_copy.py --check 75243235` reports no difference;
   - the reference commit's own fixture, `tests/fixtures/page_explainers/copy.json` at commit
     `c0760e70eb6f8c6620002570b493bb9ca4ec6b1e` (`c0760e70`), and the reference template
     `templates/ai_advisor.html` at the same commit (the guardrail paragraph the three Overview
@@ -21,9 +23,9 @@ match a parser or a test.
   re-extracts from the plan at `<sha>` and prints every row, Glossary host or title that differs from
   `copy.json`. A plan revision after approval is a new dispatch that re-extracts; no test reads the
   plan or runs git.
-- **What it holds:** `rows` (Copy table A, 55 rows, and Copy table X, 14 rows, in plan order, each
+- **What it holds:** `rows` (Copy table A, 55 rows, and Copy table X, 20 rows, in plan order, each
   with its disposition, its exact new text or none, and a kept row's text at the reference);
-  `glossary` (14 hosts, 181 lines in Table G order, each the reference row's text or its Table G2
+  `glossary` (14 hosts, 187 lines in Table G order, each the reference row's text or its Table G2
   text); `titles` (the 16 Table G3 rows with their expanded line keys); `values` (the reference's slot
   rows with the two the plan's Values table changes, the screen threshold in R02 and the tenure
   threshold in R22); `ref_rows` and `ref_values` (the reference fixture's own, unchanged, served by
@@ -34,7 +36,7 @@ match a parser or a test.
   own leading name and without a following "is" or "are", every other word kept; a Table G3 cell
   naming lines ("F15a to F15g; F15h") is expanded into `line_keys`. A row the script cannot parse
   stops it with the row's key.
-- **Counts at extraction:** 69 rows, 181 Glossary lines in 14 hosts, 16 title rows, 8 slot rows.
+- **Counts at extraction:** 75 rows, 187 Glossary lines in 14 hosts, 16 title rows, 8 slot rows.
 
 ## ref_capture.json (what the pages show, request and pin at the reference)
 
