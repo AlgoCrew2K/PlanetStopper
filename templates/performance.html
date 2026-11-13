@@ -1,3 +1,4 @@
+{% from '_glossary.html' import glossary -%}
 <!DOCTYPE html>
 <html lang="en">
 
@@ -80,7 +81,7 @@
         }
 
         .hp-toolbar .hp-note { margin-left: 0; }
-        .hp-toolbar .hp-note.hp-asof { margin-left: auto; }
+        .hp-toolbar .hp-note.hp-asof { margin-left: 0; }
 
         .perf-picker {
             display: flex;
@@ -334,13 +335,21 @@
         .precond-verdict-chip--negative-edge { --precond-dot: var(--studio-neg); }
         .precond-verdict-chip--insufficient-data { --precond-dot: var(--studio-warn); }
 
-        /* From 1240 px the first panel pairs the controls with the basis and stamp captions (right
-           column) so the band beside the controls is not empty, and the risk-metrics table lays its
-           rows out as two side-by-side groups under one header row each. */
-        .metrics-th-repeat { display: none; }
+        /* From 1001 px the two per-symphony ledgers take their content widths, so no wide gap opens
+           between a column's text and the next one's, and the counts and the drag stay right-aligned
+           with their headers. */
         .metrics-tbl--ledger-turn th:not(:first-child),
         .metrics-tbl--ledger-turn td:not(:first-child) { text-align: right; }
 
+        @media (min-width: 1001px) {
+            .metrics-tbl--stack { width: auto; table-layout: auto; }
+            .metrics-tbl--stack th, .metrics-tbl--stack td { white-space: nowrap; }
+            .metrics-tbl--stack th:first-child,
+            .metrics-tbl--stack td:first-child { width: auto; }
+        }
+
+        /* From 1240 px the first panel pairs the controls with the basis and stamp captions (right
+           column) so the band beside the controls is not empty. */
         @media (min-width: 1240px) {
             [data-testid="perf-controls-panel"] {
                 display: grid;
@@ -359,38 +368,13 @@
             }
             [data-testid="perf-controls-panel"] > .perf-captions .hp-note.hp-asof { margin-left: 0; }
             [data-testid="perf-controls-panel"] > .insufficient-banner { margin-bottom: 8px; grid-column: 1 / -1; }
+        }
 
-            .metrics-tbl--fit,
-            .metrics-tbl--fit thead,
-            .metrics-tbl--fit tbody { display: block; }
-            .metrics-tbl--fit thead tr {
-                display: grid;
-                grid-template-columns: 165px 105px 1fr 1fr 48px 165px 105px 1fr 1fr;
-            }
-            .metrics-tbl--fit .metrics-th-repeat { display: block; }
-            .metrics-tbl--fit th:nth-child(5) { grid-column: 6; }
-            .metrics-tbl--fit th,
-            .metrics-tbl--fit td,
-            .metrics-tbl--fit th:first-child,
-            .metrics-tbl--fit td:first-child { width: auto; }
-            .metrics-tbl--fit thead th:nth-child(6) { padding-left: 0; }
-            .metrics-tbl--fit thead th:nth-child(9) { padding-right: 0; }
-            .metrics-tbl--fit tbody {
-                display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                grid-template-rows: repeat(5, auto);
-                grid-auto-flow: column;
-                column-gap: 48px;
-            }
-            .metrics-tbl--fit tbody tr {
-                display: grid;
-                grid-template-columns: 165px 105px 1fr 1fr;
-            }
-            .metrics-tbl--fit tbody tr:nth-child(5) td { border-bottom: 0; }
-            .metrics-tbl--ledger-turn th:first-child,
-            .metrics-tbl--ledger-turn td:first-child { width: 30%; }
-            .metrics-tbl--ledger-turn th:not(:first-child),
-            .metrics-tbl--ledger-turn td:not(:first-child) { text-align: left; }
+        /* From 1440 px the four headline figures sit in one row with one gap between them. */
+        @media (min-width: 1440px) {
+            .hp-figs { display: flex; flex-wrap: nowrap; }
+            .hp-fig { flex: none; padding: 0 20px; white-space: nowrap; }
+            .hp-fig:first-child { padding-left: 0; }
         }
 
         @media (min-width: 1340px) {
@@ -563,15 +547,7 @@
         <!-- First panel: controls, the basis and observation captions, the stability banner and the
              headline strip. The page has no title card; the nav marks the page. -->
         <section data-testid="perf-controls-panel" class="hero-section hp-panel">
-            <p class="metrics-caption" data-explainer="F01">Risk-adjusted results of the bot's exits against holding, for the whole portfolio or one symphony, over the window you pick. On every figure in this row, above zero favors the bot; the guard effect's note says when it matches the dashboard's figure.</p>
-            <details class="hp-more" data-terms="F01">
-                <summary>What the terms mean</summary>
-                <p data-term="F03">Windows: calendar days counted back from the session shown; YTD starts on 1 January and 5Y covers five years.</p>
-                <p data-term="F04t">If held: the same symphonies held with no exit. Bot (shadow): the bot's shadow record, the return with its exits applied; while live trading is off it is a simulation that places no order.</p>
-                <p data-term="F07">Sharpe: return per unit of overall volatility; higher is better.</p>
-                <p data-term="F09">Sortino: return per unit of downside volatility only; higher is better.</p>
-                <p data-term="F08">Max DD reduction: how much shallower the bot's deepest fall was than holding's, in percentage points.</p>
-            </details>
+            <p class="metrics-caption" data-explainer="F01">Risk-adjusted results of the bot's exits against holding, for the whole portfolio or one symphony, over the window you pick.</p>
             <!-- Scope + window controls -->
             <div class="hp-toolbar">
                 <div class="seg-control" data-testid="scope-control" id="scope-toggle" role="group" aria-label="Scope">
@@ -625,15 +601,15 @@
                     <div class="hp-fig-note" id="guard-alpha-basis"></div>
                 </div>
                 <div data-testid="sharpe-delta-stat" class="hp-fig">
-                    <div class="hp-fig-label">Sharpe improvement</div>
+                    <div class="hp-fig-label" data-glossary="F07">Sharpe improvement</div>
                     <div class="hp-fig-value" id="sharpe-delta-value">--</div>
                 </div>
                 <div data-testid="mdd-reduction-stat" class="hp-fig">
-                    <div class="hp-fig-label">Max DD reduction</div>
+                    <div class="hp-fig-label" data-glossary="F08">Max DD reduction</div>
                     <div class="hp-fig-value" id="mdd-reduction-value">--</div>
                 </div>
                 <div data-testid="sortino-delta-stat" class="hp-fig">
-                    <div class="hp-fig-label">Sortino improvement</div>
+                    <div class="hp-fig-label" data-glossary="F09">Sortino improvement</div>
                     <div class="hp-fig-value" id="sortino-delta-value">--</div>
                 </div>
             </div>
@@ -655,7 +631,7 @@
                     </div>
                 </div>
             </div>
-            <p class="metrics-caption" data-explainer="F11">The two return paths day by day: the solid line is the bot with its exits, the dashed line is holding through. Where the solid line is above the dashed one, the exits were ahead.</p>
+            <p class="metrics-caption" data-explainer="F11">The two return paths day by day: the solid line is the bot with its exits, the dashed line is holding through.</p>
             <div class="chart-canvas-wrap">
                 <canvas id="returns-chart"></canvas>
             </div>
@@ -665,21 +641,7 @@
         <section data-testid="metrics-table" class="hero-section hp-panel">
             <h2 class="section-header hp-heading">Risk metrics</h2>
             <!-- Non-expert framing for the delta column (Phase 2, ux-design-deliverable.md §Change 3). -->
-            <p class="metrics-caption" data-explainer="F13">
-                Positive deltas on risk metrics (Sharpe, Sortino, drawdown reduction) mean the bot
-                improved risk-adjusted outcomes vs holding through. Delta is bot minus baseline;
-                drawdown and volatility deltas are in %.
-            </p>
-            <details class="hp-more" data-terms="F13">
-                <summary>What the terms mean</summary>
-                <p data-term="F15a">Max DD: the largest fall from a high to a later low over the window, shown as a size.</p>
-                <p data-term="F15b">Calmar: yearly return divided by the deepest fall; higher is better.</p>
-                <p data-term="F15c">Annualized volatility: how widely daily returns swing, scaled to a year.</p>
-                <p data-term="F15d">Volatility reduction: how much calmer the bot's returns were than holding's, in percentage points.</p>
-                <p data-term="F15e">Total return: the whole window's return, compounded.</p>
-                <p data-term="F15f">Annualized return (CAGR): the yearly rate that compounds to the total return.</p>
-                <p data-term="F15g">Up days: the share of days with a gain.</p>
-            </details>
+            <p class="metrics-caption" data-explainer="F13">Each risk figure for holding and for the bot over the window, side by side with their delta.</p>
             <div class="metrics-overflow">
                 <table class="metrics-tbl metrics-tbl--fit">
                     <thead>
@@ -687,11 +649,7 @@
                             <th>Metric</th>
                             <th style="text-align:right">If held</th>
                             <th style="text-align:right">Bot (shadow)</th>
-                            <th style="text-align:right">Delta (DD and vol in %)</th>
-                            <th class="metrics-th-repeat" aria-hidden="true">Metric</th>
-                            <th class="metrics-th-repeat" aria-hidden="true" style="text-align:right">If held</th>
-                            <th class="metrics-th-repeat" aria-hidden="true" style="text-align:right">Bot (shadow)</th>
-                            <th class="metrics-th-repeat" aria-hidden="true" style="text-align:right">Delta (DD and vol in %)</th>
+                            <th style="text-align:right" data-glossary="F15h">Delta (DD and vol in %)</th>
                         </tr>
                     </thead>
                     <!-- Static rows are server-rendered placeholders; performance.js
@@ -705,28 +663,28 @@
                             <td>Sortino</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row" data-primary="true">
-                            <td>Max DD</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
+                            <td data-glossary="F15a">Max DD</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
                             <td>Max DD reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Calmar</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
+                            <td data-glossary="F15b">Calmar</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Annualized volatility</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
+                            <td data-glossary="F15c">Annualized volatility</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Volatility reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
+                            <td data-glossary="F15d">Volatility reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row" data-primary="true">
-                            <td>Total return</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
+                            <td data-glossary="F15e">Total return</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Annualized return (CAGR)</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
+                            <td data-glossary="F15f">Annualized return (CAGR)</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Up days</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
+                            <td data-glossary="F15g">Up days</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                     </tbody>
                 </table>
@@ -736,31 +694,17 @@
         <!-- Guard-Alpha stop-justification preconditions panel (Kaminski & Lo 2014) -->
         <section data-testid="guard-alpha-preconditions-panel" class="hero-section hp-panel">
             <h2 class="section-header hp-heading">Stop-justification preconditions</h2>
-            <p class="metrics-caption" data-explainer="F16">Checks whether each symphony's daily returns behave in the way that makes a trailing stop pay off on average: a day's move tends to carry into the next by more than the day's risk-adjusted return. Not met means this sample does not show that, not that the stop is wrong (Kaminski and Lo, 2014). Replay = simulated if-held daily series from the last autotune/replay run; Shadow = live if-held daily series across all position epochs of the symphony.</p>
-            <details class="hp-more" data-terms="F16">
-                <summary>What the terms mean</summary>
-                <p data-term="F17a">Sample: which daily series was checked, Replay or Shadow, as the note above says.</p>
-                <p data-term="F17b">ρ: lag-1 autocorrelation, how much one day's return tends to carry into the next.</p>
-                <p data-term="F17c">CI: the confidence range that ρ likely sits in.</p>
-                <p data-term="F17d">Daily Sharpe: the average daily return divided by its volatility, not annualized.</p>
-                <p data-term="F17e">N: how many daily returns the sample holds.</p>
-                <p data-term="F19a">Sufficient met: even at the low end of its range, the day-to-day carry beats the daily Sharpe ratio, which is enough to justify the stop on average.</p>
-                <p data-term="F19b">Sufficient likely: the carry beats the daily Sharpe ratio at its central estimate, but its range overlaps it.</p>
-                <p data-term="F19c">Not met: this sample does not show enough carry; that is not proof the stop is wrong, and it says nothing about drawdown protection.</p>
-                <p data-term="F19d">Negative edge: the daily Sharpe ratio is zero or below, so no carry can justify the stop on return grounds.</p>
-                <p data-term="F19e">Insufficient data: too few days to judge either way.</p>
-                <p data-term="F20">Autotune: the weekly search for better stop settings; its last run leaves the replay series this table reads.</p>
-            </details>
+            <p class="metrics-caption" data-explainer="F16">Whether each symphony's daily returns behave in the way that makes a trailing stop pay off on average (Kaminski and Lo, 2014).</p>
             <div class="metrics-overflow">
                 <table class="metrics-tbl metrics-tbl--stack metrics-tbl--ledger-pre" data-testid="guard-alpha-preconditions-table">
                     <thead>
                         <tr>
                             <th>Symphony</th>
-                            <th>Sample</th>
-                            <th style="text-align:right"><span class="alpha-glyph">&rho;</span></th>
-                            <th style="text-align:right">95% CI</th>
-                            <th style="text-align:right">Daily Sharpe</th>
-                            <th style="text-align:right">N</th>
+                            <th data-glossary="F17a">Sample</th>
+                            <th style="text-align:right" data-glossary="F17b"><span class="alpha-glyph">&rho;</span></th>
+                            <th style="text-align:right" data-glossary="F17c">95% CI</th>
+                            <th style="text-align:right" data-glossary="F17d">Daily Sharpe</th>
+                            <th style="text-align:right" data-glossary="F17e">N</th>
                             <th>Verdict</th>
                         </tr>
                     </thead>
@@ -789,12 +733,7 @@
              drag. Populated by fetchExitTurnover() in static/performance.js. -->
         <section data-testid="exit-turnover-panel" class="hero-section hp-panel">
             <h2 class="section-header hp-heading">Exit turnover &amp; estimated trading-cost drag</h2>
-            <p class="metrics-caption" data-explainer="F21">How often each symphony's exits fired over the three windows, counted only over the days of history still kept, and an estimate of the yearly return those exits cost, from the simulated trading cost per exit. A high drag is a cost the exits have to earn back.</p>
-            <details class="hp-more" data-terms="F21">
-                <summary>What the terms mean</summary>
-                <p data-term="F23">Retained: the days of exit history still kept; a count covers only those days.</p>
-                <p data-term="F24">{% if copy_values.friction_pct is not none %}Est. annual trading-cost drag: an estimate of the yearly return lost to trading costs, at {{ copy_values.friction_pct }} percentage points per exit times the exits per year.{% else %}Est. annual trading-cost drag: an estimate of the yearly return lost to trading costs, at a fixed cost per exit times the exits per year.{% endif %}</p>
-            </details>
+            <p class="metrics-caption" data-explainer="F21">How often each symphony's exits fired over three windows, and an estimate of the yearly return those exits cost in trading.</p>
             <div class="metrics-overflow">
                 <table class="metrics-tbl metrics-tbl--stack metrics-tbl--ledger-turn" data-testid="exit-turnover-table">
                     <thead>
@@ -803,7 +742,7 @@
                             <th>30d</th>
                             <th>90d</th>
                             <th>365d</th>
-                            <th>Est. annual trading-cost drag</th>
+                            <th data-glossary="F24">Est. annual trading-cost drag</th>
                         </tr>
                     </thead>
                     <!-- Populated by renderExitTurnover() via DOM APIs (textContent/
@@ -818,9 +757,40 @@
                 No exit-trigger history yet for any symphony.
             </p>
         </section>
+
+        {% call glossary("Performance") %}
+            <p data-term="F03">Windows: calendar days counted back from the session shown; YTD starts on 1 January and 5Y covers five years.</p>
+            <p data-term="F04t">If held: the same symphonies held with no exit. Bot (shadow): the bot's shadow record, the return with its exits applied; while live trading is off it is a simulation that places no order.</p>
+            <p data-term="F07">Sharpe: return per unit of overall volatility; higher is better.</p>
+            <p data-term="F09">Sortino: return per unit of downside volatility only; higher is better.</p>
+            <p data-term="F08">Max DD reduction: how much shallower the bot's deepest fall was than holding's, in percentage points.</p>
+            <p data-term="F15a">Max DD: the largest fall from a high to a later low over the window, shown as a size.</p>
+            <p data-term="F15b">Calmar: yearly return divided by the deepest fall; higher is better.</p>
+            <p data-term="F15c">Annualized volatility: how widely daily returns swing, scaled to a year.</p>
+            <p data-term="F15d">Volatility reduction: how much calmer the bot's returns were than holding's, in percentage points.</p>
+            <p data-term="F15e">Total return: the whole window's return, compounded.</p>
+            <p data-term="F15f">Annualized return (CAGR): the yearly rate that compounds to the total return.</p>
+            <p data-term="F15g">Up days: the share of days with a gain.</p>
+            <p data-term="F15h">Delta: bot minus baseline. Positive deltas on risk metrics (Sharpe, Sortino, drawdown reduction) mean the bot improved risk-adjusted outcomes vs holding through; drawdown and volatility deltas are in %.</p>
+            <p data-term="F17a">Sample: which daily series was checked, Replay or Shadow. Replay = simulated if-held daily series from the last autotune/replay run; Shadow = live if-held daily series across all position epochs of the symphony.</p>
+            <p data-term="F17b">ρ: lag-1 autocorrelation, how much one day's return tends to carry into the next.</p>
+            <p data-term="F17c">CI: the confidence range that ρ likely sits in.</p>
+            <p data-term="F17d">Daily Sharpe: the average daily return divided by its volatility, not annualized.</p>
+            <p data-term="F17e">N: how many daily returns the sample holds.</p>
+            <p data-term="F17h">What is checked: whether a day's move tends to carry into the next by more than the day's risk-adjusted return.</p>
+            <p data-term="F19a">Sufficient met: even at the low end of its range, the day-to-day carry beats the daily Sharpe ratio, which is enough to justify the stop on average.</p>
+            <p data-term="F19b">Sufficient likely: the carry beats the daily Sharpe ratio at its central estimate, but its range overlaps it.</p>
+            <p data-term="F19c">Not met: this sample does not show enough carry; that is not proof the stop is wrong, and it says nothing about drawdown protection.</p>
+            <p data-term="F19d">Negative edge: the daily Sharpe ratio is zero or below, so no carry can justify the stop on return grounds.</p>
+            <p data-term="F19e">Insufficient data: too few days to judge either way.</p>
+            <p data-term="F20">Autotune: the weekly search for better stop settings; its last run leaves the replay series this table reads.</p>
+            <p data-term="F23">Retained: the days of exit history still kept; a count covers only those days.</p>
+            <p data-term="F24">{% if copy_values.friction_pct is not none %}Est. annual trading-cost drag: an estimate of the yearly return lost to trading costs, at {{ copy_values.friction_pct }} percentage points per exit times the exits per year.{% else %}Est. annual trading-cost drag: an estimate of the yearly return lost to trading costs, at a fixed cost per exit times the exits per year.{% endif %}</p>
+        {% endcall %}
     </div>
 
     <script src="{{ url_for('static', filename='vendor/chart.js-4.6.1.umd.js') }}"></script>
+    <script src="{{ url_for('static', filename='glossary.js') }}"></script>
     <script src="{{ url_for('static', filename='performance.js') }}"></script>
 </body>
 

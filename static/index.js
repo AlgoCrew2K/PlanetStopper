@@ -2246,7 +2246,7 @@
                 container = document.createElement('div');
                 container.className = 'account-all-time-stat';
                 container.innerHTML =
-                    '<span class="account-all-time-label">Account &middot; all-time</span>'
+                    '<span class="account-all-time-label" data-glossary="D05">Account &middot; all-time</span>'
                     + ' <span data-testid="account-all-time-cr" class="account-all-time-value"></span>';
                 parent.insertAdjacentHTML('beforeend', container.outerHTML);
             }

@@ -468,8 +468,7 @@
             '</div>';
 
         var body = bannerHtml +
-            _sectionHeader('Execution mode', "Whether this symphony may send real sell orders. It trades live only when this switch and the server's global live switch are both on.", '', 'M04') +
-            _termsDisclosure('M04', [['M01', "Dry-run (global off): the server's live switch is off, so nothing trades live. Live: this symphony sends real sell orders. Dry-run: this symphony is watched but sends no orders."]]) +
+            _sectionHeader('Execution mode', "Whether this symphony may send real sell orders; it trades live only when this switch and the server's global live switch are both on.", '', 'M04') +
             '<div class="' + execClass + '">' +
             '<div class="ssm-exec-main">' +
             '<div class="ssm-exec-label">' +
@@ -487,18 +486,21 @@
             '<div class="ssm-locks">' +
             lockedVarsRows + '</div>' +
 
-            _sectionHeader('Autotuner parameters', "The values the autotune set for this symphony. They are read-only here.", '', 'M06') +
+            _sectionHeader('Autotuner parameters', "The values the autotune set for this symphony, read-only here.", '', 'M06') +
             '<div class="ssm-params">' +
             paramsRows + '</div>' +
 
             _sectionHeader(
                 'AI advisor — this symphony',
-                "What the advisor said about this symphony, for reading only. To act on it, lock a variable above or accept a suggestion on the Advisor page.",
+                "What the advisor said about this symphony; to act on it, lock a variable above or accept a suggestion on the Advisor page.",
                 '<span class="ssm-note">Advisory only</span>',
                 'M07'
             ) +
-            _termsDisclosure('M07', [['M08', "Clear: the check passed. Watch: worth a look, not a failure. Breach: the check failed."]]) +
-            advisorHtml;
+            advisorHtml +
+            _glossary([
+                ['M01', "Dry-run (global off): the server's live switch is off, so nothing trades live. Live: this symphony sends real sell orders. Dry-run: this symphony is watched but sends no orders."],
+                ['M08', "Clear: the check passed. Watch: worth a look, not a failure. Breach: the check failed."]
+            ]);
 
         var el = _getOrCreateModalEl();
         // modeBadge injected as 4th arg so _surfaceHtml places it in the header (AC-2).
@@ -724,11 +726,13 @@
             (rightHtml || '') + '</div>';
     }
 
-    // A closed "What the terms mean" disclosure: `terms` is a list of [key, text] pairs.
-    function _termsDisclosure(target, terms) {
-        return '<details class="hp-more" data-terms="' + target + '">' +
-            '<summary>What the terms mean</summary>' +
-            terms.map(function (t) {
+    // The modal's one closed Glossary, the markup templates/_glossary.html writes for the pages:
+    // `lines` is a list of [key, text] pairs.
+    function _glossary(lines) {
+        return '<details class="hp-more" data-terms="glossary" data-testid="glossary" ' +
+            'data-glossary-host="settings modal">' +
+            '<summary>Glossary</summary>' +
+            lines.map(function (t) {
                 return '<p data-term="' + t[0] + '">' + _esc(t[1]) + '</p>';
             }).join('') +
             '</details>';

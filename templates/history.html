@@ -1,3 +1,4 @@
+{% from '_glossary.html' import glossary -%}
 <!DOCTYPE html>
 <html lang="en" data-theme="">
 
@@ -76,7 +77,7 @@
         }
 
         .hp-toolbar .hp-note { margin-left: 0; }
-        .hp-toolbar .hp-note.hp-asof { margin-left: auto; }
+        .hp-toolbar .hp-note.hp-asof { margin-left: 0; }
 
         /* Window picker: one segmented control. */
         .window-selector {
@@ -331,14 +332,23 @@
             [data-testid="recent-triggers"] > [data-explainer] { grid-column: 2; grid-row: 1; }
             [data-testid="recent-triggers"] .history-exits-btn { grid-column: 3; grid-row: 1; }
             [data-testid="recent-triggers"] > .hp-scroll { grid-column: 1 / -1; }
-            .hp-reasons { table-layout: fixed; }
-            .hp-reasons th:first-child,
-            .hp-reasons td:first-child { width: 14%; }
-            .triggers-tbl { table-layout: fixed; }
-            .triggers-tbl th:first-child, .triggers-tbl td:first-child { width: 19%; }
-            .triggers-tbl th:nth-child(2), .triggers-tbl td:nth-child(2) { width: 41%; }
-            .triggers-tbl th:nth-child(3), .triggers-tbl td:nth-child(3) { width: 20%; }
-            .triggers-tbl th:nth-child(4), .triggers-tbl td:nth-child(4) { width: 20%; text-align: left; }
+        }
+
+        /* From 1001 px both tables take their content widths, so no wide gap opens between a
+           column's text and the next one's, and every figure column (the exits' Detail included)
+           stays right-aligned under its header. */
+        @media (min-width: 1001px) {
+            .hp-reasons, .triggers-tbl { width: auto; table-layout: auto; }
+            .triggers-tbl th:first-child, .triggers-tbl td:first-child,
+            .triggers-tbl th:nth-child(3), .triggers-tbl td:nth-child(3),
+            .triggers-tbl th:nth-child(4), .triggers-tbl td:nth-child(4) { width: auto; }
+        }
+
+        /* From 1440 px the hero figures sit in one row with one gap between them. */
+        @media (min-width: 1440px) {
+            .hp-figs { display: flex; flex-wrap: wrap; align-items: baseline; }
+            .hp-fig { flex: none; padding: 0 20px; white-space: nowrap; }
+            .hp-fig:first-child { padding-left: 0; }
         }
 
         @media (max-width: 900px) {
@@ -404,15 +414,7 @@
 
         <!-- First panel: window picker, caption and data stamp on one row, then the headline figures -->
         <section data-testid="history-controls" class="hero-section hp-panel">
-            <p class="hp-note" data-explainer="Y01">How the bot's exits scored against holding, added up over the window you pick. Use it to see whether the exits pay for themselves and which rules do the work.</p>
-            <details class="hp-more" data-terms="Y01">
-                <summary>What the terms mean</summary>
-                <p data-term="Y03">Windows: calendar days counted back from the session shown; YTD starts on 1 January and 5Y covers five years.</p>
-                <p data-term="Y04">Exit alpha: an exit's return minus its held return, in pts, which are percentage points.</p>
-                <p data-term="Y08">The time in the note: when the bot freezes each exit's result for the day's record, the same afternoon check the dashboard calls snapshot-time.</p>
-                <p data-term="Y05">Dollar result: the dollars the exits saved or lost against holding, on the same snapshot basis as the dashboard.</p>
-                <p data-term="Y07">Win rate: the share of exits whose exit alpha was above zero.</p>
-            </details>
+            <p class="hp-note" data-explainer="Y01">Whether the bot's exits paid for themselves against holding over the window you pick, and which rules did the work.</p>
             <div class="hp-toolbar">
                 <div data-testid="window-selector" class="window-selector" id="window-picker">
                     <button data-window="30" class="active" onclick="historySelectWindow(this, '30')">30d</button>
@@ -424,7 +426,7 @@
                     <button data-window="1825" onclick="historySelectWindow(this, '1825')">5Y</button>
                 </div>
                 <span data-testid="history-caption" class="legend-as-of hp-note">
-                    Totals from the bot's daily exit records · how the bot's exits actually scored vs the if-held series
+                    Totals from the bot's daily exit records
                 </span>
                 <span id="history-data-as-of" data-testid="history-data-as-of" class="legend-as-of hp-note hp-asof" role="status"></span>
             </div>
@@ -437,14 +439,14 @@
                         <div class="hp-fig-value" id="val-total-alpha">--</div>
                     </div>
                     <div data-testid="stat-total-saved" class="hp-fig">
-                        <div class="hp-fig-label">Dollar result</div>
+                        <div class="hp-fig-label" data-glossary="Y05">Dollar result</div>
                         <div class="hp-fig-value" id="val-total-saved">--</div>
                     </div>
                     <div data-testid="stat-trigger-count" class="hp-fig"><div class="hp-fig-label">Exits</div>
                         <div class="hp-fig-value" id="val-trigger-count">--</div>
                     </div>
                     <div data-testid="stat-win-rate" class="hp-fig">
-                        <div class="hp-fig-label">Win rate</div>
+                        <div class="hp-fig-label" data-glossary="Y07">Win rate</div>
                         <div class="hp-fig-value" id="val-win-rate">--</div>
                     </div>
                 </div>
@@ -474,7 +476,7 @@
                     </span>
                 </div>
             </div>
-            <p class="hp-note" data-explainer="Y10">Each bar is one day's exit alpha added up. A positive day is one where the exits beat holding; a negative day is one where holding would have done better.</p>
+            <p class="hp-note" data-explainer="Y10">Each bar is one day's exit alpha added up; above zero the exits beat holding that day.</p>
             <div class="daily-chart-wrap">
                 <svg id="daily-chart-svg" width="100%" height="120" preserveAspectRatio="none"></svg>
             </div>
@@ -487,11 +489,7 @@
         <!-- By-reason breakdown -->
         <div data-testid="by-reason-section" class="hero-section hp-panel">
             <div data-testid="by-reason-header" class="section-header hp-heading">By exit reason</div>
-            <p class="hp-note" data-explainer="Y12">The same totals split by the rule that fired each exit, so you can see which rules earn their keep and which give gains back.</p>
-            <details class="hp-more" data-terms="Y12">
-                <summary>What the terms mean</summary>
-                <p data-term="Y13">Wins: exits whose exit alpha was above zero. Avg per exit: the reason's sum of exit alpha divided by its number of exits.</p>
-            </details>
+            <p class="hp-note" data-explainer="Y12">The same totals split by the rule that fired each exit, so you can see which rules earn their keep.</p>
             <div class="hp-scroll">
                 <table class="hp-tbl hp-reasons">
                     <thead>
@@ -500,9 +498,9 @@
                             <th class="num">Sum of exit alpha</th>
                             <th class="num">Dollar result</th>
                             <th class="num">Exits</th>
-                            <th class="num">Wins</th>
+                            <th class="num" data-glossary="Y13">Wins</th>
                             <th class="num">Win rate</th>
-                            <th class="num">Avg per exit</th>
+                            <th class="num" data-glossary="Y13">Avg per exit</th>
                         </tr>
                     </thead>
                     <!-- Server-rendered placeholders ensure data-testid="reason-card" and
@@ -561,7 +559,7 @@
                 <button type="button" class="history-exits-btn" data-testid="history-todays-exits-btn" hidden
                         onclick="historyShowTodaysExits()">{{ exits_label }}</button>
             </div>
-            <p class="hp-note" data-explainer="Y15">Each exit of the day in the heading: when it fired, the symphony, the rule, and in Detail its exit alpha.</p>
+            <p class="hp-note" data-explainer="Y15">Each exit of the day in the heading: when it fired, the symphony and the rule.</p>
             <div class="hp-scroll">
                 <table class="triggers-tbl hp-tbl">
                     <thead>
@@ -569,7 +567,7 @@
                             <th>Time</th>
                             <th>Symphony</th>
                             <th>Reason</th>
-                            <th class="num">Detail</th>
+                            <th class="num" data-glossary="Y16">Detail</th>
                         </tr>
                     </thead>
                     <tbody id="triggers-tbody">
@@ -583,8 +581,19 @@
             </div>
         </div>
 
+        {% call glossary("History") %}
+            <p data-term="Y03">Windows: calendar days counted back from the session shown; YTD starts on 1 January and 5Y covers five years.</p>
+            <p data-term="Y04">Exit alpha: an exit's return minus its held return, in pts, which are percentage points.</p>
+            <p data-term="Y08">The time in the note: when the bot freezes each exit's result for the day's record, the same afternoon check the dashboard calls snapshot-time.</p>
+            <p data-term="Y05">Dollar result: the dollars the exits saved or lost against holding, on the same snapshot basis as the dashboard.</p>
+            <p data-term="Y07">Win rate: the share of exits whose exit alpha was above zero.</p>
+            <p data-term="Y13">Wins: exits whose exit alpha was above zero. Avg per exit: the reason's sum of exit alpha divided by its number of exits.</p>
+            <p data-term="Y16">Detail: the exit's exit alpha, in pts.</p>
+        {% endcall %}
+
     </div>
 
+    <script src="{{ url_for('static', filename='glossary.js') }}"></script>
     <script src="{{ url_for('static', filename='history.js') }}"></script>
 </body>
 </html>

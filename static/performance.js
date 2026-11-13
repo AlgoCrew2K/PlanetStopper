@@ -64,6 +64,17 @@
         ['win_rate',            'Up days',                   'frac',     false],
     ];
 
+    // The Glossary line each metric row's label carries as its title (static/glossary.js reads it).
+    var METRIC_GLOSSARY_KEY = {
+        max_drawdown: 'F15a',
+        calmar: 'F15b',
+        volatility: 'F15c',
+        volatility_delta: 'F15d',
+        total_return: 'F15e',
+        annualized_return: 'F15f',
+        win_rate: 'F15g',
+    };
+
     // toFixed that never prints a minus sign for a value that rounds to zero ("-0.00"); the same
     // rule as the Dashboard's fixedNoNegZero (static/index.js).
     function fixedNoNegZero(value, digits) {
@@ -386,7 +397,7 @@
             // The delta cell is the figure alone: its sign, arrow and colour say which leg did better.
             return (
                 '<tr data-testid="metric-row"' + primaryAttr + '>'
-                + '<td>' + label + '</td>'
+                + '<td' + (METRIC_GLOSSARY_KEY[key] ? ' data-glossary="' + METRIC_GLOSSARY_KEY[key] + '"' : '') + '>' + label + '</td>'
                 + '<td style="text-align:right;color:' + signColor(liveVal, key)   + '">' + (derivedRow ? '—' : fmt(liveVal, kind)) + '</td>'
                 + '<td style="text-align:right;color:' + signColor(shadowVal, key) + '">' + fmt(shadowVal, kind) + '</td>'
                 + '<td class="delta" style="text-align:right;color:' + deltaColor + '">'
@@ -782,10 +793,20 @@
         'INSUFFICIENT_DATA':  'precond-verdict-chip--insufficient-data',
     };
 
+    // Verdict -> the Glossary line the chip carries as its title.
+    var PRECOND_VERDICT_GLOSSARY_KEY = {
+        'SUFFICIENT_MET': 'F19a',
+        'SUFFICIENT_LIKELY': 'F19b',
+        'NOT_MET': 'F19c',
+        'NEGATIVE_EDGE': 'F19d',
+        'INSUFFICIENT_DATA': 'F19e',
+    };
+
     function preconditionChipEl(verdict) {
         var chip = document.createElement('span');
         var cls = PRECOND_VERDICT_CHIP_CLASS[verdict] || 'precond-verdict-chip--insufficient-data';
         chip.className = 'precond-verdict-chip ' + cls;
+        chip.setAttribute('data-glossary', PRECOND_VERDICT_GLOSSARY_KEY[verdict] || 'F19e');
         // A status dot (drawn by the class) and one word or two in sentence case: "Negative edge".
         var words = (verdict ? verdict.replace(/_/g, ' ') : 'INSUFFICIENT DATA').toLowerCase();
         chip.textContent = words.charAt(0).toUpperCase() + words.slice(1);

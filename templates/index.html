@@ -1,3 +1,4 @@
+{% from '_glossary.html' import glossary -%}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1171,6 +1172,73 @@
       gap: 8px;
     }
     .sleeve-rule-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--studio-ink-dim); }
+
+    @media (min-width: 1001px) {
+      /* The four comparison rows share one column template: label, Bot, Held and alpha start (the
+         figures end) at the same offset on every row, and the columns take their content widths
+         so no wide gap opens between them. */
+      .vs-rows {
+        display: grid;
+        grid-template-columns: repeat(4, max-content);
+        justify-content: start;
+        column-gap: 12px;
+      }
+      .vs-row {
+        display: grid;
+        grid-column: 1 / -1;
+        grid-template-columns: subgrid;
+        row-gap: 4px;
+      }
+      .vs-row-top {
+        display: grid;
+        grid-column: 1 / -1;
+        grid-template-columns: subgrid;
+        align-items: baseline;
+      }
+      .vs-row-top [data-testid$="-bot-text"] { margin-left: 0; }
+      .vs-val, .vs-delta { min-width: 0; }
+      .vs-row-top > .basis-chip { grid-column: 1 / -1; }
+      .vs-row-lead { display: flex; align-items: baseline; gap: 4px 6px; }
+      .vs-bars { grid-column: 1 / -1; }
+
+      /* Tracked, Armed and Triggered: one line, one gap. */
+      .page-dashboard .mini-stats { justify-content: flex-start; gap: 32px; flex-wrap: nowrap; }
+      .page-dashboard .mini-stat, .page-dashboard .mini-stat-label { white-space: nowrap; }
+
+      /* A sleeve's name and status sit together, and its rule rows share three fixed tracks. */
+      .sleeve-line { justify-content: flex-start; gap: 16px; }
+      /* The tracks are fixed, not sized by one card's content, so a rule's name, mode and actions
+         start at the same offset in every sleeve card. */
+      .sleeve-rules {
+        display: grid;
+        grid-template-columns: minmax(0, 22rem) 5rem minmax(0, 1fr);
+        column-gap: 12px;
+      }
+      .sleeve-rules[hidden] { display: none; }
+      .sleeve-rule-row {
+        display: grid;
+        grid-column: 1 / -1;
+        grid-template-columns: subgrid;
+        justify-content: start;
+      }
+      .sleeve-rule-row > span:first-child { display: contents; }
+    }
+
+    @media (min-width: 1440px) {
+      /* The lead figure and the three other bases: one line each, equal gaps. */
+      .dollar-panel {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 4px 32px;
+      }
+      .dollar-panel > [data-explainer] { flex: 0 0 100%; }
+      .dollar-lead, .dollar-line { white-space: nowrap; }
+      .dollar-lead { display: flex; align-items: center; gap: 0 12px; }
+      .dollar-meta { flex-wrap: nowrap; margin-top: 0; }
+      /* An empty span (a verb or a basis label not written yet) holds no gap. */
+      .dollar-lead > :empty, .dollar-meta > :empty { display: none; }
+    }
     .ctl-btn {
       height: 28px;
       padding: 0 12px;
@@ -1238,8 +1306,6 @@
       Market closed
     </div>
 
-    <div class="row-note" data-explainer="D01">This page shows how the bot's stops are guarding each symphony and how its exits compare with simply holding. Start with the guard effect, then check Active for anything armed or exited.</div>
-
     <!-- ======================== HERO SECTION ======================== -->
     <section data-testid="hero-section" class="hero-section">
       <div class="hero-grid">
@@ -1249,17 +1315,8 @@
           <span id="hero-scope-caption" class="legend-as-of" hidden>All accounts</span>
           <div class="hero-top">
             <div>
-              <div class="guard-alpha-label">Guard effect on portfolio &middot; <span id="guard-alpha-window-label">30d</span></div>
-              <div class="row-note" data-explainer="dash.hero">The guard effect is how the bot's exits compare with holding every symphony through, over the window you pick. Above zero the exits did better than holding; below zero holding would have done better.</div>
-              <details class="hp-more" data-terms="dash.hero">
-                <summary>What the terms mean</summary>
-                <p data-term="D04">Windows: 30d to 1Y are calendar days counted back from the session shown. YTD starts on 1 January; All time uses every recorded day.</p>
-                <p data-term="D06a">Bot: the return with the bot's exits applied. While live trading is off it is a simulation that places no order, and the headline then says Simulated.</p>
-                <p data-term="D06b">If held: what the same symphonies would have returned with no exit, held as Composer runs them.</p>
-                <p data-term="D07">Shadow history: the bot's own daily record of both paths, {% if copy_values.shadow_retention_days is not none %}kept for the last {{ copy_values.shadow_retention_days }} days.{% else %}kept for a limited number of days.{% endif %}</p>
-                <p data-term="D05">Account · all-time: Composer's own total return for the whole account since it was opened; it does not change with the window.</p>
-                <p data-term="D03">At their latest values: each symphony is weighted by its current value; before trading costs: no cost of trading is taken off.</p>
-              </details>
+              <div class="guard-alpha-label" data-glossary="D02">Guard effect on portfolio &middot; <span id="guard-alpha-window-label">30d</span></div>
+              <div class="row-note" data-explainer="dash.hero">Above zero the bot's exits did better than holding every symphony through; below zero, holding would have done better.</div>
               {# Shown by the picker when the picked window's strip could not be loaded: the figures beside the label then stay dashes and this names the window. #}
               <div id="guard-alpha-window-notice" data-testid="guard-alpha-window-notice" class="legend-as-of" role="status" hidden></div>
               {# The headline is the portfolio guard effect over the picked window: the Bot return
@@ -1283,7 +1340,7 @@
               {% set _acct_cr = _portfolio.get('account_all_time_cr') %}
               {% if _acct_cr is not none %}
               <div class="account-all-time-stat">
-                <span class="account-all-time-label">Account &middot; all-time</span>
+                <span class="account-all-time-label" data-glossary="D05">Account &middot; all-time</span>
                 <span data-testid="account-all-time-cr" class="account-all-time-value {% if _acct_cr >= 0 %}pos{% else %}neg{% endif %}">{% if _acct_cr >= 0 %}+{% endif %}{{ "%.2f"|format(_acct_cr) }}%</span>
               </div>
               {% endif %}
@@ -1335,19 +1392,7 @@
         <!-- Right column: VsRows + mini-stats -->
         <div data-testid="hero-right">
           <span id="strip-scope-caption" class="legend-as-of" hidden>All accounts</span>
-          <div class="row-note" data-explainer="dash.rows">The same comparison as single figures: today, the Composer lifetime, the deepest drop in the window and how widely daily returns swing. On every row α is the bot's edge over holding, so a positive α is good.</div>
-          <details class="hp-more" data-terms="dash.rows">
-            <summary>What the terms mean</summary>
-            <p data-term="D10">The first row's Held figure is for the whole account, uninvested cash included; a card's Held figure leaves cash out.</p>
-            <p data-term="D12">α: the bot's edge over holding on that row. Positive is good for the bot: a higher return, a shallower fall or calmer swings.</p>
-            <p data-term="D13">Bars: the highlighted bar and label mark the better side on that row.</p>
-            <p data-term="D14">Value-weighted floor: Composer's account totals could not be read, so the row weights each symphony by its value instead.</p>
-            <p data-term="D15">Stale account data: Composer's account totals could not be refreshed, so the row uses the last totals read, from the time shown.</p>
-            <p data-term="D16">Cumulative · lifetime: Composer's Total return since each symphony was invested, which counts deposits and withdrawals; it is not a time-weighted return.</p>
-            <p data-term="D17">Max DD: maximum drawdown, the largest fall from a high to a later low in the window, shown as a size. The row waits until the window holds enough trading days for a stable figure.</p>
-            <p data-term="D18">Ann. vol: annualized volatility, how widely daily returns swing, scaled to a year; lower is calmer.</p>
-            <p data-term="D19">Lifetime Max DD · since inception: the deepest fall of your symphonies held through, from Composer's records since each was invested, weighted by value.</p>
-          </details>
+          <div class="row-note" data-explainer="dash.rows">The same bot-against-holding comparison as single figures: today, the Composer lifetime, the window's deepest drop and its daily swings.</div>
           <!-- Bot-vs-Held comparison rows -->
           {# A figure the strip does not carry stays none in the _hero_*_raw names and prints a dash; the zero
              the names below fall back to only keeps the bar widths, the winner marks and the delta arithmetic
@@ -1463,7 +1508,7 @@
                      contract.py's TestCumulativeRowNamesItsBasis regex, which requires the
                      bare "Cumulative · lifetime" text as vs-row-label's only content.
                      Display-only; zero change to the underlying value computation. -->
-                <span class="vs-row-label">Cumulative &middot; lifetime</span><span data-testid="cumulative-cashflow-footnote-marker" class="info-mark" title="Composer's own cash flow sensitive Total return figure (simple_return) — not a time-weighted return; diverges by ~5% when cash flows exist. Excludes symphonies with no Composer cost basis."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
+                <span class="vs-row-lead"><span class="vs-row-label">Cumulative &middot; lifetime</span><span data-testid="cumulative-cashflow-footnote-marker" class="info-mark" title="Composer's own cash flow sensitive Total return figure (simple_return) — not a time-weighted return; diverges by ~5% when cash flows exist. Excludes symphonies with no Composer cost basis."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span></span>
                 <span data-testid="comp-cumulative-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-held-text" class="vs-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_held_raw is not none %}Held {% if cr_held >= 0 %}+{% endif %}{{ "%.2f"|format(cr_held) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none and _hero_cr_held_raw is not none %}α {{ gap_pct(cr_alpha) }}{% else %}&mdash;{% endif %}</span>
@@ -1496,7 +1541,7 @@
                    The annotation states the requirement in the gate's own unit: app._MDD_MIN_OBS
                    counts trading days (about 21 fit in a 30-day window), so it never reads as a
                    window length. The poll only shows and hides it; this is the one place it is worded. #}
-                <span class="vs-row-label">Max DD <span data-testid="mdd-insufficient-label" class="row-note"{% if not mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
+                <span class="vs-row-label" data-glossary="D17">Max DD <span data-testid="mdd-insufficient-label" class="row-note"{% if not mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
                 {# A drawdown is a magnitude: no sign is printed (the poll's text reads the same). #}
                 <span data-testid="comp-mdd-bot-text" class="vs-val{{ ' neg' if _mdd_bot_known }}">{% if _mdd_bot_known %}Bot {{ "%.2f"|format(mdd_bot|abs) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-mdd-held-text" class="vs-val{{ ' neg' if _mdd_held_known }}">{% if _mdd_held_known %}Held {{ "%.2f"|format(mdd_held|abs) }}%{% else %}&mdash;{% endif %}</span>
@@ -1542,7 +1587,7 @@
                shows it again when a picked window has one). #}
             <div data-testid="vs-row" class="vs-row"{% if not has_vol %} hidden{% endif %}>
               <div class="vs-row-top">
-                <span class="vs-row-label">Ann. vol</span>
+                <span class="vs-row-label" data-glossary="D18">Ann. vol</span>
                 <span data-testid="comp-vol-bot-text" class="vs-val">{% if has_vol %}Bot {{ "%.1f"|format(vol_bot * 100) }}%{% else %}Bot &mdash;{% endif %}</span>
                 <span data-testid="comp-vol-held-text" class="vs-val">{% if has_vol %}Held {{ "%.1f"|format(vol_held * 100) }}%{% else %}Held &mdash;{% endif %}</span>
                 <span data-testid="comp-vol-delta" class="vs-delta {% if vol_alpha_pp >= 0 %}pos{% else %}neg{% endif %}">{% if has_vol %}&alpha; {{ gap_pct(vol_alpha_pp, 1) }}{% else %}&alpha; &mdash;{% endif %}</span>
@@ -1595,23 +1640,22 @@
                has no honest timestamp to disclose. -->
           <div id="account-basis-as-of" class="account-basis-asof" hidden></div>
 
-          <div class="row-note" data-explainer="D20">Tracked counts every symphony the bot watches. Armed counts those with a stop set and waiting, and Triggered counts those the bot has exited.</div>
-          <div data-testid="mdd-lifetime-scalar" class="mdd-lifetime">
+          <div data-testid="mdd-lifetime-scalar" class="mdd-lifetime" data-glossary="D19">
             Lifetime Max DD &middot; since inception: <strong>{% if mdd_lifetime is not none %}{{ "%.2f"|format(mdd_lifetime|abs) }}%{% else %}&mdash;{% endif %}</strong>
           </div>
           <!-- Mini-stats -->
           <div data-testid="mini-stats" class="mini-stats">
             <div data-testid="mini-stat" class="mini-stat ms-tracked">
               <div class="mini-stat-value" id="hero-tracked">{{ meta.tracked if meta is defined else 0 }}</div>
-              <div class="mini-stat-label">Tracked</div>
+              <div class="mini-stat-label" data-glossary="D20t">Tracked</div>
             </div>
             <div data-testid="mini-stat" class="mini-stat ms-armed">
               <div class="mini-stat-value" id="hero-armed">{{ meta.armed if meta is defined else 0 }}</div>
-              <div class="mini-stat-label">Armed</div>
+              <div class="mini-stat-label" data-glossary="D20t">Armed</div>
             </div>
             <div data-testid="mini-stat" class="mini-stat ms-triggered">
               <div class="mini-stat-value" id="hero-triggered">{{ meta.triggered if meta is defined else 0 }}</div>
-              <div class="mini-stat-label">Triggered</div>
+              <div class="mini-stat-label" data-glossary="D20t">Triggered</div>
             </div>
           </div>
         </div>
@@ -1625,15 +1669,7 @@
          naked minus). "gross of trading costs" and "marks basis" are static markup, never
          script-written, so a script fault cannot drop the disclosure. -->
     <div data-testid="dollar-saved-panel" class="hero-section dollar-panel">
-      <div class="dash-panel-note" data-explainer="D21">The dollars the exits saved or lost against holding, added across the exits in the window you pick. The lines beside it give the same total after trading costs and at each exit's end-of-day prices.</div>
-      <details class="hp-more" data-terms="D21">
-        <summary>What the terms mean</summary>
-        <p data-term="D22">Exit: one time the bot sold a symphony out. Saved or lost: the symphony's value times the gap between its exit return and its held return, added over the exits.</p>
-        <p data-term="D23">Snapshot-time basis: each exit valued at the bot's afternoon check of that day.</p>
-        <p data-term="D24">Gross of trading costs: before any cost of trading the exit.</p>
-        <p data-term="D25">Net of trading costs: {% if copy_values.friction_pct is not none %}after taking {{ copy_values.friction_pct }} percentage points off every exit,{% else %}after taking a fixed trading cost off every exit,{% endif %} the cost the autotune assumes for each exit. With many exits the net result sits well below the gross one: fewer dollars saved, or more lost.</p>
-        <p data-term="D26">Realized (marks basis): each exit valued at its day's end-of-day prices instead of the afternoon check; the count says how many exits have those prices.</p>
-      </details>
+      <div class="dash-panel-note" data-explainer="D21">The dollars the exits saved or lost against holding, added across the exits in the window you pick.</div>
       <div class="dollar-lead">
         <span data-testid="dollar-saved-headline" id="dollar-saved-headline" class="dollar-figure">&mdash;</span>
         <span id="dollar-saved-verb"></span>
@@ -1678,29 +1714,7 @@
         {# The session the section's sparklines belong to, stated once here while it is not today's (the script writes it, hidden until then). #}
         <span data-field="section-session" class="count-note" hidden></span>
       </div>
-      <div class="row-note" data-explainer="D28">Symphonies with a stop armed, and any the bot has already exited. The engine checks armed stops every minute while the market is open, so these are the ones to watch.</div>
-      <details class="hp-more" data-terms="D28">
-        <summary>What the terms mean</summary>
-        <p data-term="D28a">N locked: how many tuning variables are locked across your symphonies; the weekly autotune leaves those alone.</p>
-        <p data-term="D28b">A date after the heading: the figures below belong to that session, not today.</p>
-        <p data-term="D29a">Trailing stop: the exit fired because the symphony fell further below its peak than its volatility-scaled stop allows.</p>
-        <p data-term="D29b">Take-profit: the exit fired to keep a gain the Monte Carlo check judged likely to fade.</p>
-        <p data-term="D29c">VWAP breakdown: the exit fired after the symphony had gained enough to arm this check, its holdings then traded below their volume-weighted average price, and its return stayed under the session high for several checks in a row.</p>
-        <p data-term="D29d">VWAP bleed: the exit fired after the symphony's own return stayed at or below a volatility-scaled loss line for several checks in a row; despite the name, this check does not look at the volume-weighted average price.</p>
-        <p data-term="D29e">Armed: the trailing stop is set and following the symphony's peak.</p>
-        <p data-term="D29f">TP-armed: the take-profit is set and waiting for its confirmation.</p>
-        <p data-term="D29g">Para-armed: the symphony rose fast enough that its stop has been pulled in closer.</p>
-        <p data-term="D30">Exit beat or trailed holding: the exit's return minus the symphony's held return.</p>
-        <p data-term="D31">vs held now: compared with the held return at this minute, so the figure moves while the market is open. At close: compared at the session's close.</p>
-        <p data-term="D32">Lifetime Max DD: this symphony's deepest fall since it was invested, from Composer's records, held through.</p>
-        <p data-term="D33">The first column is the session's return; its α is the bot's edge over holding for that session.</p>
-        <p data-term="D34">Bot · frozen: after an exit the Bot figure stays at the exit's return while If held keeps moving.</p>
-        <p data-term="D35">If held · live: the held return, still moving with the market after the exit.</p>
-        <p data-term="D36">Cum: return since the symphony was invested, from Composer; the Bot side adds the exits' effect over the shadow history.</p>
-        <p data-term="D37">Max DD on a card: each side's deepest fall over the shadow history; a positive α means the bot's fall was shallower.</p>
-        <p data-term="D38">The ring: the Monte Carlo reading, the share of similar past market days on which this symphony's holdings did better than they are doing now. A low reading means today is unusually strong; a dash means no reading.</p>
-        <p data-term="D39">Sparkline: the session's return; a TP, VWAP or Stop badge marks the minute of an exit.</p>
-      </details>
+      <div class="row-note" data-explainer="D28">Symphonies with a stop armed and any the bot has exited; the engine checks armed stops every minute while the market is open.</div>
       <div class="cards-grid sym-list">
         {% for sym in active_syms %}
         <div data-testid="sym-card" class="sym-card" onclick="openDetailPanel('{{ sym.get('id','') }}')" data-sym-id="{{ sym.get('id','') }}">
@@ -1815,7 +1829,7 @@
         <span data-testid="standby-section-count" class="count-note">{{ standby_syms | length }}</span>
         <span data-field="section-session" class="count-note" hidden></span>
       </div>
-      <div class="row-note" data-explainer="D40">Symphonies the bot is watching with no stop armed. A symphony moves up to Active when a stop arms or the bot exits it.</div>
+      <div class="row-note" data-explainer="D40">Symphonies the bot watches with no stop armed; one moves up to Active when a stop arms or the bot exits it.</div>
       <div class="cards-grid sym-list">
         {% for sym in standby_syms %}
         <div data-testid="sym-card" class="sym-card" onclick="openDetailPanel('{{ sym.get('id','') }}')" data-sym-id="{{ sym.get('id','') }}">
@@ -1993,14 +2007,7 @@
     <div class="dash-panel-title">
       CVaR diagnostic &mdash; 5th-percentile expected shortfall
     </div>
-    <div class="dash-panel-note" data-explainer="D41">The average of the worst outcomes for the first symphony, a measure of how bad its bad days could get. It is context only; the two notes below say why it is not a trading signal.</div>
-    <details class="hp-more" data-terms="D41">
-      <summary>What the terms mean</summary>
-      <p data-term="D42">CVaR: expected shortfall, the average of the outcomes in the worst tail the heading names.</p>
-      <p data-term="D43">stderr: the standard error, how far the figure could be off by chance alone.</p>
-      <p data-term="D44">Tail obs: how many outcomes fell in that tail; a small count means a rough figure.</p>
-      <p data-term="D46">Lower bound: the method tends to understate how bad the tail is, so the real figure is likely worse.</p>
-    </details>
+    <div class="dash-panel-note" data-explainer="D41">The average of the first symphony's worst outcomes, a measure of how bad its bad days could get.</div>
     <div class="cvar-body">
     <div class="cvar-figures">
       {# S-3 element (a): stderr / uncertainty band #}
@@ -2061,18 +2068,10 @@
         {%- else %}Atlas cache: {{ ((atlas_cache_health.reason if atlas_cache_health else None) or "unavailable") | replace("_", " ") }}{% endif %}
       </span>
     </div>
-    <div class="dash-panel-note" data-explainer="D47">Slices of your Alpaca account run by rules you write. A new rule starts in shadow, which records what it would have done and places no order; Arm Paper moves it to the paper account.</div>
-    <details class="hp-more" data-terms="D47">
-      <summary>What the terms mean</summary>
-      <p data-term="D49">Atlas cache: the age of the weekly saved copy of the community strategy catalog the builders read.</p>
-      <p data-term="D50a">Capital: the money assigned to the sleeve.</p>
-      <p data-term="D50b">Ledger cash: the sleeve's uninvested cash by its own books.</p>
-      <p data-term="D50c">Realized: gains or losses already closed out; n/a means the books could not be read.</p>
-      <p data-term="D50d">Rule line: the rule's mode in brackets, then how often it fired today and over its life, and what those fires realized.</p>
-    </details>
+    <div class="dash-panel-note" data-explainer="D47">Slices of your Alpaca account run by rules you write; a new rule starts in shadow, which places no order.</div>
 
     {# Shown exactly while there are no sleeves; a poll toggles it. #}
-    <div data-testid="sleeves-empty" class="dash-panel-note" data-explainer="D48"{% if sleeves %} hidden{% endif %}>No sleeves configured yet. This page has no form for creating one.</div>
+    <div data-testid="sleeves-empty" class="dash-panel-note" data-explainer="D48"{% if sleeves %} hidden{% endif %}>No sleeves configured yet, and this page has no form for creating one.</div>
     <div class="cards-grid" data-field="sleeves-list">
       {% for sleeve in sleeves %}{{ sleeve_card(sleeve) }}{% endfor %}
     </div>
@@ -2084,6 +2083,60 @@
   {% set _blank_sleeve = {"id": "", "name": "", "status": "", "status_badge_class": "standby", "capital_text": "", "ledger_cash_text": "", "realized_text": "", "rules": []} %}
   <template id="sleeve-card-template">{{ sleeve_card(_blank_sleeve, true) }}</template>
   <template id="sleeve-rule-row-template">{{ sleeve_rule_row("", _blank_rule, true) }}</template>
+
+  {% call glossary("/") %}
+    <p data-term="D02">Guard effect: how the bot's exits compare with holding every symphony through, over the window you pick.</p>
+    <p data-term="D04">Windows: 30d to 1Y are calendar days counted back from the session shown. YTD starts on 1 January; All time uses every recorded day.</p>
+    <p data-term="D06a">Bot: the return with the bot's exits applied. While live trading is off it is a simulation that places no order, and the headline then says Simulated.</p>
+    <p data-term="D06b">If held: what the same symphonies would have returned with no exit, held as Composer runs them.</p>
+    <p data-term="D07">Shadow history: the bot's own daily record of both paths, {% if copy_values.shadow_retention_days is not none %}kept for the last {{ copy_values.shadow_retention_days }} days.{% else %}kept for a limited number of days.{% endif %}</p>
+    <p data-term="D05">Account · all-time: Composer's own total return for the whole account since it was opened; it does not change with the window.</p>
+    <p data-term="D03">At their latest values: each symphony is weighted by its current value; before trading costs: no cost of trading is taken off.</p>
+    <p data-term="D10">The first row's Held figure is for the whole account, uninvested cash included; a card's Held figure leaves cash out.</p>
+    <p data-term="D12">α: the bot's edge over holding on that row. Positive is good for the bot: a higher return, a shallower fall or calmer swings.</p>
+    <p data-term="D13">Bars: the highlighted bar and label mark the better side on that row.</p>
+    <p data-term="D14">Value-weighted floor: Composer's account totals could not be read, so the row weights each symphony by its value instead.</p>
+    <p data-term="D15">Stale account data: Composer's account totals could not be refreshed, so the row uses the last totals read, from the time shown.</p>
+    <p data-term="D16">Cumulative · lifetime: Composer's Total return since each symphony was invested, which counts deposits and withdrawals; it is not a time-weighted return.</p>
+    <p data-term="D17">Max DD: maximum drawdown, the largest fall from a high to a later low in the window, shown as a size. The row waits until the window holds enough trading days for a stable figure.</p>
+    <p data-term="D18">Ann. vol: annualized volatility, how widely daily returns swing, scaled to a year; lower is calmer.</p>
+    <p data-term="D19">Lifetime Max DD · since inception: the deepest fall of your symphonies held through, from Composer's records since each was invested, weighted by value.</p>
+    <p data-term="D20t">Tracked, Armed, Triggered: Tracked counts every symphony the bot watches. Armed counts those with a stop set and waiting, and Triggered counts those the bot has exited.</p>
+    <p data-term="D22">Exit: one time the bot sold a symphony out. Saved or lost: the symphony's value times the gap between its exit return and its held return, added over the exits.</p>
+    <p data-term="D23">Snapshot-time basis: each exit valued at the bot's afternoon check of that day.</p>
+    <p data-term="D24">Gross of trading costs: before any cost of trading the exit.</p>
+    <p data-term="D25">Net of trading costs: {% if copy_values.friction_pct is not none %}after taking {{ copy_values.friction_pct }} percentage points off every exit,{% else %}after taking a fixed trading cost off every exit,{% endif %} the cost the autotune assumes for each exit. With many exits the net result sits well below the gross one: fewer dollars saved, or more lost.</p>
+    <p data-term="D26">Realized (marks basis): each exit valued at its day's end-of-day prices instead of the afternoon check; the count says how many exits have those prices.</p>
+    <p data-term="D28a">N locked: how many tuning variables are locked across your symphonies; the weekly autotune leaves those alone.</p>
+    <p data-term="D28b">A date after the heading: the figures below belong to that session, not today.</p>
+    <p data-term="D29a">Trailing stop: the exit fired because the symphony fell further below its peak than its volatility-scaled stop allows.</p>
+    <p data-term="D29b">Take-profit: the exit fired to keep a gain the Monte Carlo check judged likely to fade.</p>
+    <p data-term="D29c">VWAP breakdown: the exit fired after the symphony had gained enough to arm this check, its holdings then traded below their volume-weighted average price, and its return stayed under the session high for several checks in a row.</p>
+    <p data-term="D29d">VWAP bleed: the exit fired after the symphony's own return stayed at or below a volatility-scaled loss line for several checks in a row; despite the name, this check does not look at the volume-weighted average price.</p>
+    <p data-term="D29e">Armed: the trailing stop is set and following the symphony's peak.</p>
+    <p data-term="D29f">TP-armed: the take-profit is set and waiting for its confirmation.</p>
+    <p data-term="D29g">Para-armed: the symphony rose fast enough that its stop has been pulled in closer.</p>
+    <p data-term="D30">Exit beat or trailed holding: the exit's return minus the symphony's held return.</p>
+    <p data-term="D31">vs held now: compared with the held return at this minute, so the figure moves while the market is open. At close: compared at the session's close.</p>
+    <p data-term="D32">Lifetime Max DD: this symphony's deepest fall since it was invested, from Composer's records, held through.</p>
+    <p data-term="D33">The first column is the session's return; its α is the bot's edge over holding for that session.</p>
+    <p data-term="D34">Bot · frozen: after an exit the Bot figure stays at the exit's return while If held keeps moving.</p>
+    <p data-term="D35">If held · live: the held return, still moving with the market after the exit.</p>
+    <p data-term="D36">Cum: return since the symphony was invested, from Composer; the Bot side adds the exits' effect over the shadow history.</p>
+    <p data-term="D37">Max DD on a card: each side's deepest fall over the shadow history; a positive α means the bot's fall was shallower.</p>
+    <p data-term="D38">The ring: the Monte Carlo reading, the share of similar past market days on which this symphony's holdings did better than they are doing now. A low reading means today is unusually strong; a dash means no reading.</p>
+    <p data-term="D39">Sparkline: the session's return; a TP, VWAP or Stop badge marks the minute of an exit.</p>
+    <p data-term="D42">CVaR: expected shortfall, the average of the outcomes in the worst tail the heading names.</p>
+    <p data-term="D43">stderr: the standard error, how far the figure could be off by chance alone.</p>
+    <p data-term="D44">Tail obs: how many outcomes fell in that tail; a small count means a rough figure.</p>
+    <p data-term="D46">Lower bound: the method tends to understate how bad the tail is, so the real figure is likely worse.</p>
+    <p data-term="D49">Atlas cache: the age of the weekly saved copy of the community strategy catalog the builders read.</p>
+    <p data-term="D50a">Capital: the money assigned to the sleeve.</p>
+    <p data-term="D50b">Ledger cash: the sleeve's uninvested cash by its own books.</p>
+    <p data-term="D50c">Realized: gains or losses already closed out; n/a means the books could not be read.</p>
+    <p data-term="D50d">Rule line: the rule's mode in brackets, then how often it fired today and over its life, and what those fires realized.</p>
+    <p data-term="D50e">Arm Paper: moves a rule from shadow to the paper account.</p>
+  {% endcall %}
 
   </div><!-- /.page-wrap -->
 
@@ -2103,13 +2156,6 @@
       <div data-testid="detail-loading" id="detail-loading" class="math-row-hint detail-loading" hidden>Loading symphony details&hellip;</div>
 
       <div class="row-note" data-explainer="dp.lead">One symphony up close: where its stop sits, what the engine recorded in the session and how its risk compares with holding.</div>
-      <details class="hp-more" data-terms="dp.lead">
-        <summary>What the terms mean</summary>
-        <p data-term="D53">Return: the symphony's return in the session; frozen at exit after an exit, at close once the market has closed, real-time while it is open.</p>
-        <p data-term="D54">Stop level: the return at which the bot exits; breakeven lock means the stop has been raised to protect the gain, vol-scaled means it follows the symphony's volatility.</p>
-        <p data-term="D55">Peak (HWM): the highest return the symphony itself reached in the session; until an exit, the stop trails this peak, and after an exit the figure keeps following the held return.</p>
-        <p data-term="D56">Exit α: the exit's return minus the held return, for this symphony.</p>
-      </details>
 
       <!-- Sticky stats row -->
       <div data-testid="detail-stats-row" class="detail-stats-row">
@@ -2149,14 +2195,7 @@
             <button id="toggle-mc"        data-testid="overlay-toggle-mc"        class="overlay-toggle" type="button">MC</button>
           </div>
         </div>
-        <div class="row-note" data-explainer="D57">The symphony's return minute by minute through the session, drawn against its stop and breakeven lines. The toggles add the VWAP line and the Monte Carlo reading.</div>
-        <details class="hp-more" data-terms="D57">
-          <summary>What the terms mean</summary>
-          <p data-term="D58a">Bot (booked): the bot's path; it moves with the symphony until an exit and then stays at the exit's return.</p>
-          <p data-term="D58b">Breakeven lock: once the gain is large enough, the stop is raised so that the exit cannot fall below breakeven.</p>
-          <p data-term="D58c">VWAP: the day's volume-weighted average price.</p>
-          <p data-term="D58d">MC probability: the share of similar past market days on which this symphony's holdings did better than they are doing now; lower means today is unusually strong.</p>
-        </details>
+        <div class="row-note" data-explainer="D57">The symphony's return minute by minute through the session, drawn against its stop and breakeven lines.</div>
         <div data-testid="intraday-chart" class="intraday-chart-wrap">
           <canvas id="intraday-canvas" style="width:100%;height:100%;"></canvas>
         </div>
@@ -2186,13 +2225,7 @@
         <!-- Risk math panel — MathRow vertical list -->
         <div class="detail-split-cell">
           <div class="detail-section-title detail-split-title">Risk math</div>
-          <div class="row-note" data-explainer="D59">The figures the engine weighs when it decides whether to exit this symphony, from its latest check. The hint under each line says how to read it.</div>
-          <details class="hp-more" data-terms="D59">
-            <summary>What the terms mean</summary>
-            <p data-term="D63">Parabolic velocity: how fast the return is climbing; past the threshold, the stop is pulled in closer.</p>
-            <p data-term="D64">Active · floor: the breakeven lock has fired and the stop cannot go below the floor shown.</p>
-            <p data-term="D65">VWAP defense: whether the symphony's holdings trade above or below their volume-weighted average price, and by how much; below it after a gain is what the VWAP breakdown exit watches for.</p>
-          </details>
+          <div class="row-note" data-explainer="D59">The figures the engine weighs when it decides whether to exit this symphony, from its latest check.</div>
           <!-- MC probability -->
           <div class="math-row" id="dp-rm-mc-row">
             <div class="math-row-line">
@@ -2260,16 +2293,26 @@
         <div class="detail-section-head">
           <div class="detail-section-title">Symphony variables</div>
         </div>
-        <div class="row-note" data-explainer="D67">The stop settings this symphony runs with. A variable marked locked keeps its value when the weekly autotune runs.</div>
-        <details class="hp-more" data-terms="D67">
-          <summary>What the terms mean</summary>
-          <p data-term="D67t">locked: the weekly autotune may not change this variable.</p>
-        </details>
+        <div class="row-note" data-explainer="D67">The stop settings this symphony runs with.</div>
         <div data-testid="vars-section" class="vars-section" id="vars-section">
           <div class="var-row"><span class="var-key">No vars loaded</span></div>
         </div>
       </div>
 
+      {% call glossary("detail panel") %}
+        <p data-term="D53">Return: the symphony's return in the session; frozen at exit after an exit, at close once the market has closed, real-time while it is open.</p>
+        <p data-term="D54">Stop level: the return at which the bot exits; breakeven lock means the stop has been raised to protect the gain, vol-scaled means it follows the symphony's volatility.</p>
+        <p data-term="D55">Peak (HWM): the highest return the symphony itself reached in the session; until an exit, the stop trails this peak, and after an exit the figure keeps following the held return.</p>
+        <p data-term="D56">Exit α: the exit's return minus the held return, for this symphony.</p>
+        <p data-term="D58a">Bot (booked): the bot's path; it moves with the symphony until an exit and then stays at the exit's return.</p>
+        <p data-term="D58b">Breakeven lock: once the gain is large enough, the stop is raised so that the exit cannot fall below breakeven.</p>
+        <p data-term="D58c">VWAP: the day's volume-weighted average price.</p>
+        <p data-term="D58d">MC probability: the share of similar past market days on which this symphony's holdings did better than they are doing now; lower means today is unusually strong.</p>
+        <p data-term="D63">Parabolic velocity: how fast the return is climbing; past the threshold, the stop is pulled in closer.</p>
+        <p data-term="D64">Active · floor: the breakeven lock has fired and the stop cannot go below the floor shown.</p>
+        <p data-term="D65">VWAP defense: whether the symphony's holdings trade above or below their volume-weighted average price, and by how much; below it after a gain is what the VWAP breakdown exit watches for.</p>
+        <p data-term="D67t">locked: the weekly autotune may not change this variable.</p>
+      {% endcall %}
     </div>
 
     <!-- Panel footer — id + normalized name -->
@@ -2385,6 +2428,7 @@
     });
   </script>
   <script type="application/json" id="dashboard-initial-data" data-testid="dashboard-initial-data">{{ (dashboard_initial_data | default({})) | tojson }}</script>
+  <script src="{{ url_for('static', filename='glossary.js') }}"></script>
   <script src="{{ url_for('static', filename='index.js') }}"></script>
   <script src="{{ url_for('static', filename='settings-modal.js') }}"></script>
 </body>

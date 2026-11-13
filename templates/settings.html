@@ -1,3 +1,4 @@
+{% from '_glossary.html' import glossary -%}
 <!DOCTYPE html>
 <html lang="en" data-theme="">
 
@@ -962,7 +963,7 @@
 
   <!-- First panel: the page's caption with Save and Discard. No title card; the nav marks the page. -->
   <section class="hero-section settings-actions" data-testid="settings-actions">
-    <span class="legend-as-of settings-caption" data-testid="settings-caption" data-explainer="S01">Global settings and per-symphony overrides · saved changes apply from the next minute, no restart</span>
+    <span class="legend-as-of settings-caption" data-testid="settings-caption" data-explainer="S01">Global settings and per-symphony overrides</span>
     <div class="header-actions">
       <button type="button" id="btn-discard" class="btn-discard" disabled>Discard changes</button>
       <button type="button" id="btn-save" class="btn-save" disabled>Save changes</button>
@@ -996,7 +997,7 @@
       <!-- ── Master controls ─────────────────────────────────────────────── -->
       <section id="sec-master" class="settings-section hero-section">
         <div class="section-header settings-sec-title">Master controls</div>
-        <div class="sec-subtitle" data-explainer="S03">The mode and the start time that govern real-money execution. Treat both with care.</div>
+        <div class="sec-subtitle" data-explainer="S03">The mode and the start time that govern real-money execution, so treat both with care.</div>
 
         <div class="ledger">
         <div class="live-card sym-card" id="live-card" data-live="false">
@@ -1036,20 +1037,14 @@
       <!-- ── Algorithm parameters ────────────────────────────────────────── -->
       <section id="sec-algorithm" class="settings-section hero-section" hidden>
         <div class="section-header settings-sec-title">Algorithm parameters</div>
-        <div class="sec-subtitle" data-explainer="S08">Global defaults applied to every symphony. Per-symphony overrides in the next section take precedence.</div>
+        <div class="sec-subtitle" data-explainer="S08">Global defaults for every symphony; a per-symphony override in the next section takes precedence.</div>
         <div id="algo-grid"><!-- rendered by settings.js --></div>
       </section>
 
       <!-- ── Credentials ─────────────────────────────────────────────────── -->
       <section id="sec-credentials" class="settings-section hero-section" hidden>
         <div class="section-header settings-sec-title">Credentials</div>
-        <div class="sec-subtitle" data-explainer="S11">The keys, account ids and webhook address the bot uses for Composer, Alpaca, Discord and Anthropic. The dashboard does not save credentials: they are set in the .env file on the host, and the server shows only masked placeholders here.</div>
-        <details class="hp-more" data-terms="S11">
-          <summary>What the terms mean</summary>
-          <p data-term="S13a">Composer: the key and secret the bot reads your symphonies and sends sell orders with, and your account ids.</p>
-          <p data-term="S13b">Alpaca · price data: the keys the bot reads market prices with.</p>
-          <p data-term="S13c">Discord + Anthropic: the webhook for alerts and the key the advisor uses.</p>
-        </details>
+        <div class="sec-subtitle" data-explainer="S11">The keys, account ids and webhook address the bot uses for Composer, Alpaca, Discord and Anthropic, shown masked.</div>
 
         <div class="cred-warn">
           <strong>Heads up.</strong>
@@ -1129,7 +1124,7 @@
       <!-- ── Symphony overrides ──────────────────────────────────────────── -->
       <section id="sec-symphonies" class="settings-section hero-section" hidden>
         <div class="section-header settings-sec-title">Per-symphony overrides</div>
-        <div class="sec-subtitle" data-explainer="S14">Override globals or lock parameters against autotuner changes. Stored in alphabot_state.db, keyed on normalized symphony name. A pinned value is stored for the symphony and equals the global today; it will not follow a later global change.</div>
+        <div class="sec-subtitle" data-explainer="S14">Override a global setting or lock a parameter against autotune changes, for one symphony at a time.</div>
 
         <div class="sym-split">
           <div id="sym-list"><!-- rendered by settings.js --></div>
@@ -1140,11 +1135,7 @@
       <!-- ── Maintenance ───────────────────────────────────────────────────── -->
       <section id="sec-maintenance" class="settings-section hero-section" hidden>
         <div class="section-header settings-sec-title">Maintenance</div>
-        <div class="sec-subtitle" data-explainer="S17">Destructive data operations. Each action is irreversible — use with care.</div>
-        <details class="hp-more" data-terms="S17">
-          <summary>What the terms mean</summary>
-          <p data-term="S18">Synthetic post-mortem: a daily exit record that was generated or seeded rather than captured live. Re-syncs account totals: reads the account totals from Composer again.</p>
-        </details>
+        <div class="sec-subtitle" data-explainer="S17">Data operations that cannot be undone, so use each with care.</div>
 
         <div class="maint-warn">
           <strong>Note.</strong>
@@ -1197,10 +1188,22 @@
 
       </section>
 
+      {% call glossary("Settings") %}
+        <p data-term="S13a">Composer: the key and secret the bot reads your symphonies and sends sell orders with, and your account ids.</p>
+        <p data-term="S13b">Alpaca · price data: the keys the bot reads market prices with.</p>
+        <p data-term="S13c">Discord + Anthropic: the webhook for alerts and the key the advisor uses.</p>
+        <p data-term="S14s">Where overrides live: they are stored in alphabot_state.db, keyed on the normalized symphony name.</p>
+        <p data-term="S14p">Pinned value: a value stored for the symphony that equals the global today; it will not follow a later global change.</p>
+        <p data-term="S15">uses globals: no value set for this symphony. N overrides: values set for this symphony. lock: stop the autotune changing a value. override: a value that replaces the global one.</p>
+        <p data-term="S16">No longer held: Composer no longer reports this symphony and the engine writes it no rows; it returns here by itself if its rows resume.</p>
+        <p data-term="S18">Synthetic post-mortem: a daily exit record that was generated or seeded rather than captured live. Re-syncs account totals: reads the account totals from Composer again.</p>
+      {% endcall %}
+
     </main>
   </div>
 </div>
 
+<script src="{{ url_for('static', filename='glossary.js') }}"></script>
 <script src="{{ url_for('static', filename='settings.js') }}"></script>
 </body>
 </html>

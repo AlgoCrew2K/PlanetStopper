@@ -445,32 +445,7 @@
   }
 
   // ── Render symphony overrides ──────────────────────────────────────────────
-  /**
-   * One closed "What the terms mean" disclosure under the symphony overrides description. It is
-   * built once and left alone by every later render, so an operator who opened it keeps it open.
-   */
-  function ensureSymphonyTerms() {
-    const section = document.getElementById('sec-symphonies');
-    if (!section || section.querySelector('details[data-terms="S14"]')) return;
-    const split = section.querySelector('.sym-split');
-    if (!split) return;
-    const details = document.createElement('details');
-    details.className = 'hp-more';
-    details.dataset.terms = 'S14';
-    const summary = document.createElement('summary');
-    summary.textContent = 'What the terms mean';
-    details.appendChild(summary);
-    [['S15', "uses globals: no value set for this symphony. N overrides: values set for this symphony. lock: stop the autotune changing a value. override: a value that replaces the global one."], ['S16', "No longer held: Composer no longer reports this symphony and the engine writes it no rows; it returns here by itself if its rows resume."]].forEach(([key, text]) => {
-      const line = document.createElement('p');
-      line.dataset.term = key;
-      line.textContent = text;
-      details.appendChild(line);
-    });
-    section.insertBefore(details, split);
-  }
-
   function renderSymphonies(data) {
-    ensureSymphonyTerms();
     const list = document.getElementById('sym-list');
     list.innerHTML = '';
 
@@ -606,14 +581,14 @@
       row.innerHTML = `
         <div class="override-row-header">
           <span class="override-key">${escHtml(key).replace(/_/g, '_<wbr>')}</span>
-          <button type="button" class="lock-btn${locked ? ' lock-btn-on' : ''}" data-locked="${locked ? '1' : '0'}">${locked ? 'locked' : 'lock'}</button>
+          <button type="button" data-glossary="S15" class="lock-btn${locked ? ' lock-btn-on' : ''}" data-locked="${locked ? '1' : '0'}">${locked ? 'locked' : 'lock'}</button>
         </div>
         <div class="override-global-row">
           <span class="override-label">global</span>
           <span class="override-global-val">${escHtml(String(gVal))}${m.unit ? ' ' + escHtml(m.unit) : ''}</span>
         </div>
         <div class="override-input-row">
-          <span class="override-label override-label-override${hasOverride ? ' override-label-active' : ''}">override</span>
+          <span data-glossary="S15" class="override-label override-label-override${hasOverride ? ' override-label-active' : ''}">override</span>
           <input type="text" class="override-input" value="${ovVal != null ? escHtml(String(ovVal)) : ''}" placeholder="—" autocomplete="off">
         </div>
       `;
