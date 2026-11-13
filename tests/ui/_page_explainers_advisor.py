@@ -373,7 +373,7 @@ _SB_VARIANTS = (
         "metrics": {"sortino_ratio": 12.84},
     },
     {
-        "sharpe": 2.7,
+        "sharpe": 1234.567,
         "cagr": 0.1862,
         "max_drawdown": -0.0731,
         "live_baseline": {"sharpe": 0.8, "max_drawdown": -0.19, "cagr": 0.064},
@@ -409,7 +409,7 @@ _FR_VARIANTS = (
     {},
     {"candidate_cagr": -0.031, "candidate_calmar": 12.345, "node_count_delta": 12},
     {"incumbent_max_drawdown": -0.3412, "node_count_delta": 0},
-    {"candidate_max_drawdown": -0.0043, "node_count_delta": -113},
+    {"candidate_max_drawdown": -0.0043, "node_count_delta": -113, "candidate_calmar": 98765.432},
 )
 
 
