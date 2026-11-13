@@ -133,8 +133,13 @@ RULED_FILE_REMOVALS = frozenset(
         ("static/ai_advisor.js", "testid:retirement-pair"),
         ("static/ai_advisor.js", "testid:retirement-recommender-section"),
         ("static/ai_advisor.js", "testid:tenure-review-section"),
-        # The closed-disclosure look of a Glossary comes from the shared macro; History keeps the
-        # class on its own reason-descriptions disclosure.
+        # History's exit reasons disclosure is gone, its four definitions are Glossary lines, and
+        # the shared Glossary macro keeps the class.
+        ("templates/history.html", "class:hp-more"),
+        ("templates/history.html", "id:reason-descriptions"),
+        ("templates/history.html", "id:reason-descriptions-list"),
+        ("templates/history.html", "testid:reason-descriptions"),
+        # The closed-disclosure look of a Glossary comes from the shared macro.
         ("templates/index.html", "class:hp-more"),
         ("templates/performance.html", "class:hp-more"),
         ("templates/settings.html", "class:hp-more"),
