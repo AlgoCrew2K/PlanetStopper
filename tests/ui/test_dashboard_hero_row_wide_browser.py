@@ -97,16 +97,23 @@ _BAND_FACTS = """
 
 
 @pytest.mark.parametrize("width", BAND_WIDTHS)
-@pytest.mark.parametrize("face", ["default", "wide"])
+@pytest.mark.parametrize("face", ["default", "wide", "large"])
 def test_the_headline_holds_its_figure_and_the_picker_clears_it_around_the_desktop_breakpoint(
     probe, width, face
 ):
+    """``wide`` swaps in Verdana where installed; ``large`` sets the figure to 84 px, so the
+    figure and the picker need more than the hero's top block holds at 1290 px and below on any
+    machine, whatever faces it has."""
     probe.page.set_viewport_size({"width": width, "height": HEIGHT})
     probe.page.goto(probe.server.base_url + "/")
     wait_refresh(probe, 1)
     if face == "wide":
         probe.page.evaluate(
             "() => document.documentElement.style.setProperty('--studio-sans', 'Verdana, sans-serif')"
+        )
+    if face == "large":
+        probe.page.evaluate(
+            "() => { document.getElementById('guard-alpha-headline').style.fontSize = '84px'; }"
         )
     facts = probe.page.evaluate(_BAND_FACTS, "-12.34%")
     where = f"{width}px {face} face"
