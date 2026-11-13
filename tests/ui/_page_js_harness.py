@@ -77,6 +77,8 @@ El.prototype.contains = function (n) { for (; n; n = n.parentNode) { if (n === t
 Object.defineProperty(El.prototype, 'firstElementChild', { get() { return this.children[0] || null; }, configurable: true });
 El.prototype.scrollIntoView = function () {};
 El.prototype.getBoundingClientRect = function () { return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }; };
+// No layout engine: no element has a box, as a rendered element with display: none has none.
+El.prototype.getClientRects = function () { return []; };
 El.prototype.append = function () { Array.from(arguments).forEach((n) => this.appendChild(typeof n === 'string' ? new TextNode(n) : n)); };
 El.prototype.insertAdjacentHTML = function (where, html) {
   const holder = new El('div');
