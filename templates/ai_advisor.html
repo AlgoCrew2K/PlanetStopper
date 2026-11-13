@@ -1137,8 +1137,7 @@
                 grid-template-columns: subgrid;
             }
             .obs-history > :not(summary) { grid-column: 1 / -1; contain: inline-size; }
-            /* The suggestion cards the script writes: a text track and one actions track of one width. */
-            /* The actions keep one width; where the card cannot hold 12rem of text beside them they wrap under it. */
+            /* The suggestion cards the script writes: the actions keep one width; where the card cannot hold 12rem of text beside them they wrap under it. */
             .suggestion-actions { width: 12rem; }
             .obs-history::details-content { grid-column: 1 / -1; }
         }
