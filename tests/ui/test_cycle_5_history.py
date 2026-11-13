@@ -242,7 +242,8 @@ def test_history_page_header_subtitle(hist_client):
 
     resp = hist_client.get("/history")
     html = " ".join(resp.data.decode("utf-8", errors="replace").split())
-    assert page_copy.text("Y02", "C") in html
+    assert page_copy.x_row("CX-8")["new_text"] in html
+    assert page_copy.text("Y02", "C") not in html, "the longer caption is back"
 
 
 # ===========================================================================
