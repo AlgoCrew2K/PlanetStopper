@@ -357,6 +357,52 @@ def test_logic_change_blocks_still_sit_side_by_side_at_1440_with_their_own_track
     assert not columns["violations"], "\n".join(columns["violations"])
 
 
+# The lines each label and value of a result card takes: a box that wraps has text rectangles at more
+# than one top.
+_LINES_JS = """(selector) => {
+  const root = document.querySelector(selector);
+  const out = { cards: 0, wrapped: [] };
+  const linesOf = (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return new Set([...range.getClientRects()].filter((g) => g.width > 0)
+      .map((g) => Math.round(g.top))).size;
+  };
+  for (const card of root.querySelectorAll('.sym-card')) {
+    if (!card.querySelector('.stats-grid')) continue;
+    out.cards += 1;
+    for (const el of card.querySelectorAll('.stat-label, .stat-value')) {
+      if (el.getClientRects().length === 0) continue;
+      const lines = linesOf(el);
+      if (lines > 1) out.wrapped.push(el.className + ' "' + el.textContent.trim() + '" takes ' + lines + ' lines');
+    }
+  }
+  return out;
+}"""
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+@pytest.mark.parametrize("name", list(KINDS))
+def test_every_label_and_value_of_a_result_card_takes_one_line_at_every_width(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    name,
+    width,  # noqa: F811
+):
+    """PM ruling R2-2 with S-10.2: the two blocks do not squeeze into one card split over two lines;
+    where they do not fit side by side, Variant drops under Baseline. Rejects a stats grid that never
+    wraps its blocks (flex-wrap: nowrap kept the five Logic Changes cards side by side at 1920 with
+    twenty labels and figures broken across two lines inside the card, which a containment test
+    passes because nothing leaves the card)."""
+    _prepare(tmp_path, monkeypatch)
+    with _evaluated(firefox, advisor_server, monkeypatch, name, width) as probe:
+        read = probe.page.evaluate(_LINES_JS, KINDS[name]["results"])
+    assert read["cards"] == CARD_COUNT, f"{read['cards']} result cards, not {CARD_COUNT}"
+    assert read["wrapped"] == [], "\n".join(read["wrapped"])
+
+
 @pytest.mark.parametrize("width", [1001, 1920])
 @pytest.mark.parametrize("name", list(KINDS))
 def test_stacked_blocks_share_tracks_when_the_figures_are_at_the_edge_of_their_formats(
