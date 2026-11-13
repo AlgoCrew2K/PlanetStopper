@@ -49,10 +49,16 @@ _REFERENCE_DIGESTS = {
     # History chart note gained the space that keeps the tallest bar off it; each diff is that.
     # Re-pinned a last time after the aligned figures, the one Glossary per page and the removed
     # captions grid, two-group risk table and far-end stamps (each diff is those rules and markup).
-    "history.html": "57145336af1b162a784a601e4c83bba13a9959fd220b604a37a7df2108c71ca7",
+    # Re-pinned after the fix round took the 1240 px side-column grids (the hero descriptor, the first
+    # description and the exits description), the exit reasons disclosure and its markup out; the diff
+    # is those rules, that markup and the four reason definitions added to the Glossary.
+    "history.html": "48005346c57aca1edf410ec82b956e3162652f752fc8ba39d72f72b8c504b975",
     # performance.html was re-pinned after the risk metrics table took its content width from 1001 px
     # (one `.metrics-tbl--fit` rule); the diff is that rule and nothing else.
-    "performance.html": "1cf625da28f6599c0578a81a36fe8aca5a7f23b00aa35d68bde061940dbff773",
+    # Re-pinned after the fix round took the captions' right-hand column grid out and let the stacked
+    # tables wrap their headers and first column (the turnover table fits its panel); the diff is
+    # those rules.
+    "performance.html": "d9d71917ebf0c09aaf409bde57550713ff30994cc17151385b2c01102c1114e1",
     "settings.html": "8d12e03679dfe44dc055d3fee78ca322f20d1caaea6a7ee6499c30df18e3abfe",
 }
 
