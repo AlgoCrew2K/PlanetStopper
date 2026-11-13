@@ -225,6 +225,38 @@ def test_a_closed_disclosure_holds_no_measured_row(firefox):  # noqa: F811
     assert _edges(firefox, body_open)["found"] == 1
 
 
+# A status dot is part of the cell: a column that starts with one has its edge at the dot's left.
+DOT_CSS = """.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 8px; background: #888; }
+.chip { display: inline-flex; align-items: center; gap: 8px; }
+.chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #888; }"""
+DOT_ROWS = """<tr><td><span class="dot"></span>Take-profit</td><td class="num">4</td></tr>
+<tr><td><span class="dot"></span>Trailing stop</td><td class="num">12</td></tr>"""
+CHIP_ROWS = """<tr><td><span class="chip">Met</span></td><td class="num">4</td></tr>
+<tr><td><span class="chip">Not met</span></td><td class="num">12</td></tr>"""
+
+
+@pytest.mark.parametrize("rows", [DOT_ROWS, CHIP_ROWS], ids=["empty dot element", "before dot"])
+def test_a_header_over_the_dot_of_the_cells_below_is_aligned(firefox, rows):  # noqa: F811
+    found = _edges(firefox, TABLE.format(rows=rows), DOT_CSS)
+    assert found["violations"] == [], found
+
+
+@pytest.mark.parametrize("rows", [DOT_ROWS, CHIP_ROWS], ids=["empty dot element", "before dot"])
+def test_a_header_shifted_to_the_text_beside_the_dot_is_reported(firefox, rows):  # noqa: F811
+    css = DOT_CSS + " th:first-child { padding-left: 28px; }"
+    found = _edges(firefox, TABLE.format(rows=rows), css)
+    assert any('column "Symphony": left edges differ' in v for v in found["violations"]), found
+
+
+def test_a_cell_with_a_dot_among_its_text_still_starts_at_its_first_painted_content(
+    firefox,  # noqa: F811
+):
+    rows = '<tr><td>Alpha <span class="dot"></span></td><td class="num">4</td></tr>'
+    found = _edges(firefox, TABLE.format(rows=rows), DOT_CSS)
+    assert found["violations"] == [], found
+
+
 # ---------------------------------------------------------------------------
 # COLUMN_GAPS_JS
 # ---------------------------------------------------------------------------

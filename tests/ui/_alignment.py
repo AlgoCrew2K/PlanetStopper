@@ -101,6 +101,13 @@ const clippedAway = (node, root) => {
   }
   return false;
 };
+const DOT_MAX = 16;
+const isPaintedDot = (cs) => {
+  const bg = cs.backgroundColor;
+  return !!bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)' && cs.borderTopLeftRadius !== '0px';
+};
+const isDot = (g, cs) => g.width >= 1 && g.width <= DOT_MAX && g.height >= 1 && g.height <= DOT_MAX &&
+    cs.display !== 'inline' && isPaintedDot(cs);
 const contentBox = (el) => {
   let box = null;
   const add = (g) => { if (g.width > 1 && g.height > 1) box = union(box, g); };
@@ -114,6 +121,23 @@ const contentBox = (el) => {
   const sel = CONTROL + ', ' + MEDIA;
   for (const c of el.querySelectorAll(sel)) if (shown(c)) add(c.getBoundingClientRect());
   if (el.matches(sel) && shown(el)) add(el.getBoundingClientRect());
+  // A status dot is part of the cell: a small painted mark with no text, either an empty element
+  // or the ::before of an element, so the column's edge is the left of the dot when a cell starts
+  // with one.
+  for (const d of [el, ...el.querySelectorAll('*')]) {
+    if (!shown(d)) continue;
+    const g = d.getBoundingClientRect();
+    if (!d.children.length && !(d.textContent || '').trim() && isDot(g, getComputedStyle(d))) add(g);
+    const pseudo = getComputedStyle(d, '::before');
+    if (pseudo.content !== 'none' && pseudo.content !== 'normal') {
+      const size = parseFloat(pseudo.width);
+      if (size >= 1 && size <= DOT_MAX && isPaintedDot(pseudo)) {
+        const cs = getComputedStyle(d);
+        const left = g.left + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.paddingLeft) || 0);
+        add({ left, right: left + size, top: g.top, bottom: g.bottom, width: size, height: g.height });
+      }
+    }
+  }
   return box;
 };
 const words = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
