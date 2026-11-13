@@ -224,13 +224,6 @@
         'VWAP Bleed Cut': 'VWAP bleed',
     };
 
-    var REASON_DESCRIPTIONS = {
-        'Take-Profit': 'the exit fired to keep a gain the Monte Carlo check judged likely to fade.',
-        'Trailing Stop': 'the exit fired because the symphony fell further below its peak than its volatility-scaled stop allows.',
-        'VWAP Breakdown': 'the exit fired after the symphony had gained enough to arm this check, its holdings then traded below their volume-weighted average price, and its return stayed under the session high for several checks in a row.',
-        'VWAP Bleed Cut': 'the exit fired after the symphony\'s own return stayed at or below a volatility-scaled loss line for several checks in a row; despite the name, this check does not look at the volume-weighted average price.',
-    };
-
     function reasonDisplayName(reason) {
         return REASON_DISPLAY[reason] || reason;
     }
@@ -283,25 +276,6 @@
         return '<span class="hp-dot' + (key ? ' hp-dot--' + key : '') + '"></span>';
     }
 
-    // The definitions sit behind a disclosure that is collapsed by default, one entry per reason the
-    // window holds (a reason with no exits has no row to explain).
-    function renderReasonDescriptions(reasons) {
-        var wrap = document.getElementById('reason-descriptions');
-        var list = document.getElementById('reason-descriptions-list');
-        if (!wrap || !list) return;
-        list.textContent = '';
-        reasons.forEach(function (reason) {
-            var term = document.createElement('dt');
-            term.insertAdjacentHTML('beforeend', reasonDotHtml(reason));
-            term.appendChild(document.createTextNode(reasonDisplayName(reason)));
-            var definition = document.createElement('dd');
-            definition.textContent = REASON_DESCRIPTIONS[reason] || reason;
-            list.appendChild(term);
-            list.appendChild(definition);
-        });
-        wrap.hidden = reasons.length === 0;
-    }
-
     function renderReasonCards(byReason) {
         var container = document.getElementById('reason-cards');
         if (!container) return;
@@ -312,7 +286,6 @@
         if (Object.keys(canonical).length === 0) {
             // The message is one row of the ledger, spanning every column.
             container.innerHTML = '<tr><td class="hp-empty-cell" colspan="7">No exit reason data for this window.</td></tr>';
-            renderReasonDescriptions([]);
             return;
         }
 
@@ -351,7 +324,6 @@
         }).join('');
 
         container.innerHTML = html;
-        renderReasonDescriptions(Object.keys(canonical));
     }
 
     // ---------------------------------------------------------------------------

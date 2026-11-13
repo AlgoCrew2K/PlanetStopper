@@ -300,40 +300,6 @@
         .triggers-tbl:has(.hp-empty-cell) thead { display: none; }
         .triggers-tbl td.hp-time { color: var(--studio-ink-dim); }
 
-        /* From 1240 px the first panel pairs the description with the controls so the band beside
-           the description is not empty; the exits and by-reason tables use column widths that leave
-           no wide gap between a column's text and the next. */
-        @media (min-width: 1240px) {
-            [data-testid="history-controls"] {
-                display: grid;
-                grid-template-columns: 400px minmax(0, 1fr);
-                column-gap: 24px;
-                align-items: start;
-            }
-            [data-testid="history-controls"] > * { grid-column: 1 / -1; }
-            [data-testid="history-controls"] > [data-explainer],
-            [data-testid="history-controls"] > details { grid-column: 1; }
-            [data-testid="history-controls"] > .hp-toolbar { grid-column: 2; grid-row: 1 / span 2; }
-            [data-testid="history-hero"] {
-                display: grid;
-                grid-template-columns: minmax(0, 1fr) 380px;
-                column-gap: 24px;
-                align-items: start;
-            }
-            [data-testid="recent-triggers"] {
-                display: grid;
-                grid-template-columns: auto 1fr auto;
-                column-gap: 16px;
-                row-gap: 8px;
-                align-items: center;
-            }
-            [data-testid="recent-triggers"] > .hp-head { display: contents; }
-            [data-testid="recent-triggers"] .hp-heading { grid-column: 1; grid-row: 1; }
-            [data-testid="recent-triggers"] > [data-explainer] { grid-column: 2; grid-row: 1; }
-            [data-testid="recent-triggers"] .history-exits-btn { grid-column: 3; grid-row: 1; }
-            [data-testid="recent-triggers"] > .hp-scroll { grid-column: 1 / -1; }
-        }
-
         /* From 1001 px both tables take their content widths, so no wide gap opens between a
            column's text and the next one's, and every figure column (the exits' Detail included)
            stays right-aligned under its header. */
@@ -545,11 +511,6 @@
                     </tbody>
                 </table>
             </div>
-            <!-- Filled by renderReasonDescriptions() for the reasons the window holds; collapsed by default. -->
-            <details class="hp-more" id="reason-descriptions" data-testid="reason-descriptions" hidden>
-                <summary>What the exit reasons mean</summary>
-                <dl id="reason-descriptions-list"></dl>
-            </details>
         </div>
 
         <!-- Recent triggers -->
@@ -588,6 +549,10 @@
             <p data-term="Y05">Dollar result: the dollars the exits saved or lost against holding, on the same snapshot basis as the dashboard.</p>
             <p data-term="Y07">Win rate: the share of exits whose exit alpha was above zero.</p>
             <p data-term="Y13">Wins: exits whose exit alpha was above zero. Avg per exit: the reason's sum of exit alpha divided by its number of exits.</p>
+            <p data-term="D29b">Take-profit: the exit fired to keep a gain the Monte Carlo check judged likely to fade.</p>
+            <p data-term="D29a">Trailing stop: the exit fired because the symphony fell further below its peak than its volatility-scaled stop allows.</p>
+            <p data-term="D29c">VWAP breakdown: the exit fired after the symphony had gained enough to arm this check, its holdings then traded below their volume-weighted average price, and its return stayed under the session high for several checks in a row.</p>
+            <p data-term="D29d">VWAP bleed: the exit fired after the symphony's own return stayed at or below a volatility-scaled loss line for several checks in a row; despite the name, this check does not look at the volume-weighted average price.</p>
             <p data-term="Y16">Detail: the exit's exit alpha, in pts.</p>
         {% endcall %}
 

@@ -144,7 +144,6 @@
       grid-template-areas:
         "label label"
         "note note"
-        "terms terms"
         "notice notice"
         "headline picker"
         "descriptor descriptor"
@@ -152,7 +151,6 @@
     }
     .hero-top .guard-alpha-label { grid-area: label; }
     .hero-top [data-explainer] { grid-area: note; }
-    .hero-top .hp-more { grid-area: terms; }
     .hero-top #guard-alpha-window-notice { grid-area: notice; }
     .hero-top .guard-alpha-headline { grid-area: headline; }
     .hero-top .window-selector { grid-area: picker; align-self: center; flex-wrap: wrap; }
@@ -756,7 +754,6 @@
         grid-template-areas:
           "label label"
           "note note"
-          "terms terms"
           "notice notice"
           "headline headline"
           "picker picker"
@@ -1144,10 +1141,7 @@
     .dash-panels > .dash-panel { flex: 1 1 360px; min-width: 0; }
     /* A description reads as one short paragraph above what it describes. */
     [data-explainer] { display: block; line-height: 1.45; margin: 0 0 4px; }
-    [data-explainer] + .hp-more { margin: 0 0 8px; }
-    .dollar-panel > [data-explainer], .dollar-panel > .hp-more { grid-column: 1 / -1; margin-top: 0; }
-    .dollar-panel > [data-explainer] { font-size: 13px; }
-    .dollar-panel > [data-explainer] + .hp-more { margin-bottom: 2px; }
+    .dollar-panel > [data-explainer] { grid-column: 1 / -1; margin-top: 0; font-size: 13px; }
     .dash-panel-title { font-size: 14px; font-weight: 500; color: var(--studio-ink); margin-bottom: 8px; }
     .dash-panel-head {
       display: flex;
@@ -1160,10 +1154,8 @@
     .dash-panel-head .dash-panel-title { margin-bottom: 0; }
     .dash-panel-note { color: var(--studio-ink-dim); font-size: 12px; margin-top: 4px; }
     /* The figures and the two notes share rows, so the short lines leave no tall block beside them. */
-    /* The terms disclosure and the no-sleeves line share a row, so the short lines leave no block beside them. */
     .dash-panel[data-testid="sleeves-panel"] { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 24px; align-items: baseline; }
     .dash-panel[data-testid="sleeves-panel"] > * { grid-column: 1 / -1; }
-    .dash-panel[data-testid="sleeves-panel"] > details.hp-more { grid-column: 1; }
     .dash-panel[data-testid="sleeves-panel"] > [data-testid="sleeves-empty"] { grid-column: 2; }
     .cvar-body { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 32px; }
     .cvar-figures { display: flex; gap: 8px 32px; flex-wrap: wrap; align-items: baseline; }
@@ -1198,8 +1190,7 @@
          so no wide gap opens between them. */
       .vs-rows {
         display: grid;
-        grid-template-columns: repeat(4, max-content);
-        justify-content: start;
+        grid-template-columns: minmax(0, max-content) max-content max-content minmax(max-content, 1fr);
         column-gap: 12px;
       }
       .vs-row {
@@ -1216,6 +1207,8 @@
       }
       .vs-row-top [data-testid$="-bot-text"] { margin-left: 0; }
       .vs-val, .vs-delta { min-width: 0; }
+      /* The last column takes the box's spare width, so its figure starts where the column does. */
+      .vs-delta { text-align: left; }
       .vs-row-top > .basis-chip { grid-column: 1 / -1; }
       .vs-row-lead { display: flex; align-items: baseline; gap: 4px 6px; }
       .vs-bars { grid-column: 1 / -1; }
@@ -1243,20 +1236,20 @@
       .sleeve-rule-row > span:first-child { display: contents; }
     }
 
-    @media (min-width: 1440px) {
-      /* The lead figure and the three other bases: one line each, equal gaps. */
+    @media (min-width: 1001px) {
+      /* The lead sentence with its basis line under it, and the three other bases stacked in one
+         column 40 px to its right; every line stays on one line. */
       .dollar-panel {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 4px 32px;
+        grid-template-columns: max-content max-content;
+        justify-content: start;
+        column-gap: 40px;
+        align-items: start;
       }
-      .dollar-panel > [data-explainer] { flex: 0 0 100%; }
+      .dollar-lines { display: block; }
       .dollar-lead, .dollar-line { white-space: nowrap; }
-      .dollar-lead { display: flex; align-items: center; gap: 0 12px; }
-      .dollar-meta { flex-wrap: nowrap; margin-top: 0; }
-      /* An empty span (a verb or a basis label not written yet) holds no gap. */
-      .dollar-lead > :empty, .dollar-meta > :empty { display: none; }
+      .dollar-meta { flex-wrap: nowrap; }
+      /* An empty span (a basis label not written yet) holds no gap. */
+      .dollar-meta > :empty { display: none; }
     }
     .ctl-btn {
       height: 28px;
