@@ -41,7 +41,7 @@ FIRST_SCENARIO = next(iter(SCENARIOS))
 # The page baseline is read at the commit whose page carries the page descriptions, disclosures and
 # the denser layout: its text is what the page gained since the Cash Now removal, and the golden
 # producer keeps the poll cleanup reference.
-REFERENCE_COMMIT = "6b63f53e0d718e230878df900a4aabc72c5b67ed"
+REFERENCE_COMMIT = "3af5d6264afdca3d94f0be2066ff8af7cbe3082c"
 
 
 @pytest.mark.parametrize("name", list(SCENARIOS))

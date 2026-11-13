@@ -53,3 +53,13 @@ rows to under the cards' description, so the page text of eight scenarios change
   and the cards are equal. `reference_commit` and `captured_at_utc` changed.
 - sha256 of `baseline.json` (LF line ends): `1c97024b8dc55e5b28448c56868fc11c19bcad434bb03b55492dd46d1cdfadc7`
 - PM sign-off: not needed (producer output; the only difference is the moved line's position).
+
+## Revision: re-recorded at the aligned-tables-and-quiet-copy head (C5: one Glossary, quieter descriptions)
+
+The dashboard and its detail panel lost the page line and the per-section disclosures, shortened their descriptions and gained one Glossary each, so the page text and the detail text of eight scenarios changed on purpose.
+
+- Reference commit is now `3af5d6264afdca3d94f0be2066ff8af7cbe3082c` (the last production commit of cycle C5 of `feature-plans/aligned-tables-and-quiet-copy.md`); it moved in `tests/ui/test_state_poll_page_unchanged_browser.py` and `tests/ui/produce_state_poll_page_baseline.py` only. The producer refuses unless `git diff --quiet` against it over `app.py templates static analytics.py database.py market_calendar.py` exits 0 and those paths are clean; it ran in the shared slice worktree at the C5 head, whose production paths equal the reference (the later commits are test files).
+- Command: `BASELINE_OUT=<the fixture directory> python -m pytest -m browser -n0 tests/ui/produce_state_poll_page_baseline.py`, Firefox 148.0.2 headless, all nine scenarios in one run.
+- What differs from the previous record, compared field by field: the fields `page_text` and `detail_text` of eight scenarios, and `before_poll` of `open_detail_panel_poll`. `open_poll_answered_401` is identical; the cards, the `/api/state` requests of one poll, the final path, the footer, the Risk Math velocity and the header label are equal. `reference_commit` and `captured_at_utc` changed.
+- sha256 of `baseline.json` (LF line ends): `2eb920332dc87aeb9e31179699d7f731839d326589b75f6cfec2f00fd03582c0`
+- PM sign-off: not needed (producer output; the only differences are the plan's own quiet copy and Glossary).

@@ -33,7 +33,9 @@ _REFERENCE_DIGESTS = {
     # card columns, the Market Prism intro, the never-run pair class, the tab strip column, and the
     # removal of the closed-disclosure rule and the stray selector-list comment); the diff from the
     # previous pin is those style and markup changes and nothing else.
-    "ai_advisor.html": "9cd1fb30147eca113c80c14f3f8631b1978011789f32bc449da3b2ae0d638311",
+    # Re-pinned after the quiet-copy and aligned-figures slice reworked the Advisor tabs' and the
+    # other pages' style rules (the diffs are those rules and the one doubled blank line removed).
+    "ai_advisor.html": "23e8820096c4961c0c1301e5f395cd41064b81cf09c54932c0a096f70a79ac8c",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     # Re-pinned after the Performance and History explainers, relabels and density layout were
     # added, and settings.html after the Settings explainers and density change (each diff
@@ -43,9 +45,11 @@ _REFERENCE_DIGESTS = {
     # column tracks) and the Performance insufficient-history banner phrase; each diff is those rules.
     # Re-pinned once more after the closed-disclosure rule was removed from both pages and the
     # History chart note gained the space that keeps the tallest bar off it; each diff is that.
-    "history.html": "03156e78d1e86cac7a81ee56e0e6677e3ec100caee28ab5e812bf86d95e9eb0d",
-    "performance.html": "1d2646f9ed87f356fd8237baed0b4fa81b2654314c03276961d890c157e87b70",
-    "settings.html": "6e07c5e17761f047e2493862f075709e748d7efd282a277e9fd4e636582acb78",
+    # Re-pinned a last time after the aligned figures, the one Glossary per page and the removed
+    # captions grid, two-group risk table and far-end stamps (each diff is those rules and markup).
+    "history.html": "57145336af1b162a784a601e4c83bba13a9959fd220b604a37a7df2108c71ca7",
+    "performance.html": "d2f362209613b6d14ad51a2ff0427e4516017d89c9ac6c304578821fcf9a0ebb",
+    "settings.html": "8d12e03679dfe44dc055d3fee78ca322f20d1caaea6a7ee6499c30df18e3abfe",
 }
 
 _STYLE_BLOCK = re.compile(r"(<style\b[^>]*>)(.*?)(</style>)", re.S | re.I)
