@@ -10,11 +10,13 @@ process, every request to anything but the server refused, the browser clock fix
 instant. The expected text of every row comes from ``tests/fixtures/page_explainers/copy.json``
 through ``tests/ui/_page_copy.py``; nothing is typed here. What is asserted, on the live render:
 
-* every description row of the dashboard and of the detail panel is visible with its exact text
-  (a box with size, nothing hiding it, not inside a closed disclosure), at 1440 and at 375, whole
-  and not cut off, and shown once after the page has polled;
-* every disclosure is closed on load, opens and closes from the keyboard, shows each term's exact
-  text when opened, and stays open across polls;
+* every description row of the dashboard and of the detail panel that Copy table A keeps is visible
+  with this plan's exact text (a box with size, nothing hiding it, not inside a closed disclosure),
+  at 1440 and at 375, whole and not cut off, and shown once after the page has polled; the page line
+  and the Tracked, Armed, Triggered line the plan removes are on no render;
+* the dashboard and the detail panel each end with one Glossary: closed on load, named "Glossary",
+  opened and closed from the keyboard, showing each line's exact text when opened, and still open
+  with its lines unchanged across polls;
 * the verdict, the VWAP pill and the held-line legend the script writes after a poll read the
   approved words and agree with the first paint;
 * the detail panel has no View logs, Go to cash or Edit variables button, and its close control
@@ -51,10 +53,8 @@ from tests.ui._shell_support import (  # noqa: F401  (fixtures: overrides, empty
 pytestmark = pytest.mark.browser
 
 DASHBOARD_DESCRIPTIONS = (
-    "D01",
     "dash.hero",
     "dash.rows",
-    "D20",
     "D21",
     "D28",
     "D40",
@@ -63,7 +63,9 @@ DASHBOARD_DESCRIPTIONS = (
     "D48",
 )
 DETAIL_DESCRIPTIONS = ("dp.lead", "D57", "dp.events", "D59", "D66", "D67")
-DISCLOSURE_SUMMARY = "What the terms mean"
+REMOVED_DESCRIPTIONS = ("D01", "D20")
+GLOSSARY_SUMMARY = "Glossary"
+GLOSSARY = 'details[data-terms="glossary"][data-glossary-host="{host}"]'
 MIN_TEXT_PX = 11
 ROW_TOP_TOLERANCE_PX = 8
 POLL_MS = 31_000
@@ -123,7 +125,7 @@ GEOMETRY_JS = """
 
 DISCLOSURE_STATE_JS = """
 () => [...document.querySelectorAll('[data-terms]')].map((d) => ({
-  key: d.getAttribute('data-terms'), open: d.open,
+  key: d.getAttribute('data-terms'), host: d.getAttribute('data-glossary-host'), open: d.open,
   terms: [...d.querySelectorAll('p[data-term]')].map((p) => [p.getAttribute('data-term'),
           (p.textContent || '').replace(/\\s+/g, ' ').trim()]),
 }))
@@ -140,14 +142,10 @@ def _slots() -> dict[str, str]:
     return {"shadow_retention_days": "180", "friction_pct": _plain(autotuner.SIM_EXIT_FRICTION_PCT)}
 
 
-def _terms(host: str, target: str) -> list[dict]:
-    return [
-        r
-        for r in copy.rows("B")
-        if copy.host_of(r) == host
-        and r["placement_kind"] == "D"
-        and r["placement_target"] == target
-    ]
+def _expected_lines(host: str) -> list[tuple[str, str]]:
+    """The host's Glossary lines in Table G's order, as (key, text) with the slots filled."""
+    slots = _slots()
+    return [(line["key"], copy.fill(line["text"], **slots)) for line in copy.glossary(host)]
 
 
 @pytest.fixture
@@ -211,7 +209,7 @@ def test_every_dashboard_description_is_visible_with_its_exact_text(
     seeded("dashboard_full")
     with _Dashboard(firefox, advisor_server, width) as probe:
         for key in DASHBOARD_DESCRIPTIONS:
-            _assert_visible_text(probe, key, f'[data-explainer="{key}"]', copy.text(key, "A"))
+            _assert_visible_text(probe, key, f'[data-explainer="{key}"]', copy.a_text(key))
 
 
 @pytest.mark.parametrize("width", [WIDE[0], NARROW[0]])
@@ -229,8 +227,30 @@ def test_every_detail_panel_description_is_visible_once_a_card_is_opened(
                 probe,
                 key,
                 f'[data-testid="detail-panel"] [data-explainer="{key}"]',
-                copy.text(key, "A"),
+                copy.a_text(key),
             )
+
+
+@pytest.mark.parametrize("width", [WIDE[0], NARROW[0]])
+def test_the_two_removed_lines_are_on_no_render_of_the_page_or_the_panel(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    seeded,
+    width,
+):
+    seeded("dashboard_full")
+    with _Dashboard(firefox, advisor_server, width) as probe:
+        _open_first_card(probe)
+        found = {
+            key: probe.page.evaluate(
+                "(k) => document.querySelectorAll('[data-explainer=\"' + k + '\"]').length", key
+            )
+            for key in REMOVED_DESCRIPTIONS
+        }
+        body = probe.page.evaluate("() => document.body.innerText.replace(/\\s+/g, ' ')")
+    assert found == {key: 0 for key in REMOVED_DESCRIPTIONS}
+    for key in REMOVED_DESCRIPTIONS:
+        assert " ".join(copy.text(key, "A").split()) not in body, f"the old text of {key} shows"
 
 
 def test_a_description_is_whole_on_a_phone_and_never_ellipsed_or_tiny(
@@ -269,99 +289,100 @@ def test_each_description_is_on_the_page_once_after_the_page_has_polled_three_ti
             "(keys) => keys.map((k) => document.querySelectorAll('[data-explainer=\"' + k + '\"]').length)",
             list(DASHBOARD_DESCRIPTIONS),
         )
-        disclosures = probe.page.evaluate("() => document.querySelectorAll('[data-terms]').length")
+        glossaries = probe.page.evaluate("() => document.querySelectorAll('[data-terms]').length")
         for key in DASHBOARD_DESCRIPTIONS:
-            _assert_visible_text(probe, key, f'[data-explainer="{key}"]', copy.text(key, "A"))
+            _assert_visible_text(probe, key, f'[data-explainer="{key}"]', copy.a_text(key))
     assert counts == [1] * len(DASHBOARD_DESCRIPTIONS)
-    assert disclosures == len({r["placement_target"] for r in _all_dashboard_terms()})
-
-
-def _all_dashboard_terms() -> list[dict]:
-    return [
-        r
-        for r in copy.rows("B")
-        if copy.host_of(r) in ("/", "detail panel") and r["placement_kind"] == "D"
-    ]
+    assert glossaries == 2, "the page and the detail panel each hold one Glossary and nothing else"
 
 
 # ---------------------------------------------------------------------------
-# Disclosures
+# The Glossaries
 # ---------------------------------------------------------------------------
 
 
-def test_every_disclosure_is_closed_on_load_and_shows_each_term_when_opened(
+def _check_glossary(probe, host: str) -> None:
+    selector = GLOSSARY.format(host=host)
+    summary = _see(probe, f"{selector} > summary")
+    assert summary["hiddenBy"] is None and summary["text"] == GLOSSARY_SUMMARY, host
+    first = copy.glossary(host)[0]["key"]
+    assert _see(probe, f'[data-term="{first}"]')["hiddenBy"] == "a closed disclosure", host
+    probe.page.locator(f"{selector} > summary").click()
+    for key, text in _expected_lines(host):
+        _assert_visible_text(probe, key, f'[data-term="{key}"]', text)
+    probe.page.locator(f"{selector} > summary").click()
+    assert _see(probe, f'[data-term="{first}"]')["hiddenBy"] == "a closed disclosure", host
+
+
+def test_each_glossary_is_closed_on_load_named_and_shows_each_line_when_opened(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     seeded,
 ):
     seeded("dashboard_full")
-    slots = _slots()
     with _Dashboard(firefox, advisor_server, WIDE[0]) as probe:
         state = probe.page.evaluate(DISCLOSURE_STATE_JS)
-        assert state, "premise: the page carries disclosures"
-        assert not any(d["open"] for d in state), "a disclosure is open on load"
-
-        def check(key: str, host: str) -> None:
-            summary = _see(probe, f'[data-terms="{key}"] > summary')
-            assert summary["hiddenBy"] is None and summary["text"] == DISCLOSURE_SUMMARY, key
-            probe.page.locator(f'[data-terms="{key}"] > summary').click()
-            for record in _terms(host, key):
-                _assert_visible_text(
-                    probe,
-                    record["key"],
-                    f'[data-term="{record["key"]}"]',
-                    copy.fill(record["new_text"], **slots),
-                )
-            probe.page.locator(f'[data-terms="{key}"] > summary').click()
-            first = _terms(host, key)[0]["key"]
-            assert _see(probe, f'[data-term="{first}"]')["hiddenBy"] == "a closed disclosure", key
-
-        # The detail panel's scrim covers the page while it is open, so the page's own disclosures
-        # are read first, with the panel closed, and the panel's after a card is opened.
-        keys = [d["key"] for d in state]
-        for key in (k for k in keys if k not in DETAIL_DESCRIPTIONS):
-            check(key, "/")
+        assert sorted(d["host"] for d in state) == ["/", "detail panel"], state
+        assert all(d["key"] == "glossary" for d in state), "a disclosure that is not a Glossary"
+        assert not any(d["open"] for d in state), "a Glossary is open on load"
+        # The detail panel's scrim covers the page while it is open, so the page's own Glossary is
+        # read first, with the panel closed, and the panel's after a card is opened.
+        _check_glossary(probe, "/")
         _open_first_card(probe)
-        for key in (k for k in keys if k in DETAIL_DESCRIPTIONS):
-            check(key, "detail panel")
+        _check_glossary(probe, "detail panel")
 
 
-def test_a_disclosure_opens_and_closes_from_the_keyboard(
+@pytest.mark.parametrize("host", ["/", "detail panel"])
+def test_a_glossary_opens_and_closes_from_the_keyboard(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     seeded,
+    host,
 ):
     seeded("dashboard_full")
+    selector = GLOSSARY.format(host=host)
     with _Dashboard(firefox, advisor_server, WIDE[0]) as probe:
-        summary = probe.page.locator('[data-terms="dash.hero"] > summary')
+        if host == "detail panel":
+            _open_first_card(probe)
+        summary = probe.page.locator(f"{selector} > summary")
+        name = probe.page.evaluate(
+            "(s) => document.querySelector(s).querySelector('summary').textContent.trim()", selector
+        )
+        assert name == GLOSSARY_SUMMARY
         for key in ("Enter", " "):
             summary.focus()
             probe.page.keyboard.press(key)
-            assert probe.page.evaluate(
-                "() => document.querySelector('[data-terms=\"dash.hero\"]').open"
-            ), f"{key!r} did not open the disclosure"
+            assert probe.page.evaluate("(s) => document.querySelector(s).open", selector), (
+                f"{key!r} did not open the Glossary"
+            )
             probe.page.keyboard.press(key)
-            assert not probe.page.evaluate(
-                "() => document.querySelector('[data-terms=\"dash.hero\"]').open"
-            ), f"{key!r} did not close it"
+            assert not probe.page.evaluate("(s) => document.querySelector(s).open", selector), (
+                f"{key!r} did not close it"
+            )
 
 
-def test_an_open_disclosure_stays_open_with_its_lines_unchanged_across_polls(
+def test_an_open_glossary_stays_open_with_its_lines_unchanged_across_polls_and_a_panel_refresh(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     seeded,
 ):
     seeded("dashboard_full")
     with _Dashboard(firefox, advisor_server, WIDE[0]) as probe:
-        probe.page.locator('[data-terms="dash.hero"] > summary').click()
+        probe.page.locator(f"{GLOSSARY.format(host='/')} > summary").click()
         before = probe.page.evaluate(DISCLOSURE_STATE_JS)
         for _ in range(3):
             probe.page.clock.run_for(POLL_MS)
             probe.page.wait_for_timeout(500)
         after = probe.page.evaluate(DISCLOSURE_STATE_JS)
-    assert [d for d in after if d["key"] == "dash.hero"][0]["open"] is True
-    assert {d["key"]: d["terms"] for d in before} == {d["key"]: d["terms"] for d in after}
-    assert [d["key"] for d in before if d["open"]] == [d["key"] for d in after if d["open"]]
+        _open_first_card(probe)
+        probe.page.clock.run_for(POLL_MS)
+        probe.page.wait_for_timeout(500)
+        panel = probe.page.evaluate(DISCLOSURE_STATE_JS)
+    assert [d for d in after if d["host"] == "/"][0]["open"] is True
+    assert {d["host"]: d["terms"] for d in before} == {d["host"]: d["terms"] for d in after}
+    assert [d["host"] for d in before if d["open"]] == [d["host"] for d in after if d["open"]]
+    assert {d["host"]: d["terms"] for d in panel} == {d["host"]: d["terms"] for d in before}
+    assert [d for d in panel if d["host"] == "/"][0]["open"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +554,7 @@ def test_the_cvar_and_sleeves_panels_share_one_row_and_a_lone_panel_takes_the_wi
     seeded(world)
     with _Dashboard(firefox, advisor_server, width) as probe:
         geometry = probe.page.evaluate(GEOMETRY_JS)
-        _assert_visible_text(probe, "D47", '[data-explainer="D47"]', copy.text("D47", "A"))
+        _assert_visible_text(probe, "D47", '[data-explainer="D47"]', copy.a_text("D47"))
     problems = _foot_row_problems(geometry, expect_cvar=expect_cvar)
     assert not problems, f"{world} at {width}: " + "; ".join(problems)
 

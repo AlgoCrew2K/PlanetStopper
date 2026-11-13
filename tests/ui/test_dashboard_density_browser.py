@@ -65,7 +65,8 @@ _DOLLAR_FACTS = """
   return {
     panel: height(panel),
     lead: height(panel + ' [data-explainer="D21"]'),
-    summary: height(panel + ' [data-terms="D21"] > summary'),
+    // The panel holds no disclosure of its own any more: its terms are lines of the page's Glossary.
+    disclosures: document.querySelectorAll(panel + ' [data-terms]').length,
   };
 }
 """
@@ -106,13 +107,12 @@ def test_each_symphony_is_one_row_at_1440(firefox, advisor_server):  # noqa: F81
     assert rows, "premise: the seeded state renders cards"
     tall = [r for r in rows if r["height"] > MAX_ROW_HEIGHT_PX]
     assert not tall, f"cards taller than {MAX_ROW_HEIGHT_PX} px at 1440: {tall}"
-    assert dollar["lead"] is not None and dollar["summary"] is not None, (
-        f"the dollar-saved panel has no description line or disclosure summary to allow for: {dollar}"
-    )
-    allowed = MAX_DOLLAR_PANEL_HEIGHT_PX + dollar["lead"] + dollar["summary"]
+    assert dollar["lead"] is not None, f"the dollar-saved panel has no description line: {dollar}"
+    assert dollar["disclosures"] == 0, f"the dollar-saved panel carries a disclosure: {dollar}"
+    allowed = MAX_DOLLAR_PANEL_HEIGHT_PX + dollar["lead"]
     assert dollar["panel"] <= allowed, (
         f"the dollar-saved panel is {dollar['panel']} px tall; {allowed} px is the bound "
-        f"({MAX_DOLLAR_PANEL_HEIGHT_PX} plus its description and summary lines: {dollar})"
+        f"({MAX_DOLLAR_PANEL_HEIGHT_PX} plus its description line: {dollar})"
     )
 
 

@@ -14,9 +14,12 @@ The one edit of a real answer is a named-field one: ``symphonies_no_longer_held`
 ``GET /api/settings`` in the browser, in the shape ``app.get_settings`` returns, so the "No longer
 held" line has a symphony to describe.
 
-* S-1.5, S-2.5: each side-nav section shows its descriptions, visible and exact; each disclosure
-  opens by a click on its summary and shows each term's exact line.
-* S-1.6, S-2.5: the same for the settings modal opened on a symphony.
+* S-1.5, S-2.5: each side-nav section shows its description, visible and exact (this plan's Copy
+  table A); the page's one Glossary stays visible whichever section is chosen, opens by a click on
+  its summary and shows each line's exact text.
+* S-1.6, S-2.5, S-3.14, S-4.13, S-4.14, S-7.12: the same for the settings modal opened on a
+  symphony: its descriptions, its one Glossary, a pending live toggle with the Glossary opened and
+  closed, and the error state with no Glossary.
 * S-1.17: at 375 by 812 every description shows in full, and the page does not scroll sideways.
 * S-1.22, S-2.16, S-5.12: an unsaved edit survives a section switch; a pending live toggle in the
   modal keeps its descriptions, and Save with it asks for confirmation and sends nothing first.
@@ -52,7 +55,7 @@ from tests.ui._shell_support import (  # noqa: F401  (fixtures: overrides, empty
 
 pytestmark = pytest.mark.browser
 
-SUMMARY_TEXT = "What the terms mean"
+SUMMARY_TEXT = "Glossary"
 GONE_NAME = "Review Gone Symphony"
 GONE_ID = "review-gone-symphony"
 TYPED_PLACEHOLDER = "typed-placeholder-not-a-credential"
@@ -66,11 +69,6 @@ SECTION_ROWS = {
     "credentials": ["S11"],
     "symphonies": ["S14"],
     "maintenance": ["S17"],
-}
-SECTION_TERMS = {
-    "credentials": ("S11", ["S13a", "S13b", "S13c"]),
-    "symphonies": ("S14", ["S15", "S16"]),
-    "maintenance": ("S17", ["S18"]),
 }
 
 FACTS_JS = r"""
@@ -163,20 +161,27 @@ def _assert_row_visible(probe, key: str) -> None:
     found = _only(probe, f'[data-explainer="{key}"]')
     assert found["shown"], f"{key}: not visible"
     assert found["closed"] is False, f"{key}: inside a closed disclosure"
-    assert found["text"] == _norm(copy.text(key)), f"{key}: shows {found['text']!r}"
+    assert found["text"] == _norm(copy.a_text(key)), f"{key}: shows {found['text']!r}"
 
 
-def _open_and_read_terms(probe, target: str, keys: list[str]) -> None:
-    details = _only(probe, f'details[data-terms="{target}"]')
-    assert details["open"] is False, f"{target}: not closed on load"
-    assert _only(probe, f'details[data-terms="{target}"] > summary')["text"] == SUMMARY_TEXT
-    probe.page.click(f'details[data-terms="{target}"] > summary')
-    assert _only(probe, f'details[data-terms="{target}"]')["open"] is True
-    got = _facts(probe, f'details[data-terms="{target}"] > p[data-term]')
-    assert [g["key"] for g in got] == keys, f"{target}: {[g['key'] for g in got]}"
-    for line in got:
-        assert line["shown"], f"{line['key']}: not visible once the disclosure is open"
-        assert line["text"] == _norm(copy.text(line["key"])), line["key"]
+GLOSSARY = 'details[data-terms="glossary"][data-glossary-host="Settings"]'
+
+
+def _open_and_read_glossary(probe) -> None:
+    details = _only(probe, GLOSSARY)
+    assert details["open"] is False, "the Glossary is not closed on load"
+    assert details["shown"], "the Glossary is hidden"
+    assert _only(probe, f"{GLOSSARY} > summary")["text"] == SUMMARY_TEXT
+    probe.page.click(f"{GLOSSARY} > summary")
+    assert _only(probe, GLOSSARY)["open"] is True
+    got = _facts(probe, f"{GLOSSARY} > p[data-term]")
+    want = copy.glossary("Settings")
+    assert [g["key"] for g in got] == [x["key"] for x in want]
+    for line, expected in zip(got, want, strict=True):
+        assert line["shown"], f"{line['key']}: not visible once the Glossary is open"
+        assert line["text"] == _norm(expected["text"]), line["key"]
+    probe.page.click(f"{GLOSSARY} > summary")
+    assert _only(probe, GLOSSARY)["open"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -185,7 +190,7 @@ def _open_and_read_terms(probe, target: str, keys: list[str]) -> None:
 
 
 @pytest.mark.parametrize("section", SECTIONS)
-def test_each_section_shows_its_descriptions_and_opens_its_disclosures(
+def test_each_section_shows_its_description_and_the_one_glossary_stays_visible_and_opens(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     world,
@@ -196,9 +201,8 @@ def test_each_section_shows_its_descriptions_and_opens_its_disclosures(
         _assert_row_visible(probe, "S01")
         for key in SECTION_ROWS[section]:
             _assert_row_visible(probe, key)
-        if section in SECTION_TERMS:
-            target, keys = SECTION_TERMS[section]
-            _open_and_read_terms(probe, target, keys)
+        assert _facts(probe, "[data-terms]:not([data-terms='glossary'])") == []
+        _open_and_read_glossary(probe)
 
 
 def test_only_the_chosen_section_shows_its_description(
@@ -233,16 +237,18 @@ def test_at_375_every_description_shows_in_full_and_the_page_does_not_scroll_sid
     with settings_open(firefox, advisor_server, size=NARROW) as probe:
         go_to(probe, section)
         keys = ["S01", *SECTION_ROWS[section]]
-        if section in SECTION_TERMS:
-            target, terms = SECTION_TERMS[section]
-            _only(probe, f'details[data-terms="{target}"] > summary')
-            probe.page.click(f'details[data-terms="{target}"] > summary')
-            keys += terms
+        probe.page.click(f"{GLOSSARY} > summary")
+        keys += [x["key"] for x in copy.glossary("Settings")]
         for key in keys:
             selector = f'[data-explainer="{key}"], [data-term="{key}"]'
             found = _only(probe, selector)
             assert found["shown"], f"{key}: not visible at 375"
-            assert found["text"] == _norm(copy.text(key))
+            expected = (
+                copy.a_text(key)
+                if key in ("S01", *SECTION_ROWS[section])
+                else next(x["text"] for x in copy.glossary("Settings") if x["key"] == key)
+            )
+            assert found["text"] == _norm(expected)
             assert found["textOverflow"] != "ellipsis", f"{key}: ellipsed"
             assert found["clamp"] in ("none", ""), f"{key}: line-clamped"
             assert found["scrollW"] <= found["clientW"] + 1, f"{key}: cut off sideways"
@@ -359,30 +365,103 @@ def modal_open(firefox, server):  # noqa: F811
         assert probe.page_errors == [], probe.page_errors
 
 
+MODAL_GLOSSARY = '#sym-settings-modal details[data-terms="glossary"]'
+
+
 def _assert_modal_rows_visible(probe) -> None:
-    for row in copy.rows("A"):
-        if copy.host_of(row) != "settings modal":
-            continue
+    for row in copy.a_rows("settings modal"):
         found = _only(probe, f'#sym-settings-modal [data-explainer="{row["key"]}"]')
         assert found["shown"], f"{row['key']}: not visible in the modal"
-        assert found["text"] == _norm(copy.text(row["key"])), row["key"]
+        assert found["text"] == _norm(copy.a_text(row["key"])), row["key"]
 
 
-def test_the_modal_shows_each_description_and_opens_each_disclosure(
+def test_the_modal_shows_each_description_and_opens_its_one_glossary(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     world,
 ):
     with modal_open(firefox, advisor_server) as probe:
         _assert_modal_rows_visible(probe)
-        for target, keys in (("M04", ["M01"]), ("M07", ["M08"])):
-            selector = f'#sym-settings-modal details[data-terms="{target}"]'
-            assert _only(probe, selector)["open"] is False
-            probe.page.click(selector + " > summary")
-            got = _facts(probe, selector + " > p[data-term]")
-            assert [g["key"] for g in got] == keys
-            for line in got:
-                assert line["shown"] and line["text"] == _norm(copy.text(line["key"]))
+        assert _facts(probe, "#sym-settings-modal [data-terms]:not([data-terms='glossary'])") == []
+        assert _only(probe, MODAL_GLOSSARY)["open"] is False
+        assert _only(probe, MODAL_GLOSSARY + " > summary")["text"] == "Glossary"
+        probe.page.click(MODAL_GLOSSARY + " > summary")
+        assert _only(probe, MODAL_GLOSSARY)["open"] is True
+        got = _facts(probe, MODAL_GLOSSARY + " > p[data-term]")
+        assert [g["key"] for g in got] == [x["key"] for x in copy.glossary("settings modal")]
+        for line, expected in zip(got, copy.glossary("settings modal"), strict=True):
+            assert line["shown"] and line["text"] == _norm(expected["text"]), line["key"]
+        probe.page.click(MODAL_GLOSSARY + " > summary")
+        assert _only(probe, MODAL_GLOSSARY)["open"] is False
+
+
+@pytest.mark.parametrize("keystroke", ["Enter", "Space"])
+def test_the_modal_glossary_opens_and_closes_from_the_keyboard_and_is_named_glossary(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    world,
+    keystroke,
+):
+    with modal_open(firefox, advisor_server) as probe:
+        summary = probe.page.locator(MODAL_GLOSSARY + " > summary")
+        summary.focus()
+        probe.page.keyboard.press(keystroke)
+        assert _only(probe, MODAL_GLOSSARY)["open"] is True, f"{keystroke} did not open it"
+        probe.page.keyboard.press(keystroke)
+        assert _only(probe, MODAL_GLOSSARY)["open"] is False, f"{keystroke} did not close it"
+
+
+def test_a_pending_live_toggle_stays_pending_while_the_modal_glossary_opens_and_closes(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    world,
+):
+    """S-4.13 and S-7.12: the Glossary changes nothing about the pending toggle or its confirmation."""
+    with modal_open(firefox, advisor_server) as probe:
+        probe.page.click(MODAL_TOGGLE)
+        before = probe.page.evaluate(
+            "(s) => document.querySelector(s).getAttribute('aria-checked')", MODAL_TOGGLE
+        )
+        probe.page.click(MODAL_GLOSSARY + " > summary")
+        probe.page.click(MODAL_GLOSSARY + " > summary")
+        after = probe.page.evaluate(
+            "(s) => document.querySelector(s).getAttribute('aria-checked')", MODAL_TOGGLE
+        )
+        assert after == before, "opening the Glossary changed the pending toggle"
+        probe.page.click(MODAL_SAVE)
+        dialog = probe.page.locator("#sym-settings-confirm")
+        assert dialog.is_visible()
+        assert dialog.get_attribute("aria-label") == "Confirm live trading"
+        assert [p for p in probe.posts if "/api/symphony-settings" in p[1]] == [], (
+            "nothing may be sent before the confirmation"
+        )
+
+
+def test_a_failed_modal_fetch_shows_its_error_text_and_no_glossary(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    world,
+):
+    """S-4.14: the error state is the reference's and holds no Glossary."""
+    with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
+        probe.page.route(
+            "**/api/symphony-settings/*",
+            lambda route: (
+                route.fulfill(status=500, content_type="text/plain", body="boom")
+                if route.request.method == "GET"
+                else route.continue_()
+            ),
+        )
+        open_page(probe, "/")
+        probe.page.evaluate("(id) => window.openSymphonySettings(null, id)", _first_symphony_id())
+        wait_until(
+            probe,
+            "() => /Failed to load settings/.test(document.getElementById('sym-settings-modal').textContent)",
+            "the modal never showed its error text",
+        )
+        assert _facts(probe, "#sym-settings-modal [data-testid='glossary']") == []
+        assert _facts(probe, "#sym-settings-modal [data-term]") == []
+        assert _only(probe, "#sym-settings-modal .ssm-state--err")["shown"]
 
 
 def test_a_pending_live_toggle_keeps_the_descriptions_and_save_asks_before_sending(

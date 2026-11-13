@@ -8,8 +8,8 @@ rows and exits, ``tests/ui/_shell_support.seed_history_exits`` for the captured 
 clock is fixed as in ``tests/ui/_page_explainers`` (app, date windows and browser). Never skips.
 
 CONTRACT PINNED
-* Every description of the two hosts is visible with its exact text at 1440 and at 375, not clipped,
-  and every definition disclosure starts closed and opens to its exact rows.
+* Every description of the two hosts is visible with this plan's exact text at 1440 and at 375, not
+  clipped, and each page's one Glossary starts closed and opens to its exact lines.
 * The disclosure looks the same on both pages (one shared rule): the summary's resolved font size,
   weight, colour and cursor are equal across hosts.
 
@@ -49,9 +49,7 @@ from tests.ui._shell_support import (  # noqa: F401  (fixtures: overrides, serve
 from tests.ui.test_page_copy_performance_history import (
     DESCRIPTION_KEYS,
     HOST_OF_PATH,
-    friction_text,
     norm,
-    term_groups,
     warm_market_calendar,
 )
 
@@ -169,62 +167,59 @@ def test_every_description_is_visible_with_its_exact_text(
         assert len(found) == 1, f"{key}: {len(found)} elements"
         element = found[0]
         assert element["shown"], f"{key} is not visible at {size[0]} px"
-        assert element["text"] == norm(pc.text(key, "A")), key
+        assert element["text"] == norm(pc.a_text(key)), key
         assert not element["clipped"], f"{key} is clipped at {size[0]} px"
         assert element["fontSize"] >= 11, f"{key} is below 11 px"
     assert sideways <= 1, f"{path} scrolls sideways at {size[0]} px by {sideways}"
 
 
-GROUPS = [
-    (path, anchor)
-    for path in sorted(DESCRIPTION_KEYS)
-    for anchor in term_groups(HOST_OF_PATH[path])
-]
-
-
 @pytest.mark.parametrize("size", [WIDE, NARROW], ids=["1440", "375"])
 @pytest.mark.parametrize("path", sorted(DESCRIPTION_KEYS))
-def test_each_disclosure_starts_closed_and_opens_to_its_exact_rows(
+def test_the_glossary_starts_closed_and_opens_to_its_exact_lines(
     firefox,
     advisor_server,
     seeded,
     path,
     size,  # noqa: F811
 ):
+    host = HOST_OF_PATH[path]
+    selector = f'details[data-terms="glossary"][data-glossary-host="{host}"]'
     with open_probe(firefox, advisor_server, width=size[0], height=size[1]) as probe:
         _open(probe, path)
-        groups = term_groups(HOST_OF_PATH[path])
-        for anchor, rows in groups.items():
-            selector = f'details[data-terms="{anchor}"]'
-            assert probe.page.locator(selector).count() == 1, f"no disclosure for {anchor}"
-            assert probe.page.evaluate("(s) => document.querySelector(s).open", selector) is False
-            hidden_before = probe.page.evaluate(
-                "(s) => [...document.querySelectorAll(s + ' [data-term]')]"
-                # A closed details shows only its summary: its other children are not visible
-                # whatever boxes the browser keeps for them (no page rule removes them).
-                ".every((p) => { const d = p.closest('details');"
-                " return !!d && !d.open && !p.closest('summary'); })",
-                selector,
-            )
-            assert hidden_before, f"{anchor}: the definitions show while the disclosure is closed"
-            probe.page.click(f"{selector} > summary")
-            shown = probe.page.evaluate(_VISIBLE_TEXT_JS, f"{selector} [data-term]")
-            expected = [norm(pc.fill(pc.text(r["key"], "B"), friction_pct="0.25")) for r in rows]
-            assert [s["text"] for s in shown] == expected, anchor
-            assert all(s["shown"] and not s["clipped"] for s in shown), anchor
+        assert probe.page.locator('details[data-terms]:not([data-terms="glossary"])').count() == 0
+        assert probe.page.locator(selector).count() == 1, f"no Glossary for {host}"
+        assert probe.page.evaluate("(s) => document.querySelector(s).open", selector) is False
+        hidden_before = probe.page.evaluate(
+            "(s) => [...document.querySelectorAll(s + ' [data-term]')]"
+            # A closed details shows only its summary: its other children are not visible
+            # whatever boxes the browser keeps for them (no page rule removes them).
+            ".every((p) => { const d = p.closest('details');"
+            " return !!d && !d.open && !p.closest('summary'); })",
+            selector,
+        )
+        assert hidden_before, f"{host}: the definitions show while the Glossary is closed"
+        summary = probe.page.evaluate(
+            "(s) => document.querySelector(s + ' > summary').textContent.trim()", selector
+        )
+        assert summary == "Glossary"
+        probe.page.click(f"{selector} > summary")
+        shown = probe.page.evaluate(_VISIBLE_TEXT_JS, f"{selector} [data-term]")
+        expected = [norm(pc.fill(line["text"], friction_pct="0.25")) for line in pc.glossary(host)]
+        assert [s["text"] for s in shown] == expected, host
+        assert all(s["shown"] and not s["clipped"] for s in shown), host
 
 
-def test_the_trading_cost_phrase_is_the_patched_authoritys_value(
+def test_the_trading_cost_line_is_the_patched_authoritys_value(
     firefox,
     advisor_server,
     seeded,  # noqa: F811
 ):
     with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
         _open(probe, "/performance")
-        assert probe.page.locator('details[data-terms="F21"]').count() == 1
-        probe.page.click('details[data-terms="F21"] > summary')
+        probe.page.click('details[data-terms="glossary"] > summary')
         text = probe.page.evaluate(_VISIBLE_TEXT_JS, '[data-term="F24"]')[0]["text"]
-    assert text == friction_text("F24", "0.25")
+    line = next(x for x in pc.glossary("Performance") if x["key"] == "F24")
+    assert text == norm(pc.fill(line["text"], friction_pct="0.25"))
 
 
 _SUMMARY_STYLE_JS = """
