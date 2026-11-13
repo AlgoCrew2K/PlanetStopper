@@ -123,7 +123,7 @@ def test_the_figures_of_every_hero_row_line_up_under_each_other_when_a_row_has_n
 
 
 @pytest.mark.parametrize("width", [1440, 375])
-def test_the_detail_panels_opening_description_is_inset_like_the_lines_below_it(
+def test_the_detail_panels_opening_description_and_its_glossary_are_inset_like_the_lines_between(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     seeded,
@@ -133,7 +133,8 @@ def test_the_detail_panels_opening_description_is_inset_like_the_lines_below_it(
     with _Dashboard(firefox, advisor_server, width) as probe:
         _open_first_card(probe)
         read = probe.page.evaluate(prod.DETAIL_LEAD_JS)
-    for part in ("lead", "disclosure"):
+    for part in ("lead", "glossary"):
+        assert read[part] is not None, f"the panel has no {part}"
         assert read[part]["left"] >= read["sectionContentLeft"] - 1, (
             f"the {part} sits at {read[part]['left']}, left of the section text at "
             f"{read['sectionContentLeft']}: {read}"

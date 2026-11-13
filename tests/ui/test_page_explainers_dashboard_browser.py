@@ -322,7 +322,7 @@ def test_each_glossary_is_closed_on_load_named_and_shows_each_line_when_opened(
     seeded("dashboard_full")
     with _Dashboard(firefox, advisor_server, WIDE[0]) as probe:
         state = probe.page.evaluate(DISCLOSURE_STATE_JS)
-        assert sorted(d["host"] for d in state) == ["/", "detail panel"], state
+        assert sorted(d["host"] or "-" for d in state) == ["/", "detail panel"], state
         assert all(d["key"] == "glossary" for d in state), "a disclosure that is not a Glossary"
         assert not any(d["open"] for d in state), "a Glossary is open on load"
         # The detail panel's scrim covers the page while it is open, so the page's own Glossary is

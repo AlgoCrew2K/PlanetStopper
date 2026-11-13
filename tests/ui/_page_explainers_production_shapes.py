@@ -122,11 +122,11 @@ DETAIL_LEAD_JS = (
     + """;
   const panel = document.querySelector('[data-testid="detail-panel"]');
   const lead = panel.querySelector('[data-explainer="dp.lead"]');
-  const disclosure = panel.querySelector('details[data-terms="dp.lead"]');
+  const glossary = panel.querySelector('details[data-terms="glossary"]');
   const section = panel.querySelector('.detail-section');
   const ss = getComputedStyle(section);
   return {
-    lead: rect(lead), disclosure: rect(disclosure),
+    lead: rect(lead), glossary: rect(glossary),
     sectionContentLeft: section.getBoundingClientRect().left + parseFloat(ss.paddingLeft),
     panel: rect(panel),
   };

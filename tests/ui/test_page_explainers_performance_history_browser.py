@@ -216,6 +216,7 @@ def test_the_trading_cost_line_is_the_patched_authoritys_value(
 ):
     with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
         _open(probe, "/performance")
+        assert probe.page.locator('details[data-terms="glossary"]').count() == 1, "no Glossary"
         probe.page.click('details[data-terms="glossary"] > summary')
         text = probe.page.evaluate(_VISIBLE_TEXT_JS, '[data-term="F24"]')[0]["text"]
     line = next(x for x in pc.glossary("Performance") if x["key"] == "F24")
