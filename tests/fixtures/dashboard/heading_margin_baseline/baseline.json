@@ -1,6 +1,6 @@
 {
- "base_sha": "6b63f53e0d718e230878df900a4aabc72c5b67ed",
- "captured_at_utc": "2026-11-10T09:29:19Z",
+ "base_sha": "b8a49292015d4377a7c8fcfacd72acaac6fabf29",
+ "captured_at_utc": "2026-11-13T13:33:30Z",
  "capture_instant": "2026-10-21T11:00:00-04:00",
  "browser_version": "148.0.2",
  "views": {
@@ -21,7 +21,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "1e4afe20adbb36fe41e8f9e87478bcf5f2d8ce8f995f87a6ab7ac09d2b8852ef"
+    "style_digest": "53c5c5c5730484714597ed891d0eede05e06cc1655ea9670c93b6d894db4616f"
    },
    {
     "tag": "div",
@@ -40,26 +40,7 @@
      "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "ffd3b24da6cae5579fe9a41de443bdd353a1d98c662cb06accef9721e7ab3b08"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "dollar-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Exit: one time the b",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "2px",
-     "margin-left": "0px"
-    },
-    "style_digest": "65086d49e7f5438fa1bde89abd930ad4148f364897f5a2dafac3bf758d7bfe98"
+    "style_digest": "b8fdd1eaf4c239e44a2dd40ea931fe5c262661c72a108ec19ac0ff73f5e0578e"
    },
    {
     "tag": "div",
@@ -78,7 +59,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ac79d97e46732f6b35d83f89eeda92d0f133efa2e20409c8918673280089dce8"
+    "style_digest": "f7060c808a1247d1ee2aee85d277ce05a154bc47852941a8965239029db85990"
    },
    {
     "tag": "div",
@@ -130,7 +111,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "42dd8f3516c052e1c4a3608e17b465788b14fb224dd6ffc352f62af463d3d854"
+    "style_digest": "2d59fa72dfb4f593ea4f69f21ed09eb7b9b36612ee13c7b40f1a074a7413b11d"
    },
    {
     "tag": "div",
@@ -149,26 +130,7 @@
      "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "af17cb0a46c58297798361c4cb4541c478b1dbb134124da0114ef8bcb0fedc49"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "dollar-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Exit: one time the b",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "2px",
-     "margin-left": "0px"
-    },
-    "style_digest": "038aba08b67fd5b63d5be9d7340a5e88bf6d50d35c09be1e36802d5683878556"
+    "style_digest": "5c9e6184826d9b250f1389dd981c561242380756cc5812b792f969a93b40960c"
    },
    {
     "tag": "div",
@@ -187,7 +149,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "8744276ce0ed9beba18c64b3caeab931d0d985893ae97c14461d363b18a035cc"
+    "style_digest": "67db8ea8a3c50f8cb1dd613cfd0c0f2456a4f23c81e00b78c62e42e910801add"
    },
    {
     "tag": "div",
@@ -239,7 +201,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "b9f4848643ec4cbef7cdc2aa1fc3520214c72e0cecf7cd7a761b3c9b9cfeec7f"
+    "style_digest": "fcb09e45074dc98e11eff46605bb205efa81b6dc0b143f889c1d1f5107c9fb7e"
    },
    {
     "tag": "div",
@@ -259,25 +221,6 @@
      "margin-left": "0px"
     },
     "style_digest": "b51931b9a6b2f140b7b0c00ba7dc3e1c40ba37f742f92cd961c5c3bb5e1bfd3b"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "dollar-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Exit: one time the b",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "2px",
-     "margin-left": "0px"
-    },
-    "style_digest": "30110012140c6e6080236df2aac28000224c6169d131740304e67ed0582efa61"
    },
    {
     "tag": "div",
@@ -348,7 +291,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "77b929f99bb5b89acfca8f772f56b4dadff295e7f2e5dfe07fd7afc238944969"
+    "style_digest": "456b0c2f6b4bf6f6e2ce2f5ec1905c0693222189eae04fbbb7612193840861b7"
    },
    {
     "tag": "div",
@@ -368,25 +311,6 @@
      "margin-left": "0px"
     },
     "style_digest": "41cbc35ef818fb8f429bc1f923ad656e02903f254719babfba899264279c6abe"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "dollar-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Exit: one time the b",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "2px",
-     "margin-left": "0px"
-    },
-    "style_digest": "aff088cdcb5ba18356dd98212f7ef64fa7579280f3810a1b557d002c8c32835d"
    },
    {
     "tag": "div",
@@ -451,7 +375,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "How the bot's exits scored against holdi",
+    "text": "Whether the bot's exits paid for themsel",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -459,25 +383,6 @@
      "margin-left": "0px"
     },
     "style_digest": "28cac803d3c3eaffafd8707b00c5961813897ce0919425bd5081945f0b2fc4c7"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Windows: calendar da",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "683803bea46ac6e3b50b477056cec6fd869588cc64f6a707774e722f25fb4e38"
    },
    {
     "tag": "div",
@@ -650,25 +555,6 @@
     "style_digest": "1639ddf949d76f2ae113555e7547695dd42fa61df9c5f2358be758363fd713b2"
    },
    {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Wins: exits whose ex",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "18c4cf18ba16682cb890285d4a6448c69f97edfe6644b686eedc1fd79771d1a1"
-   },
-   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -775,7 +661,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "How the bot's exits scored against holdi",
+    "text": "Whether the bot's exits paid for themsel",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -783,25 +669,6 @@
      "margin-left": "0px"
     },
     "style_digest": "91952f8a2ec07cbd3a3887b54a3278d9eb75461bbe84cdbd19da84e9ab2cf1c8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Windows: calendar da",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "fb8217458b28fb3446522918973618515561362945a94b13c6efc557333fe3fd"
    },
    {
     "tag": "div",
@@ -974,25 +841,6 @@
     "style_digest": "64df5ed0a4f149369431f27621dee24ced8ab468757f627e1f4fead8306d88c8"
    },
    {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Wins: exits whose ex",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "ad502c92ffc414c97f625dffdd85e01997f4debc800da28cdfdfb6edcdf4010e"
-   },
-   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -1099,7 +947,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "How the bot's exits scored against holdi",
+    "text": "Whether the bot's exits paid for themsel",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1107,25 +955,6 @@
      "margin-left": "0px"
     },
     "style_digest": "a9c134cd106cf3016e2566c64eddcd6a3a8fb58aeef509860686e72a7a38c5aa"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Windows: calendar da",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "74a7015ffd378d8f1c2868139f224b56702e4e9732b39f51963dc7e07df66594"
    },
    {
     "tag": "div",
@@ -1298,25 +1127,6 @@
     "style_digest": "a9c134cd106cf3016e2566c64eddcd6a3a8fb58aeef509860686e72a7a38c5aa"
    },
    {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Wins: exits whose ex",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "74a7015ffd378d8f1c2868139f224b56702e4e9732b39f51963dc7e07df66594"
-   },
-   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -1442,7 +1252,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "How the bot's exits scored against holdi",
+    "text": "Whether the bot's exits paid for themsel",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -1450,25 +1260,6 @@
      "margin-left": "0px"
     },
     "style_digest": "b88957917956150fc42a75b203402a45181f61c44e86c8ee064796bc5cee8350"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Windows: calendar da",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "2dd950e9bf6d048d8a539645c7bf71b3a16aa01a91512581033178506dcccf6e"
    },
    {
     "tag": "div",
@@ -1641,25 +1432,6 @@
     "style_digest": "b88957917956150fc42a75b203402a45181f61c44e86c8ee064796bc5cee8350"
    },
    {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Wins: exits whose ex",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "2dd950e9bf6d048d8a539645c7bf71b3a16aa01a91512581033178506dcccf6e"
-   },
-   {
     "tag": "div",
     "classes": [
      "hp-scroll"
@@ -1795,25 +1567,6 @@
     "style_digest": "f0ae6f276bf38cc024b727fd984b249918f6240bc3ce709061a911bc556c37ba"
    },
    {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Windows: calendar da",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e1b4b30cfbca5fce6d0bf6f1070f8c36a66e01b9c4a48dbf099a8d36183450a"
-   },
-   {
     "tag": "div",
     "classes": [
      "hp-toolbar"
@@ -1888,7 +1641,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "fea1b7109e02bfff6224e376ad429a8bfb223fa75f2b2ad5c796e2fb992814d4"
+    "style_digest": "fac6dd37b056954c7ef5acac6359bbd8f3a50692c1af612356c76ea9b23a39f4"
    },
    {
     "tag": "div",
@@ -1996,7 +1749,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Positive deltas on risk metrics (Sharpe,",
+    "text": "Each risk figure for holding and for the",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2004,25 +1757,6 @@
      "margin-left": "0px"
     },
     "style_digest": "e97c4a20fced4191c1be3efbf11f7c61af9de0da45db006bc2c6fc0b26ce34b1"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Max DD: the largest ",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
    },
    {
     "tag": "div",
@@ -2073,7 +1807,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Checks whether each symphony's daily ret",
+    "text": "Whether each symphony's daily returns be",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2081,25 +1815,6 @@
      "margin-left": "0px"
     },
     "style_digest": "e97c4a20fced4191c1be3efbf11f7c61af9de0da45db006bc2c6fc0b26ce34b1"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Sample: which daily ",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
    },
    {
     "tag": "div",
@@ -2179,25 +1894,6 @@
     "style_digest": "e97c4a20fced4191c1be3efbf11f7c61af9de0da45db006bc2c6fc0b26ce34b1"
    },
    {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Retained: the days o",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
-   },
-   {
     "tag": "div",
     "classes": [
      "metrics-overflow"
@@ -2236,25 +1932,6 @@
      "margin-left": "0px"
     },
     "style_digest": "3bf49677eeb153f4f9d3948521f1a11810273a176e30a8d838571fba0cc36f62"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Windows: calendar da",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "abd6a1a51210ec415fbfa950ec174f6f10447d030caf10d90fc89784f695609c"
    },
    {
     "tag": "div",
@@ -2331,7 +2008,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c0e968f879f6b70e7d1186623ee992aba03b47d83e81d9c7b09d7e4116f0572f"
+    "style_digest": "d88d4243368c3c0a607ec1675132f4a5dc8abe62cd61d3a92f8951ef33185ea8"
    },
    {
     "tag": "div",
@@ -2439,7 +2116,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Positive deltas on risk metrics (Sharpe,",
+    "text": "Each risk figure for holding and for the",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2447,25 +2124,6 @@
      "margin-left": "0px"
     },
     "style_digest": "92379d559d11575a7fa0c48631a778a4fd4977ec9418155a0885e01dd94284b7"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Max DD: the largest ",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
    },
    {
     "tag": "div",
@@ -2516,7 +2174,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Checks whether each symphony's daily ret",
+    "text": "Whether each symphony's daily returns be",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2524,25 +2182,6 @@
      "margin-left": "0px"
     },
     "style_digest": "92379d559d11575a7fa0c48631a778a4fd4977ec9418155a0885e01dd94284b7"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Sample: which daily ",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
    },
    {
     "tag": "div",
@@ -2622,25 +2261,6 @@
     "style_digest": "92379d559d11575a7fa0c48631a778a4fd4977ec9418155a0885e01dd94284b7"
    },
    {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Retained: the days o",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
-   },
-   {
     "tag": "div",
     "classes": [
      "metrics-overflow"
@@ -2679,25 +2299,6 @@
      "margin-left": "0px"
     },
     "style_digest": "d60d885857266d447a9a03b02f4fcedf4474ba0fa028a1d47775f94144002f7d"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Windows: calendar da",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
    },
    {
     "tag": "div",
@@ -2882,7 +2483,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Positive deltas on risk metrics (Sharpe,",
+    "text": "Each risk figure for holding and for the",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2890,25 +2491,6 @@
      "margin-left": "0px"
     },
     "style_digest": "d60d885857266d447a9a03b02f4fcedf4474ba0fa028a1d47775f94144002f7d"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Max DD: the largest ",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
    },
    {
     "tag": "div",
@@ -2959,7 +2541,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Checks whether each symphony's daily ret",
+    "text": "Whether each symphony's daily returns be",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -2967,25 +2549,6 @@
      "margin-left": "0px"
     },
     "style_digest": "d60d885857266d447a9a03b02f4fcedf4474ba0fa028a1d47775f94144002f7d"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Sample: which daily ",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
    },
    {
     "tag": "div",
@@ -3065,25 +2628,6 @@
     "style_digest": "d60d885857266d447a9a03b02f4fcedf4474ba0fa028a1d47775f94144002f7d"
    },
    {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Retained: the days o",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
-   },
-   {
     "tag": "div",
     "classes": [
      "metrics-overflow"
@@ -3122,25 +2666,6 @@
      "margin-left": "0px"
     },
     "style_digest": "f20044f6827ce337748ab132238099a32fc815dc74d91e2125da6cd1d6fe414a"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Windows: calendar da",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",
@@ -3325,7 +2850,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Positive deltas on risk metrics (Sharpe,",
+    "text": "Each risk figure for holding and for the",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -3333,25 +2858,6 @@
      "margin-left": "0px"
     },
     "style_digest": "f20044f6827ce337748ab132238099a32fc815dc74d91e2125da6cd1d6fe414a"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Max DD: the largest ",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",
@@ -3402,7 +2908,7 @@
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "Checks whether each symphony's daily ret",
+    "text": "Whether each symphony's daily returns be",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -3410,25 +2916,6 @@
      "margin-left": "0px"
     },
     "style_digest": "f20044f6827ce337748ab132238099a32fc815dc74d91e2125da6cd1d6fe414a"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Sample: which daily ",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",
@@ -3506,25 +2993,6 @@
      "margin-left": "0px"
     },
     "style_digest": "f20044f6827ce337748ab132238099a32fc815dc74d91e2125da6cd1d6fe414a"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Retained: the days o",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",
@@ -4252,48 +3720,6 @@
   ],
   "ai-advisor|load|1440|light": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -4352,31 +3778,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "1a577273fd2cf7c346cdb917f8c208c22012386be8125f4c16296b6da9892d36"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--bare",
-     "autotune-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Runs without adoptin",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "1b94524b2eec4346eaff9ab748e62f7a57f3ff6164ceebf997ef371a7d2828a7"
+    "style_digest": "f1d705cd7a68e7a9d8d2c1030c969f4bad92cc048cc87fdb9c8cc7145799f13a"
    },
    {
     "tag": "div",
@@ -4415,7 +3820,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "6ddeaeddfb46c592e2fb5a8b0b7f420e377420414d8aa93fa430a6eeffda0635"
+    "style_digest": "ac823f0a0690290de4ec31f50c6f3d712afeac68ae846aa0277c5a11185c18ff"
    },
    {
     "tag": "span",
@@ -4510,59 +3915,20 @@
      "obs-section"
     ],
     "shared_rule_matches": false,
-    "text": "The latest verdict from each advisor tha",
+    "text": "The latest verdict from each advisor che",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "49b08b739ece20681c11fd87f7905e42c2478f87137707d22e99fc5694cc8249"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean THEORY spec: the fro",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "8c397dab4524bdb57e64c1aa6b7a696e9b3360d2a718aaf31e3cab49c9d129f7"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "obs-framing-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Spec Critic is an active guardrail check",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "976740ef5faa28815712610ce80c6326adc15dd5994fc4bbf3f0a5d588797685"
+    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
    },
    {
     "tag": "div",
     "classes": [
-     "obs-producer"
+     "cols-table",
+     "obs-lines"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4577,7 +3943,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5832bd50fc14368df3223de97d1fd9835f62c6a35c196935aeb18471892f00bd"
+    "style_digest": "faa6e646e8e34f0a9701455359b65f8e6c8e2e1a98d8196c7ed946b577efe130"
    },
    {
     "tag": "span",
@@ -4597,53 +3963,31 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "de2e55d33cb7436b5c12cf38f40f6dd6fbcc423d982b6cae9c49f10a188147b1"
+    "style_digest": "99b61d3c58b6d4b011d9b00e7be285ab353c8cdf0309528a62fdf2ed7398ffb5"
+   },
+   {
+    "tag": "span",
+    "classes": [
+     "adv-heading",
+     "obs-producer-label",
+     "section-header"
+    ],
+    "parent_classes": [
+     "obs-producer-line"
+    ],
+    "shared_rule_matches": false,
+    "text": "Retirement",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "2650c9a7571282cf013fde51d5ab7624824631938675187726d4f558998c6638"
    }
   ],
   "ai-advisor|tab:overview|1440|light": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -4702,31 +4046,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "1a577273fd2cf7c346cdb917f8c208c22012386be8125f4c16296b6da9892d36"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--bare",
-     "autotune-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Runs without adoptin",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "1b94524b2eec4346eaff9ab748e62f7a57f3ff6164ceebf997ef371a7d2828a7"
+    "style_digest": "f1d705cd7a68e7a9d8d2c1030c969f4bad92cc048cc87fdb9c8cc7145799f13a"
    },
    {
     "tag": "div",
@@ -4765,7 +4088,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "6ddeaeddfb46c592e2fb5a8b0b7f420e377420414d8aa93fa430a6eeffda0635"
+    "style_digest": "ac823f0a0690290de4ec31f50c6f3d712afeac68ae846aa0277c5a11185c18ff"
    },
    {
     "tag": "span",
@@ -4860,59 +4183,20 @@
      "obs-section"
     ],
     "shared_rule_matches": false,
-    "text": "The latest verdict from each advisor tha",
+    "text": "The latest verdict from each advisor che",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "49b08b739ece20681c11fd87f7905e42c2478f87137707d22e99fc5694cc8249"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean THEORY spec: the fro",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "8c397dab4524bdb57e64c1aa6b7a696e9b3360d2a718aaf31e3cab49c9d129f7"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "obs-framing-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Spec Critic is an active guardrail check",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "976740ef5faa28815712610ce80c6326adc15dd5994fc4bbf3f0a5d588797685"
+    "style_digest": "c94c45d3b8e216260e709f9221f34041005e2c82054c19a146303f2d4d1b640c"
    },
    {
     "tag": "div",
     "classes": [
-     "obs-producer"
+     "cols-table",
+     "obs-lines"
     ],
     "parent_classes": [
      "adv-panel",
@@ -4927,7 +4211,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5832bd50fc14368df3223de97d1fd9835f62c6a35c196935aeb18471892f00bd"
+    "style_digest": "faa6e646e8e34f0a9701455359b65f8e6c8e2e1a98d8196c7ed946b577efe130"
    },
    {
     "tag": "span",
@@ -4947,52 +4231,30 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "de2e55d33cb7436b5c12cf38f40f6dd6fbcc423d982b6cae9c49f10a188147b1"
-   }
-  ],
-  "ai-advisor|tab:correlations|1440|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
+    "style_digest": "99b61d3c58b6d4b011d9b00e7be285ab353c8cdf0309528a62fdf2ed7398ffb5"
    },
    {
-    "tag": "details",
+    "tag": "span",
     "classes": [
-     "hp-more"
+     "adv-heading",
+     "obs-producer-label",
+     "section-header"
     ],
     "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
+     "obs-producer-line"
     ],
     "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
+    "text": "Retirement",
     "margins": {
-     "margin-top": "12px",
+     "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
-   },
+    "style_digest": "2650c9a7571282cf013fde51d5ab7624824631938675187726d4f558998c6638"
+   }
+  ],
+  "ai-advisor|tab:correlations|1440|light": [
    {
     "tag": "div",
     "classes": [
@@ -5055,48 +4317,6 @@
    }
   ],
   "ai-advisor|tab:retirement|1440|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
-   },
    {
     "tag": "div",
     "classes": [
@@ -5162,9 +4382,7 @@
    {
     "tag": "div",
     "classes": [
-     "retirement-pair",
-     "retirement-pair--never-run",
-     "retirement-pair--side"
+     "retirement-pair"
     ],
     "parent_classes": [
      "adv-panel",
@@ -5172,14 +4390,14 @@
      "matrix-card"
     ],
     "shared_rule_matches": false,
-    "text": "Correlated pairs A symphony is flagged w",
+    "text": "Correlated pairs Flags the lower-scoring",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "57213112528bbc20cdd74ee5822902099aa73c7afb0289242f37335543cd9af5"
+    "style_digest": "50123818354da49138d78741537ab6b2fafb24292a66236e818a87c155136a81"
    },
    {
     "tag": "div",
@@ -5221,48 +4439,6 @@
    }
   ],
   "ai-advisor|tab:asset-swaps|1440|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
-   },
    {
     "tag": "div",
     "classes": [
@@ -5326,48 +4502,6 @@
   ],
   "ai-advisor|tab:logic-changes|1440|light": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -5430,48 +4564,6 @@
   ],
   "ai-advisor|tab:chat|1440|light": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -5522,7 +4614,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Chat explains what the advisor found and",
+    "text": "Chat explains and changes nothing; the D",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -5553,48 +4645,6 @@
    }
   ],
   "ai-advisor|tab:strategy-builder|1440|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
-   },
    {
     "tag": "div",
     "classes": [
@@ -5657,48 +4707,6 @@
    }
   ],
   "ai-advisor|tab:frontrunner-builder|1440|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bc6f4388c89a8f546d3cd0c441d6e39908fc42f8a84f375369c6def8e0851517"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "156ef8f7bcaaf09cbd69f1363dcf0cf765112a9f4a25168488472f2b035150b2"
-   },
    {
     "tag": "div",
     "classes": [
@@ -5782,48 +4790,6 @@
   ],
   "ai-advisor|load|1440|dark": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -5882,31 +4848,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "1e188cb38e26b613d69b1bf2409a50ac42526bfb6df8e3aa9e78cc7b6aac64b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--bare",
-     "autotune-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Runs without adoptin",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4a8fb29144071122784079c349becbe83b850bf838c342790c3adf7952ba40c1"
+    "style_digest": "c771ca8270756c826c581c506deeaf57063b422ad255d37feb18ca7173709676"
    },
    {
     "tag": "div",
@@ -5945,7 +4890,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "a06d28133481509b2b038c8cad0a2aed969200c836b543fe396ae1df7dddd00b"
+    "style_digest": "bd13b5541ef07cc08e33c0cf1b86fdf00826d623ee33cba95bcb8dcbd8252f85"
    },
    {
     "tag": "span",
@@ -6040,59 +4985,20 @@
      "obs-section"
     ],
     "shared_rule_matches": false,
-    "text": "The latest verdict from each advisor tha",
+    "text": "The latest verdict from each advisor che",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "80b06e69c95b0e94b822993c821676d096ed7693d49e510ba6032035e7d1e623"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean THEORY spec: the fro",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "f8cb493f39dab586e0b45941f488106ac42d08a2b5219a76cbba81777c924b00"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "obs-framing-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Spec Critic is an active guardrail check",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "cf6730d71dba7bb1d407da577381422c1f58969e6add65b1f2a87c0dd6aa4c87"
+    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
    },
    {
     "tag": "div",
     "classes": [
-     "obs-producer"
+     "cols-table",
+     "obs-lines"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6107,7 +5013,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "cbdf6b713ca68edfa0940d0a9489d6a52ca8b2740b63280cefa7df7323e54592"
+    "style_digest": "e32a42de1693b8481d730d15b4bd69ceffd4de19cd638a1003dc516b81aaa1d1"
    },
    {
     "tag": "span",
@@ -6127,53 +5033,31 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0c61cbd39b92c629f9b389280e05245ace668f3a0e16851967359bcde9bede71"
+    "style_digest": "0be576c5f84fc2f29e4b2b15a079f8cfbf032e81e263b6e0e8cc1c54049bc3c7"
+   },
+   {
+    "tag": "span",
+    "classes": [
+     "adv-heading",
+     "obs-producer-label",
+     "section-header"
+    ],
+    "parent_classes": [
+     "obs-producer-line"
+    ],
+    "shared_rule_matches": false,
+    "text": "Retirement",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "07aa8a7bc6dbe301e2a3a71941aa89f88863a147563805a954d404949b0bb39f"
    }
   ],
   "ai-advisor|tab:overview|1440|dark": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -6232,31 +5116,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "1e188cb38e26b613d69b1bf2409a50ac42526bfb6df8e3aa9e78cc7b6aac64b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--bare",
-     "autotune-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Runs without adoptin",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4a8fb29144071122784079c349becbe83b850bf838c342790c3adf7952ba40c1"
+    "style_digest": "c771ca8270756c826c581c506deeaf57063b422ad255d37feb18ca7173709676"
    },
    {
     "tag": "div",
@@ -6295,7 +5158,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "a06d28133481509b2b038c8cad0a2aed969200c836b543fe396ae1df7dddd00b"
+    "style_digest": "bd13b5541ef07cc08e33c0cf1b86fdf00826d623ee33cba95bcb8dcbd8252f85"
    },
    {
     "tag": "span",
@@ -6390,59 +5253,20 @@
      "obs-section"
     ],
     "shared_rule_matches": false,
-    "text": "The latest verdict from each advisor tha",
+    "text": "The latest verdict from each advisor che",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "80b06e69c95b0e94b822993c821676d096ed7693d49e510ba6032035e7d1e623"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean THEORY spec: the fro",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "f8cb493f39dab586e0b45941f488106ac42d08a2b5219a76cbba81777c924b00"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "obs-framing-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Spec Critic is an active guardrail check",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "cf6730d71dba7bb1d407da577381422c1f58969e6add65b1f2a87c0dd6aa4c87"
+    "style_digest": "79a803c1b81e68e7d07063f96082ee0e71018654084e98cc4d2436acdfc58bf6"
    },
    {
     "tag": "div",
     "classes": [
-     "obs-producer"
+     "cols-table",
+     "obs-lines"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6457,7 +5281,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "cbdf6b713ca68edfa0940d0a9489d6a52ca8b2740b63280cefa7df7323e54592"
+    "style_digest": "e32a42de1693b8481d730d15b4bd69ceffd4de19cd638a1003dc516b81aaa1d1"
    },
    {
     "tag": "span",
@@ -6477,52 +5301,30 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0c61cbd39b92c629f9b389280e05245ace668f3a0e16851967359bcde9bede71"
-   }
-  ],
-  "ai-advisor|tab:correlations|1440|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
+    "style_digest": "0be576c5f84fc2f29e4b2b15a079f8cfbf032e81e263b6e0e8cc1c54049bc3c7"
    },
    {
-    "tag": "details",
+    "tag": "span",
     "classes": [
-     "hp-more"
+     "adv-heading",
+     "obs-producer-label",
+     "section-header"
     ],
     "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
+     "obs-producer-line"
     ],
     "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
+    "text": "Retirement",
     "margins": {
-     "margin-top": "12px",
+     "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
-   },
+    "style_digest": "07aa8a7bc6dbe301e2a3a71941aa89f88863a147563805a954d404949b0bb39f"
+   }
+  ],
+  "ai-advisor|tab:correlations|1440|dark": [
    {
     "tag": "div",
     "classes": [
@@ -6585,48 +5387,6 @@
    }
   ],
   "ai-advisor|tab:retirement|1440|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
-   },
    {
     "tag": "div",
     "classes": [
@@ -6692,9 +5452,7 @@
    {
     "tag": "div",
     "classes": [
-     "retirement-pair",
-     "retirement-pair--never-run",
-     "retirement-pair--side"
+     "retirement-pair"
     ],
     "parent_classes": [
      "adv-panel",
@@ -6702,14 +5460,14 @@
      "matrix-card"
     ],
     "shared_rule_matches": false,
-    "text": "Correlated pairs A symphony is flagged w",
+    "text": "Correlated pairs Flags the lower-scoring",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "8042aefd2680bbac3a44e8132df6cdb45738cf58c7409e5e2b70cde2bf7f4612"
+    "style_digest": "890fd06d7dc9a90bf12e97792b30cf4f5bdb486b05c572d0ba70279f0d987257"
    },
    {
     "tag": "div",
@@ -6751,48 +5509,6 @@
    }
   ],
   "ai-advisor|tab:asset-swaps|1440|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
-   },
    {
     "tag": "div",
     "classes": [
@@ -6856,48 +5572,6 @@
   ],
   "ai-advisor|tab:logic-changes|1440|dark": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -6960,48 +5634,6 @@
   ],
   "ai-advisor|tab:chat|1440|dark": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -7052,7 +5684,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Chat explains what the advisor found and",
+    "text": "Chat explains and changes nothing; the D",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -7083,48 +5715,6 @@
    }
   ],
   "ai-advisor|tab:strategy-builder|1440|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
-   },
    {
     "tag": "div",
     "classes": [
@@ -7187,48 +5777,6 @@
    }
   ],
   "ai-advisor|tab:frontrunner-builder|1440|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "9754748387f7c29ce869a29608ba908f7e94411526eb7efb258007f849f436b4"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "bbef968d58520650b06f179db1c3f897f1c570431832e110e0d082d8273b9271"
-   },
    {
     "tag": "div",
     "classes": [
@@ -7312,48 +5860,6 @@
   ],
   "ai-advisor|load|375|light": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -7412,31 +5918,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "48fb1c95eee96c769c1508801688f904e525f006d07038bdb63960629f7755c8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--bare",
-     "autotune-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Runs without adoptin",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "c7b019421f5dd0244e3250cfa238933cab74f5e9a3d88711149554df66442fa6"
+    "style_digest": "db6fe6f8e9a60a8175f58be58267706e15279104eff556bcf884e1c6fd2329e4"
    },
    {
     "tag": "div",
@@ -7475,7 +5960,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "9e60a0af126d4e9d96cd422ab24d0819f32b66133786e8cdd4d08fd670294f82"
+    "style_digest": "a0b939c34c288bb2f292b2ed80bcab2c69a01afe654068cb3e472bcbf7cc26df"
    },
    {
     "tag": "span",
@@ -7570,59 +6055,20 @@
      "obs-section"
     ],
     "shared_rule_matches": false,
-    "text": "The latest verdict from each advisor tha",
+    "text": "The latest verdict from each advisor che",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "6371001822245c2a348c1a3c3b54dda164109f730c7673d911a1193bd8b4215c"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean THEORY spec: the fro",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b2c6749bac8dbb26bf3dea5d85cccb66a88fba63d541d6ef1f44f9412640d483"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "obs-framing-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Spec Critic is an active guardrail check",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "ee9155f7afbe806747e5427ef79582f80d099c36f2c48d421c24d1be166e29b5"
+    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
     "tag": "div",
     "classes": [
-     "obs-producer"
+     "cols-table",
+     "obs-lines"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7637,7 +6083,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ea596c8e11b856a40957be5c860974d827382aff2b7db49eb1074a26bcb5de14"
+    "style_digest": "fb3adf948e465d27a9621d1b1e2fa89b838b5c03eeaf12aba0f09789b038586e"
    },
    {
     "tag": "span",
@@ -7657,53 +6103,31 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "95013d0f7025d1a606fb62e4abda57dff69d3c9a423e1f9b9be96204a8678160"
+    "style_digest": "8359865755ef821480e78c0c294ed9795f7f9754b145d71531835657d20276c1"
+   },
+   {
+    "tag": "span",
+    "classes": [
+     "adv-heading",
+     "obs-producer-label",
+     "section-header"
+    ],
+    "parent_classes": [
+     "obs-producer-line"
+    ],
+    "shared_rule_matches": false,
+    "text": "Retirement",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "c454f239fccc707f7c718cdd18336fc50c2f870278d402e006c3eab9f83dc0ec"
    }
   ],
   "ai-advisor|tab:overview|375|light": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -7762,31 +6186,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "48fb1c95eee96c769c1508801688f904e525f006d07038bdb63960629f7755c8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--bare",
-     "autotune-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Runs without adoptin",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "c7b019421f5dd0244e3250cfa238933cab74f5e9a3d88711149554df66442fa6"
+    "style_digest": "db6fe6f8e9a60a8175f58be58267706e15279104eff556bcf884e1c6fd2329e4"
    },
    {
     "tag": "div",
@@ -7825,7 +6228,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "9e60a0af126d4e9d96cd422ab24d0819f32b66133786e8cdd4d08fd670294f82"
+    "style_digest": "a0b939c34c288bb2f292b2ed80bcab2c69a01afe654068cb3e472bcbf7cc26df"
    },
    {
     "tag": "span",
@@ -7920,59 +6323,20 @@
      "obs-section"
     ],
     "shared_rule_matches": false,
-    "text": "The latest verdict from each advisor tha",
+    "text": "The latest verdict from each advisor che",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "6371001822245c2a348c1a3c3b54dda164109f730c7673d911a1193bd8b4215c"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean THEORY spec: the fro",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b2c6749bac8dbb26bf3dea5d85cccb66a88fba63d541d6ef1f44f9412640d483"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "obs-framing-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Spec Critic is an active guardrail check",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "ee9155f7afbe806747e5427ef79582f80d099c36f2c48d421c24d1be166e29b5"
+    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
    },
    {
     "tag": "div",
     "classes": [
-     "obs-producer"
+     "cols-table",
+     "obs-lines"
     ],
     "parent_classes": [
      "adv-panel",
@@ -7987,7 +6351,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ea596c8e11b856a40957be5c860974d827382aff2b7db49eb1074a26bcb5de14"
+    "style_digest": "fb3adf948e465d27a9621d1b1e2fa89b838b5c03eeaf12aba0f09789b038586e"
    },
    {
     "tag": "span",
@@ -8007,52 +6371,30 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "95013d0f7025d1a606fb62e4abda57dff69d3c9a423e1f9b9be96204a8678160"
-   }
-  ],
-  "ai-advisor|tab:correlations|375|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
+    "style_digest": "8359865755ef821480e78c0c294ed9795f7f9754b145d71531835657d20276c1"
    },
    {
-    "tag": "details",
+    "tag": "span",
     "classes": [
-     "hp-more"
+     "adv-heading",
+     "obs-producer-label",
+     "section-header"
     ],
     "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
+     "obs-producer-line"
     ],
     "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
+    "text": "Retirement",
     "margins": {
-     "margin-top": "12px",
+     "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
-   },
+    "style_digest": "c454f239fccc707f7c718cdd18336fc50c2f870278d402e006c3eab9f83dc0ec"
+   }
+  ],
+  "ai-advisor|tab:correlations|375|light": [
    {
     "tag": "div",
     "classes": [
@@ -8115,48 +6457,6 @@
    }
   ],
   "ai-advisor|tab:retirement|375|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
-   },
    {
     "tag": "div",
     "classes": [
@@ -8222,8 +6522,7 @@
    {
     "tag": "div",
     "classes": [
-     "retirement-pair",
-     "retirement-pair--never-run"
+     "retirement-pair"
     ],
     "parent_classes": [
      "adv-panel",
@@ -8231,7 +6530,7 @@
      "matrix-card"
     ],
     "shared_rule_matches": false,
-    "text": "Correlated pairs A symphony is flagged w",
+    "text": "Correlated pairs Flags the lower-scoring",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8280,48 +6579,6 @@
    }
   ],
   "ai-advisor|tab:asset-swaps|375|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
-   },
    {
     "tag": "div",
     "classes": [
@@ -8385,48 +6642,6 @@
   ],
   "ai-advisor|tab:logic-changes|375|light": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -8489,48 +6704,6 @@
   ],
   "ai-advisor|tab:chat|375|light": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -8581,7 +6754,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Chat explains what the advisor found and",
+    "text": "Chat explains and changes nothing; the D",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -8612,48 +6785,6 @@
    }
   ],
   "ai-advisor|tab:strategy-builder|375|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
-   },
    {
     "tag": "div",
     "classes": [
@@ -8716,48 +6847,6 @@
    }
   ],
   "ai-advisor|tab:frontrunner-builder|375|light": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6a6549d355e3e1f40925b5ff835f95797204377e9e968aa108311fb279ade3d8"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "e4202d548efa61b9f6087aae4597dc8e0588cf882ecf68fde783579ce2dce0c2"
-   },
    {
     "tag": "div",
     "classes": [
@@ -8841,48 +6930,6 @@
   ],
   "ai-advisor|load|375|dark": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -8941,31 +6988,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "1a9dcfc4640896e66fb3af55fed7ae32fc4c0131a5a4f3a1aa474daf6e912bc7"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--bare",
-     "autotune-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Runs without adoptin",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "d3d1f14a908eb23382b41498b47c07fe8fc345873d996bfc4f97cf2a0e2c715f"
+    "style_digest": "57c5a6895feebf647ae5e007a382679a7ff76d400f5dd638c8b11cbf69ab8218"
    },
    {
     "tag": "div",
@@ -9004,7 +7030,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "e92eb07b21879fda04a6d2cf413711ed3680c0cdfd4c756a5d36b6cae4822a07"
+    "style_digest": "88126fc564129f4ab386f9fcf8a7ea38673114d130ad7dae630c3f324c41c0cc"
    },
    {
     "tag": "span",
@@ -9099,59 +7125,20 @@
      "obs-section"
     ],
     "shared_rule_matches": false,
-    "text": "The latest verdict from each advisor tha",
+    "text": "The latest verdict from each advisor che",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "8fdd375e9c35be9c53652d44471230c53323e40d6d792f6e8f074a240343fddc"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean THEORY spec: the fro",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "392b74972b5ba34f362bad19cd12fddd7befc1a6b51f82b7c5c1578e9498a3b9"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "obs-framing-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Spec Critic is an active guardrail check",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6eaa732dea1b1a12369027ec4d052a00b4957188040a4ceb64b4942e4c5ded3a"
+    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
     "tag": "div",
     "classes": [
-     "obs-producer"
+     "cols-table",
+     "obs-lines"
     ],
     "parent_classes": [
      "adv-panel",
@@ -9166,7 +7153,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "78d28b921c2eac9ca7adf474f36d03e5f327b72cb2d78fb6c496fc334d9fa233"
+    "style_digest": "890e85b9f7a47b217bf64abeacd36d90fc2756bf14cc4cfa4872d4f0618e8d4b"
    },
    {
     "tag": "span",
@@ -9186,53 +7173,31 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "eaf9805f912e30441af9f7c6ba3d78edb460dd7b4ccf752561fadc1314519b75"
+    "style_digest": "c62e09d4349b84f85c03bc28e23338155cd0eb489aac70a204aceb90020a452e"
+   },
+   {
+    "tag": "span",
+    "classes": [
+     "adv-heading",
+     "obs-producer-label",
+     "section-header"
+    ],
+    "parent_classes": [
+     "obs-producer-line"
+    ],
+    "shared_rule_matches": false,
+    "text": "Retirement",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "761030488571eace0268358b766b137e2e8d652ea287c1d904bffc0c6ae50baa"
    }
   ],
   "ai-advisor|tab:overview|375|dark": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -9291,31 +7256,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "1a9dcfc4640896e66fb3af55fed7ae32fc4c0131a5a4f3a1aa474daf6e912bc7"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--bare",
-     "autotune-panel",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Runs without adoptin",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "d3d1f14a908eb23382b41498b47c07fe8fc345873d996bfc4f97cf2a0e2c715f"
+    "style_digest": "57c5a6895feebf647ae5e007a382679a7ff76d400f5dd638c8b11cbf69ab8218"
    },
    {
     "tag": "div",
@@ -9354,7 +7298,7 @@
      "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "e92eb07b21879fda04a6d2cf413711ed3680c0cdfd4c756a5d36b6cae4822a07"
+    "style_digest": "88126fc564129f4ab386f9fcf8a7ea38673114d130ad7dae630c3f324c41c0cc"
    },
    {
     "tag": "span",
@@ -9449,59 +7393,20 @@
      "obs-section"
     ],
     "shared_rule_matches": false,
-    "text": "The latest verdict from each advisor tha",
+    "text": "The latest verdict from each advisor che",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "2px",
+     "margin-bottom": "8px",
      "margin-left": "0px"
     },
-    "style_digest": "8fdd375e9c35be9c53652d44471230c53323e40d6d792f6e8f074a240343fddc"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean THEORY spec: the fro",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "392b74972b5ba34f362bad19cd12fddd7befc1a6b51f82b7c5c1578e9498a3b9"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "obs-framing-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "obs-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Spec Critic is an active guardrail check",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "12px",
-     "margin-left": "0px"
-    },
-    "style_digest": "6eaa732dea1b1a12369027ec4d052a00b4957188040a4ceb64b4942e4c5ded3a"
+    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
    },
    {
     "tag": "div",
     "classes": [
-     "obs-producer"
+     "cols-table",
+     "obs-lines"
     ],
     "parent_classes": [
      "adv-panel",
@@ -9516,7 +7421,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "78d28b921c2eac9ca7adf474f36d03e5f327b72cb2d78fb6c496fc334d9fa233"
+    "style_digest": "890e85b9f7a47b217bf64abeacd36d90fc2756bf14cc4cfa4872d4f0618e8d4b"
    },
    {
     "tag": "span",
@@ -9536,52 +7441,30 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "eaf9805f912e30441af9f7c6ba3d78edb460dd7b4ccf752561fadc1314519b75"
-   }
-  ],
-  "ai-advisor|tab:correlations|375|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
+    "style_digest": "c62e09d4349b84f85c03bc28e23338155cd0eb489aac70a204aceb90020a452e"
    },
    {
-    "tag": "details",
+    "tag": "span",
     "classes": [
-     "hp-more"
+     "adv-heading",
+     "obs-producer-label",
+     "section-header"
     ],
     "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
+     "obs-producer-line"
     ],
     "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
+    "text": "Retirement",
     "margins": {
-     "margin-top": "12px",
+     "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
-   },
+    "style_digest": "761030488571eace0268358b766b137e2e8d652ea287c1d904bffc0c6ae50baa"
+   }
+  ],
+  "ai-advisor|tab:correlations|375|dark": [
    {
     "tag": "div",
     "classes": [
@@ -9644,48 +7527,6 @@
    }
   ],
   "ai-advisor|tab:retirement|375|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
-   },
    {
     "tag": "div",
     "classes": [
@@ -9751,8 +7592,7 @@
    {
     "tag": "div",
     "classes": [
-     "retirement-pair",
-     "retirement-pair--never-run"
+     "retirement-pair"
     ],
     "parent_classes": [
      "adv-panel",
@@ -9760,7 +7600,7 @@
      "matrix-card"
     ],
     "shared_rule_matches": false,
-    "text": "Correlated pairs A symphony is flagged w",
+    "text": "Correlated pairs Flags the lower-scoring",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -9809,48 +7649,6 @@
    }
   ],
   "ai-advisor|tab:asset-swaps|375|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
-   },
    {
     "tag": "div",
     "classes": [
@@ -9914,48 +7712,6 @@
   ],
   "ai-advisor|tab:logic-changes|375|dark": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -10018,48 +7774,6 @@
   ],
   "ai-advisor|tab:chat|375|dark": [
    {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
-   },
-   {
     "tag": "div",
     "classes": [
      "cap-nav-wrap"
@@ -10110,7 +7824,7 @@
      "hero-section"
     ],
     "shared_rule_matches": false,
-    "text": "Chat explains what the advisor found and",
+    "text": "Chat explains and changes nothing; the D",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
@@ -10141,48 +7855,6 @@
    }
   ],
   "ai-advisor|tab:strategy-builder|375|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
-   },
    {
     "tag": "div",
     "classes": [
@@ -10245,48 +7917,6 @@
    }
   ],
   "ai-advisor|tab:frontrunner-builder|375|dark": [
-   {
-    "tag": "p",
-    "classes": [
-     "adv-caption",
-     "adv-note",
-     "legend-as-of"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Advisory tools: a suggestion changes not",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "8px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e689dd5d5b88a63f36cdb99af216b88593db2dee0700dcd10479c9fb1ad48a2"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "adv-panel--nav",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Tab dots: green mark",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "09fa2602dbec257e5ab759da7af5b3706e6daed768abef1378a0c5e107cc9e20"
-   },
    {
     "tag": "div",
     "classes": [
@@ -10636,7 +8266,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Global defaults applied to every symphon",
+    "text": "Global defaults for every symphony; a pe",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -10741,25 +8371,6 @@
      "margin-left": "0px"
     },
     "style_digest": "c18b845c5a03f0d15e9135c8ad302cbbf095bee265208f90bf60d7a09ae148ee"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Composer: the key an",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
    },
    {
     "tag": "div",
@@ -10908,7 +8519,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Override globals or lock parameters agai",
+    "text": "Override a global setting or lock a para",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -10916,25 +8527,6 @@
      "margin-left": "0px"
     },
     "style_digest": "c18b845c5a03f0d15e9135c8ad302cbbf095bee265208f90bf60d7a09ae148ee"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms meanuses globals: no valu",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
    },
    {
     "tag": "div",
@@ -11026,7 +8618,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Destructive data operations. Each action",
+    "text": "Data operations that cannot be undone, s",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -11034,25 +8626,6 @@
      "margin-left": "0px"
     },
     "style_digest": "c18b845c5a03f0d15e9135c8ad302cbbf095bee265208f90bf60d7a09ae148ee"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Synthetic post-morte",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "db11dadc2469ae59a9ce89a0791fb48fa9ac7b4f06101ebc626ce226e8b13434"
    },
    {
     "tag": "div",
@@ -11361,7 +8934,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Global defaults applied to every symphon",
+    "text": "Global defaults for every symphony; a pe",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -11466,25 +9039,6 @@
      "margin-left": "0px"
     },
     "style_digest": "24dcdb1923d7cfd5047917c826c9bc982ec5dfafd08ab34d1cb7bddce8d11151"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Composer: the key an",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
    },
    {
     "tag": "div",
@@ -11633,7 +9187,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Override globals or lock parameters agai",
+    "text": "Override a global setting or lock a para",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -11641,25 +9195,6 @@
      "margin-left": "0px"
     },
     "style_digest": "24dcdb1923d7cfd5047917c826c9bc982ec5dfafd08ab34d1cb7bddce8d11151"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms meanuses globals: no valu",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
    },
    {
     "tag": "div",
@@ -11751,7 +9286,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Destructive data operations. Each action",
+    "text": "Data operations that cannot be undone, s",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -11759,25 +9294,6 @@
      "margin-left": "0px"
     },
     "style_digest": "24dcdb1923d7cfd5047917c826c9bc982ec5dfafd08ab34d1cb7bddce8d11151"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Synthetic post-morte",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3b2cc707392b58612043c8dda2b3bd5a21b2f5031fac0091e1f788ca3de699c1"
    },
    {
     "tag": "div",
@@ -12086,7 +9602,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Global defaults applied to every symphon",
+    "text": "Global defaults for every symphony; a pe",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -12191,25 +9707,6 @@
      "margin-left": "0px"
     },
     "style_digest": "c365d491e7bcd330e47132d1676cc107d8b18c65de0385fcb3c6690f54acc085"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Composer: the key an",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
    },
    {
     "tag": "div",
@@ -12358,7 +9855,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Override globals or lock parameters agai",
+    "text": "Override a global setting or lock a para",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -12366,25 +9863,6 @@
      "margin-left": "0px"
     },
     "style_digest": "c365d491e7bcd330e47132d1676cc107d8b18c65de0385fcb3c6690f54acc085"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms meanuses globals: no valu",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
    },
    {
     "tag": "div",
@@ -12476,7 +9954,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Destructive data operations. Each action",
+    "text": "Data operations that cannot be undone, s",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -12484,25 +9962,6 @@
      "margin-left": "0px"
     },
     "style_digest": "c365d491e7bcd330e47132d1676cc107d8b18c65de0385fcb3c6690f54acc085"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Synthetic post-morte",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "3fe166818c943618207fccbdc9ac5256537fb067f704243925f5f5992180225f"
    },
    {
     "tag": "div",
@@ -12811,7 +10270,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Global defaults applied to every symphon",
+    "text": "Global defaults for every symphony; a pe",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -12916,25 +10375,6 @@
      "margin-left": "0px"
     },
     "style_digest": "633ea75b55f1e6837a065ef3ff747c141feaa6d1613d22be155ea11ffc532678"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Composer: the key an",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",
@@ -13083,7 +10523,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Override globals or lock parameters agai",
+    "text": "Override a global setting or lock a para",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -13091,25 +10531,6 @@
      "margin-left": "0px"
     },
     "style_digest": "633ea75b55f1e6837a065ef3ff747c141feaa6d1613d22be155ea11ffc532678"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms meanuses globals: no valu",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",
@@ -13201,7 +10622,7 @@
      "settings-section"
     ],
     "shared_rule_matches": false,
-    "text": "Destructive data operations. Each action",
+    "text": "Data operations that cannot be undone, s",
     "margins": {
      "margin-top": "4px",
      "margin-right": "0px",
@@ -13209,25 +10630,6 @@
      "margin-left": "0px"
     },
     "style_digest": "633ea75b55f1e6837a065ef3ff747c141feaa6d1613d22be155ea11ffc532678"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "settings-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the terms mean Synthetic post-morte",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "b67e1d2dda26434715f8bb73422d13c6f70d7a129fa78ef23b8b67ba3384910a"
    },
    {
     "tag": "div",

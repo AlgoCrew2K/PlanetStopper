@@ -125,6 +125,29 @@ written again.
 - sha256 of `baseline.json` (LF line ends): `64c8f9ec615696324a3d3c2fd0898f49b68333c4b6d63727d46e1f327952668e`.
 - PM sign-off: not needed (producer output; the only differences are the fix round's own re-arranged elements).
 
+## Revision: re-recorded at the aligned-tables-and-quiet-copy head
+
+The slice removed and re-arranged elements on every page (the captions grids, the two-group risk table, the far-end
+stamps, the one Glossary per page, the aligned observation lines), so the element set of the History, Performance,
+Advisor and Settings comparison cases changed on purpose and `baseline.json` was written again.
+
+- `base_sha` in the file, `BASE_SHA` in the producer and the producer's refusal now name
+  `b8a49292015d4377a7c8fcfacd72acaac6fabf29`, the last production commit of the slice; the producer refuses unless
+  `git diff --quiet` against it over `static templates app.py` exits 0 and those paths are clean (it ran in the
+  slice's worktree at head `585617cacc1467973cae42076dd9fda4b7926559`, whose `static`, `templates` and `app.py` equal
+  that commit; the later commit is a test file). The worktree holds a `.env`; the producer removes the credential
+  variables and the module values the import set (see "Re-capture without `.env`"), so the record does not read it.
+  Run twice in separate processes: the two records were equal apart from `captured_at_utc`.
+- Producer call and Firefox (`148.0.2`) as above; 76 views, 546 elements (was 674).
+- Compared with the previous record, view by view: the 76 view keys are the same; 64 views differ (Advisor 36,
+  Settings 16, Dashboard 4, History 4, Performance 4), all in their element set or an element's text or computed
+  style. Every heading of the previous record is present with the same tag, classes and four margins; the Advisor
+  Overview views (load and the Overview tab, 8 views) hold one more `section-header` (the Retirement producer
+  label, margins the same as the other producer labels) and no view lost one. The margins of the elements the
+  shared rule matches are equal in every view.
+- sha256 of `baseline.json` (LF line ends): `37655d9961540428270676d8a41a7960e5dab417eb435b380d37cfa53961d434`.
+- PM sign-off: not needed (producer output; the only differences are the slice's own added and re-arranged elements).
+
 ## Regenerating
 
 A different Firefox version, or a deliberate change of a page that moves the elements, needs a new capture,
