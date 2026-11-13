@@ -52,6 +52,7 @@ from tests.ui import test_advisor_observations_browser as obs_module
 from tests.ui import test_advisor_polish_browser as polish_module
 from tests.ui import test_dashboard_alignment_browser as dash_alignment
 from tests.ui import test_page_explainers_advisor_browser as advisor_module
+from tests.ui import test_page_explainers_cross_host_browser as cross_host_module
 from tests.ui import test_page_explainers_dashboard_browser as dashboard_module
 from tests.ui import test_page_explainers_performance_history_browser as perf_module
 from tests.ui import test_page_explainers_settings_browser as settings_module
@@ -898,6 +899,66 @@ def test_an_empty_host_shows_each_empty_state_and_no_table_with_a_header_and_no_
             assert_swept(probe, _groups_of_host(host, tab), width, where, allow_absent=True)
             bare = set(probe.page.evaluate(HEADER_ONLY_JS)) - HEADER_ONLY_AS_AT_THE_REFERENCE
             assert not bare, f"{where}: a header row over no rows: {sorted(bare)}"
+
+
+# ---------------------------------------------------------------------------
+# Figures at the edge of their formats
+# ---------------------------------------------------------------------------
+
+# A zero, a negative and the longest value a figure takes, added to the absent, null and non-finite
+# values the cross-host module degrades a host's figures to; the figure fields are the same ones.
+EDGE_FIGURE_VALUES = {"zero": 0.0, "negative": -99.99, "longest": 1234567.89}
+EDGE_CASES = [
+    ("/", variant) for variant in ("absent", "none", "nan", "inf", *EDGE_FIGURE_VALUES)
+] + [
+    # History's answer carries NaN and Infinity as bare words its script cannot parse (at the
+    # reference as here), so those two are not read there.
+    ("/history", variant)
+    for variant in ("absent", "none", *EDGE_FIGURE_VALUES)
+]
+
+
+@pytest.mark.parametrize("width", [1001, 1440, 1920])
+@pytest.mark.parametrize(("host", "variant"), EDGE_CASES)
+def test_a_figure_at_the_edge_of_its_format_stays_in_its_aligned_column(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    tmp_path,
+    monkeypatch,
+    host,
+    variant,
+    width,
+):
+    """Rejects a column whose figures align only while every one is a plain positive number: a zero,
+    a negative, the longest value and a dash each take the column's edge."""
+    for name, value in EDGE_FIGURE_VALUES.items():
+        monkeypatch.setitem(cross_host_module.BAD_VALUES, name, value)
+    harness.credential_free_environment(
+        tmp_path / "page.env", monkeypatch.setattr, lambda n: monkeypatch.delenv(n, raising=False)
+    )
+    cross_host_module._seed_degraded(host, variant, tmp_path, monkeypatch)
+    where = f"{host} with figures {variant}"
+    with open_probe(firefox, advisor_server, width=width, height=al.VIEWPORT_HEIGHT) as probe:
+        probe.context.clock.install(time=harness.CAPTURE_INSTANT)
+        open_page(probe, host)
+        probe.page.wait_for_timeout(harness.SETTLE_MS)
+        # A figure the answer lacks leaves its section to its empty state, which has no group.
+        lacking = variant in ("absent", "none", "nan", "inf")
+        if host == "/":
+            assert_swept(probe, DASHBOARD_STATES["dashboard"]["groups"], width, where)
+        else:
+            assert_swept(probe, HISTORY_GROUPS, width, where, allow_absent=lacking)
+            if variant == "none":
+                return  # a day whose figures are null draws no bar at all, so no day opens
+            # A day whose figures are zero or missing draws a bar with no height, which a click
+            # cannot reach, so the day's own click handler is sent the click.
+            probe.page.dispatch_event(
+                f'#daily-chart-svg rect[data-date="{perf_module.EXIT_DAY}"]', "click"
+            )
+            probe.page.wait_for_function(
+                "() => document.querySelectorAll('#triggers-tbody tr').length === 8"
+            )
+            assert_swept(probe, HISTORY_EXIT_GROUPS, width, f"{where}, one exit day opened")
 
 
 # ---------------------------------------------------------------------------
