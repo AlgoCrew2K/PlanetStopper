@@ -167,8 +167,11 @@ _RATIONALE_WIDTH_JS = """() => {
   ruler.remove();
   const box = el.getBoundingClientRect();
   const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
+  const description = document.querySelector('[data-explainer="O15"]').getBoundingClientRect();
   return { width: box.width, cap, lines: Math.round(box.height / lineHeight),
-           characters: el.textContent.trim().length };
+           characters: el.textContent.trim().length,
+           belowDescription: box.top >= description.bottom - 1,
+           sameLeftEdge: Math.abs(box.left - description.left) <= 2 };
 }"""
 
 
@@ -202,6 +205,11 @@ def test_a_long_prism_rationale_is_no_wider_than_110_characters_of_its_own_font(
         f"the rationale is {read['width']:.0f} px, cap {read['cap']:.0f}"
     )
     assert read["lines"] >= 8, f"the capped rationale wraps to several lines: {read}"
+    # capped, it still takes a row of its own under the description, at the description's left edge:
+    # a column of 110 characters left beside the description is the layout the cap must not bring
+    assert read["belowDescription"] and read["sameLeftEdge"], (
+        f"the rationale sits beside it: {read}"
+    )
     assert advisor_probe.page_errors == [], advisor_probe.page_errors
 
 
