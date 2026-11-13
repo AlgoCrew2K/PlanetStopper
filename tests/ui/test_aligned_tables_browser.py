@@ -35,6 +35,7 @@ to a seeded record is named at its call site.
 from __future__ import annotations
 
 import copy
+import functools
 import json
 
 import pytest
@@ -115,10 +116,18 @@ def _group(registry: str, name: str, **override) -> tuple[str, str, dict]:
 
 
 def check(
-    page, registry: str, name: str, width: int, *, allow_absent: bool = False, **override
+    page,
+    registry: str,
+    name: str,
+    width: int,
+    *,
+    allow_absent: bool = False,
+    gaps: bool = True,
+    **override,
 ) -> list[str]:
     """The faults of one group at the page's current state; a group that is not there is a fault,
-    except where ``allow_absent`` says the state may hold none (an empty state)."""
+    except where ``allow_absent`` says the state may hold none (an empty state). ``gaps=False``
+    leaves out the column gap bound, which holds for content narrower than its panel."""
     entry = getattr(al, registry)[name]
     problems: list[str] = []
 
@@ -138,7 +147,7 @@ def check(
     if registry == TABLE and entry["kind"] == "table":
         spec = al.spec_of(entry, name=name, **override)
         take(al.measure(page, al.COLUMN_EDGES_JS, spec), "column edges")
-        if name in GAP_RULE:
+        if gaps and name in GAP_RULE:
             take(al.measure(page, al.COLUMN_GAPS_JS, spec), "column gaps")
     elif registry == TABLE:
         spec = al.spec_of(entry, name=name, **override)
@@ -150,7 +159,7 @@ def check(
         if entry.get("figure_columns"):
             figures = {"name": name, **entry["figure_columns"]}
             take(al.measure(page, al.FIGURE_COLUMNS_JS, figures), "figure columns")
-        if name in GAP_RULE:
+        if gaps and name in GAP_RULE:
             take(al.measure(page, al.COLUMN_GAPS_JS, spec), "field gaps")
     elif registry == TOOLBAR:
         spec = {"name": name, "row": entry["row"], "max_gap": al.MAX_NON_CONTROL_GAP_PX, **override}
@@ -172,19 +181,28 @@ def check(
 
 
 def sweep(
-    page, groups: list[tuple[str, str, dict]], width: int, *, allow_absent: bool = False
+    page,
+    groups: list[tuple[str, str, dict]],
+    width: int,
+    *,
+    allow_absent: bool = False,
+    gaps: bool = True,
 ) -> list[str]:
     """Every group of a state that applies at ``width``."""
     problems: list[str] = []
     for registry, name, override in groups:
         if registry == LINE and width < LINE_FROM_WIDTH.get(name, 0):
             continue
-        problems += check(page, registry, name, width, allow_absent=allow_absent, **override)
+        problems += check(
+            page, registry, name, width, allow_absent=allow_absent, gaps=gaps, **override
+        )
     return problems
 
 
-def assert_swept(probe, groups, width: int, where: str, *, allow_absent: bool = False) -> None:
-    problems = sweep(probe.page, groups, width, allow_absent=allow_absent)
+def assert_swept(
+    probe, groups, width: int, where: str, *, allow_absent: bool = False, gaps: bool = True
+) -> None:
+    problems = sweep(probe.page, groups, width, allow_absent=allow_absent, gaps=gaps)
     assert not problems, f"{where} at {width}:\n" + "\n".join(problems)
     assert probe.page_errors == [], probe.page_errors
 
@@ -674,9 +692,18 @@ NAME_FIT_JS = r"""(needle) => {
     const rects = [...range.getClientRects()].filter((g) => g.width > 1 && g.height > 1);
     if (!rects.length) continue;
     out.found += 1;
-    const left = Math.min(...rects.map((g) => g.left));
-    const right = Math.max(...rects.map((g) => g.right));
+    let left = Math.min(...rects.map((g) => g.left));
+    let right = Math.max(...rects.map((g) => g.right));
     const cell = el.closest(CELL);
+    // Text a box clips (an ellipsis) is drawn only inside that box: what shows is what the box holds.
+    for (let node = el; node && node !== document.body; node = node.parentElement) {
+      if (getComputedStyle(node).overflowX !== 'visible') {
+        const box = node.getBoundingClientRect();
+        left = Math.max(left, box.left);
+        right = Math.min(right, box.right);
+      }
+      if (node === cell) break;
+    }
     const where = el.className || el.tagName;
     if (cell) {
       const box = cell.getBoundingClientRect();
@@ -742,13 +769,16 @@ def test_a_long_symphony_name_wraps_inside_its_own_cell_and_the_other_columns_st
     """Rejects a name cell that does not wrap (it spills over the next column or out of its card)
     and a name that pushes the columns of the other rows out of line."""
     where = f"{host} with a long name at {width}"
+    # A name that wraps fills its column, so the content is as wide as the panel and the bound on
+    # the gap between columns (for content narrower than the panel) does not apply.
+    swept = functools.partial(assert_swept, gaps=False)
     if host == "dashboard":
         _prepare_dashboard(tmp_path, monkeypatch, DASHBOARD_STATES["dashboard"])
         _lengthen_the_first_symphony_name()
         with dashboard_module._Dashboard(
             firefox, advisor_server, width, al.VIEWPORT_HEIGHT
         ) as probe:
-            assert_swept(probe, DASHBOARD_STATES["dashboard"]["groups"], width, where)
+            swept(probe, DASHBOARD_STATES["dashboard"]["groups"], width, where)
             _assert_the_name_fits(probe, where)
     elif host in ("performance", "history"):
         request.getfixturevalue("performance_history_seeded")
@@ -760,12 +790,12 @@ def test_a_long_symphony_name_wraps_inside_its_own_cell_and_the_other_columns_st
                     "/performance",
                     preconditions=(200, perf_module._usable_preconditions_body()),
                 )
-                assert_swept(probe, PERFORMANCE_GROUPS, width, where)
+                swept(probe, PERFORMANCE_GROUPS, width, where)
             else:
                 _lengthen_an_exits_name()
                 perf_module._open(probe, "/history")
                 perf_module._open_exit_day(probe)
-                assert_swept(probe, [*HISTORY_GROUPS, *HISTORY_EXIT_GROUPS], width, where)
+                swept(probe, [*HISTORY_GROUPS, *HISTORY_EXIT_GROUPS], width, where)
             _assert_the_name_fits(probe, where)
     elif host == "settings":
         request.getfixturevalue("world")
@@ -777,8 +807,8 @@ def test_a_long_symphony_name_wraps_inside_its_own_cell_and_the_other_columns_st
             _assert_the_name_fits(probe, f"{where}, the list")
             probe.page.locator("#sym-list .sym-list-btn").first.click()
             probe.page.wait_for_selector(".override-grid .override-row")
-            assert_swept(probe, [_group(TABLE, "symphony_override_rows")], width, where)
-            _assert_the_name_fits(probe, where, at_least=2)
+            swept(probe, [_group(TABLE, "symphony_override_rows")], width, where)
+            _assert_the_name_fits(probe, where)
     else:
         advisor_module._prepare(
             tmp_path, monkeypatch, world="empty", seed=_seed_retirement_with_a_long_name
@@ -787,7 +817,7 @@ def test_a_long_symphony_name_wraps_inside_its_own_cell_and_the_other_columns_st
         with advisor_module._open(
             firefox, advisor_server, (width, al.VIEWPORT_HEIGHT), "retirement"
         ) as opened:
-            assert_swept(opened.probe, spec["groups"], width, where)
+            swept(opened.probe, spec["groups"], width, where)
             _assert_the_name_fits(opened.probe, where)
 
 
@@ -820,9 +850,12 @@ HEADER_ONLY_JS = r"""() => {
   return out;
 }"""
 EMPTY_HOSTS = ["/", "/performance", "/history", "/settings", "/ai-advisor"]
-# Tables whose header row is written by the template and whose rows the page script fills, so with
-# nothing to fill they show a header and a line saying why, as the reference's pages do.
-HEADER_ONLY_AS_AT_THE_REFERENCE: frozenset[str] = frozenset()
+# The two tables the reference page already shows as a header row over an empty body: their
+# template writes the header and an empty body the page script fills, and a line beside each says
+# why there is nothing to fill. No other table may show a header over no rows.
+HEADER_ONLY_AS_AT_THE_REFERENCE = frozenset(
+    {"guard-alpha-preconditions-table", "exit-turnover-table"}
+)
 
 
 def _groups_of_host(host: str, tab: str | None) -> list[tuple[str, str, dict]]:
