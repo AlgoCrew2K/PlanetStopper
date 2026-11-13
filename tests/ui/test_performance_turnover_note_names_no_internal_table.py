@@ -33,9 +33,14 @@ def _panel():
 
 
 def _note() -> str:
+    """The panel's one-sentence description and the two Glossary lines that took over its limits:
+    Retained (F23) and the drag (F24)."""
     captions = find_all(_panel(), lambda n: "metrics-caption" in n["a"].get("class", "").split())
     assert captions, "the exit-turnover panel has no caption"
-    return _text(captions[0])
+    tree = parse_html(render_page("/performance"))
+    lines = find_all(tree, lambda n: n["a"].get("data-term") in ("F23", "F24"))
+    assert len(lines) == 2, "the Performance Glossary lacks its Retained or drag line"
+    return " ".join([_text(captions[0]), *(_text(line) for line in lines)])
 
 
 def test_the_note_names_no_internal_table():
@@ -57,5 +62,8 @@ def test_the_note_still_says_the_history_is_limited_and_each_window_names_its_da
 
 
 def test_the_note_still_says_the_drag_is_an_estimate_from_a_simulated_cost():
+    """The plan's F21 description and F24 line say "an estimate" at a fixed cost per exit; the word
+    "simulated" the earlier note carried is not in either text (Copy table A, row F21)."""
     note = _note()
-    assert re.search(r"estimat", note, re.I) and re.search(r"simulated", note, re.I), note
+    assert re.search(r"estimat", note, re.I), note
+    assert re.search(r"percentage points per exit|fixed cost per exit", note, re.I), note

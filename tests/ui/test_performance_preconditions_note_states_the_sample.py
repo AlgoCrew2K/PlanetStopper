@@ -25,6 +25,8 @@ from tests.ui._page_js_harness import render_page
 
 
 def _note() -> str:
+    """What the page says about the sample: the panel's one-sentence description and the
+    Performance Glossary's Sample line (F17a), which took over the Replay and Shadow sentence."""
     tree = parse_html(render_page("/performance"))
     panels = find_all(
         tree, lambda n: n["a"].get("data-testid") == "guard-alpha-preconditions-panel"
@@ -32,7 +34,9 @@ def _note() -> str:
     assert panels, "the render holds no preconditions panel"
     captions = find_all(panels[0], lambda n: "metrics-caption" in n["a"].get("class", "").split())
     assert captions, "the preconditions panel has no caption"
-    return " ".join(tree_text(captions[0]).split())
+    lines = find_all(tree, lambda n: n["a"].get("data-term") == "F17a")
+    assert len(lines) == 1, "the Performance Glossary has no Sample line"
+    return " ".join((tree_text(captions[0]) + " " + tree_text(lines[0])).split())
 
 
 def test_the_note_says_the_shadow_sample_covers_all_position_epochs():
