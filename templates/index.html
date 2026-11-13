@@ -129,7 +129,7 @@
          (description, headline, descriptor) takes the full width, so the picker never leaves a
          tall empty column beside a narrow text block. */
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: minmax(auto, 1fr) auto;
       align-items: start;
       gap: 0 16px;
       margin-bottom: 16px;
@@ -137,23 +137,25 @@
 
     .hero-top > :first-child { display: contents; }
     /* The window picker sits at the end of the headline's row, so a short figure leaves no wide
-       empty block beside it; the descriptor is a full-width line under the headline. */
+       empty block beside it; the descriptor is a full-width line under the headline. The
+       headline's own track keeps its text's width, so a wide face wraps the picker's segments
+       instead of squeezing the figure. */
     .hero-top {
       grid-template-areas:
-        "label label label"
-        "note note note"
-        "terms terms terms"
-        "notice notice notice"
-        "headline headline picker"
-        "descriptor descriptor descriptor"
-        "account account account";
+        "label label"
+        "note note"
+        "terms terms"
+        "notice notice"
+        "headline picker"
+        "descriptor descriptor"
+        "account account";
     }
     .hero-top .guard-alpha-label { grid-area: label; }
     .hero-top [data-explainer] { grid-area: note; }
     .hero-top .hp-more { grid-area: terms; }
     .hero-top #guard-alpha-window-notice { grid-area: notice; }
     .hero-top .guard-alpha-headline { grid-area: headline; }
-    .hero-top .window-selector { grid-area: picker; align-self: center; }
+    .hero-top .window-selector { grid-area: picker; align-self: center; flex-wrap: wrap; }
     .hero-top .guard-alpha-descriptor { grid-area: descriptor; margin: 4px 0 0; }
     .hero-top .account-all-time-stat { grid-area: account; }
 
@@ -745,6 +747,23 @@
       .card-actions { grid-column: 4; grid-row: 1; }
       .card-footer-grid { grid-column: 2; grid-row: 1; }
       .card-spark-col { grid-column: 3; grid-row: 1; }
+    }
+
+    /* Below the desktop breakpoint the picker takes its own row under the headline, so it never
+       squeezes the figure. */
+    @media (max-width: 1239px) {
+      .hero-top {
+        grid-template-areas:
+          "label label"
+          "note note"
+          "terms terms"
+          "notice notice"
+          "headline headline"
+          "picker picker"
+          "descriptor descriptor"
+          "account account";
+      }
+      .hero-top .window-selector { justify-self: start; max-width: 100%; margin-top: 8px; }
     }
 
     /* Phone: everything stacks in reading order. */
