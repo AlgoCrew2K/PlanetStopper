@@ -86,8 +86,10 @@ _BAND_FACTS = """
     return r.left < p.left - 1 || r.right > p.right + 1 || r.right > document.documentElement.clientWidth;
   }).length;
   const apart = (a, b) => a.right <= b.left + 1 || a.left >= b.right - 1 || a.bottom <= b.top + 1 || a.top >= b.bottom - 1;
+  const segmentRows = new Set([...picker.querySelectorAll('button')].map((b) => Math.round(b.getBoundingClientRect().top))).size;
   return {
     holds: text.right <= headline.right + 1 && text.left >= headline.left - 1,
+    segmentRows,
     clipped,
     pickerApartFromHeadline: apart(p, headline),
     pickerApartFromChart: apart(p, chart),
@@ -118,6 +120,11 @@ def test_the_headline_holds_its_figure_and_the_picker_clears_it_around_the_deskt
     facts = probe.page.evaluate(_BAND_FACTS, "-12.34%")
     where = f"{width}px {face} face"
     assert facts["holds"], f"{where}: the headline box does not hold its text"
+    if face == "default":
+        # With room for it (the default face), the picker is one line, beside the headline or under it.
+        assert facts["segmentRows"] == 1, (
+            f"{where}: the picker's segments sit on {facts['segmentRows']} lines"
+        )
     assert facts["clipped"] == 0, f"{where}: {facts['clipped']} picker segments overflow its box"
     assert facts["pickerApartFromHeadline"], f"{where}: the picker overlaps the headline's box"
     assert facts["pickerApartFromChart"], f"{where}: the picker overlaps the chart column"
