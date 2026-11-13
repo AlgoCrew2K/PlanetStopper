@@ -213,6 +213,14 @@ PLAN_HOSTS = {
     "Chat",
     "Strategy Builder",
     "Frontrunner Builder",
+    # The dashboard cycle: the dashboard, its detail panel, Performance, History, Settings and the
+    # settings modal read this plan's Copy table A too.
+    "/",
+    "detail panel",
+    "Performance",
+    "History",
+    "Settings",
+    "settings modal",
 }
 
 
@@ -504,7 +512,7 @@ def test_an_opened_overview_disclosure_survives_the_runs_refresh_with_its_lines_
     assert after == before
 
 
-def test_an_opened_performance_disclosure_survives_a_window_pick_with_its_lines_unchanged(
+def test_an_opened_performance_glossary_survives_a_window_pick_with_its_lines_unchanged(
     firefox,
     advisor_server,
     seeded,
@@ -521,14 +529,15 @@ def test_an_opened_performance_disclosure_survives_a_window_pick_with_its_lines_
         probe.context.clock.install(time=harness.CAPTURE_INSTANT)
         open_page(probe, "/performance")
         probe.page.wait_for_timeout(harness.SETTLE_MS)
-        probe.page.locator('details[data-terms="F01"] > summary').first.click()
-        before = probe.page.evaluate(DISCLOSURE_LINES_JS, "F01")
+        probe.page.locator('details[data-terms="glossary"] > summary').first.click()
+        before = probe.page.evaluate(DISCLOSURE_LINES_JS, "glossary")
         probe.page.click('[data-testid="window-btn-1y"]')
         probe.page.wait_for_timeout(1200)
         probe.page.click('[data-testid="window-btn-60"]')
         probe.page.wait_for_timeout(1200)
-        after = probe.page.evaluate(DISCLOSURE_LINES_JS, "F01")
+        after = probe.page.evaluate(DISCLOSURE_LINES_JS, "glossary")
     assert before["open"] is True and before["lines"]
+    assert len(before["lines"]) == len(copy.glossary("Performance"))
     assert after == before
 
 

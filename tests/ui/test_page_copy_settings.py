@@ -2,9 +2,12 @@
 dashboard does not save credentials.
 
 Every expected text is a row of ``tests/fixtures/page_explainers/copy.json`` read through
-``tests/ui/_page_copy.py``; no sentence of the plan is typed here. The rows owned here are the Copy
-table A rows S01, S03, S08, S11, S14, S17 and M04 to M07, the Copy table B rows S13a to S13c, S15,
-S16, S18, M01 and M08, and the Copy table C rows S02, S05, S07, S12r and S12s.
+``tests/ui/_page_copy.py``; no sentence of the plan is typed here. The rows owned here are this
+plan's Copy table A rows S01, S03, S08, S11, S14, S17 and M04 to M07 (one short sentence each), the
+Glossary lines of the Settings page (S13a to S13c, S14s, S14p, S15, S16, S18) and of the modal (M01,
+M08), and the reference's Copy table C rows S02, S05, S07, S12r and S12s. Every definition is a line
+of one closed Glossary: at the end of the Settings content, after its five sections, and at the end
+of the modal body; no section and no script writes a disclosure of its own.
 
 Three layers, none of which needs a browser (the browser module is
 ``tests/ui/test_page_explainers_settings_browser.py``):
@@ -61,7 +64,7 @@ from tests.ui.test_settings_modal_ordering_client import (  # noqa: F401  (fixtu
 )
 
 TYPED_PLACEHOLDER = "typed-placeholder-not-a-credential"
-SUMMARY_TEXT = "What the terms mean"
+SUMMARY_TEXT = "Glossary"
 GONE_NAME = "Review Gone Symphony"
 GONE_ID = "review-gone-symphony"
 # Verbatim from static/settings.js at the reference commit (a ``title`` that stays, S-2.13).
@@ -97,7 +100,7 @@ def _page_text(soup: BeautifulSoup) -> str:
 
 
 def _rows(host: str, table: str) -> list[dict]:
-    """The rows of ``table`` whose host is ``host`` or names a place on it ("Settings Live execution body")."""
+    """The reference rows of ``table`` whose host is ``host`` or names a place on it."""
     return [
         r
         for r in copy.rows(table)
@@ -105,25 +108,12 @@ def _rows(host: str, table: str) -> list[dict]:
     ]
 
 
-SETTINGS_A = _rows("Settings", "A")
-MODAL_A = _rows("settings modal", "A")
-SETTINGS_B = _rows("Settings", "B")
-MODAL_B = _rows("settings modal", "B")
+# This plan's descriptions (Copy table A), and the Glossary lines of the two hosts (Table G).
+SETTINGS_A = copy.a_rows("Settings")
+MODAL_A = copy.a_rows("settings modal")
+SETTINGS_GLOSSARY = copy.glossary("Settings")
+MODAL_GLOSSARY = copy.glossary("settings modal")
 SETTINGS_C = _rows("Settings", "C")
-TEMPLATE_B = [r for r in SETTINGS_B if r["builder"] == "template"]
-SCRIPT_B = [r for r in SETTINGS_B if r["builder"] == "static/settings.js"]
-
-
-def _targets(rows: list[dict]) -> list[str]:
-    seen: list[str] = []
-    for r in rows:
-        if r["placement_target"] not in seen:
-            seen.append(r["placement_target"])
-    return seen
-
-
-def _keys_of_target(rows: list[dict], target: str) -> list[str]:
-    return [r["key"] for r in rows if r["placement_target"] == target]
 
 
 def _is_literal_old_text(old: str) -> bool:
@@ -149,12 +139,18 @@ def settings_page(settings_html):
 def test_the_fixture_lists_the_rows_this_cycle_owns():
     assert [r["key"] for r in SETTINGS_A] == ["S01", "S03", "S08", "S11", "S14", "S17"]
     assert [r["key"] for r in MODAL_A] == ["M04", "M05", "M06", "M07"]
-    assert [r["key"] for r in SETTINGS_B] == ["S13a", "S13b", "S13c", "S15", "S16", "S18"]
-    assert [r["key"] for r in MODAL_B] == ["M01", "M08"]
+    assert [x["key"] for x in SETTINGS_GLOSSARY] == [
+        "S13a",
+        "S13b",
+        "S13c",
+        "S14s",
+        "S14p",
+        "S15",
+        "S16",
+        "S18",
+    ]
+    assert [x["key"] for x in MODAL_GLOSSARY] == ["M01", "M08"]
     assert [r["key"] for r in SETTINGS_C] == ["S02", "S05", "S07", "S12r", "S12s"]
-    assert _targets(TEMPLATE_B) == ["S11", "S17"]
-    assert _targets(SCRIPT_B) == ["S14"]
-    assert _targets(MODAL_B) == ["M04", "M07"]
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +164,7 @@ def test_each_settings_description_shows_its_exact_text_in_its_own_element(row, 
     found = settings_page.select(f'[data-explainer="{key}"]')
     assert len(found) == 1, f"{key}: {len(found)} elements carry data-explainer={key!r}"
     element = found[0]
-    assert _text(element) == _norm(copy.text(key)), f"{key}: the element's own text differs"
+    assert _text(element) == _norm(copy.a_text(key)), f"{key}: the element's own text differs"
     assert not element.has_attr("hidden")
     assert element.find_parent("details") is None, f"{key} sits inside a disclosure"
 
@@ -192,43 +188,41 @@ def test_the_page_caption_row_s01_carries_its_text_and_keeps_its_testid(settings
     assert element is not None and element.get("data-testid") == "settings-caption"
 
 
-@pytest.mark.parametrize(
-    "row",
-    [r for r in SETTINGS_A if r["kind"] == "reworded" and _is_literal_old_text(r["old_text"])],
-    ids=lambda r: r["key"],
-)
-def test_a_reworded_description_leaves_no_trace_of_its_old_text(row, settings_html, settings_page):
-    assert _norm(row["old_text"]) not in _page_text(settings_page)
+def test_a_section_description_is_a_description_and_never_the_start_of_a_disclosure(settings_page):
+    """The two sections that carried a disclosure carry none: the next element after the
+    description is the section's own content."""
+    for key in ("S11", "S17"):
+        element = settings_page.select_one(f'[data-explainer="{key}"]')
+        following = element.find_next_sibling()
+        assert following is None or following.name != "details", f"{key}: a disclosure follows"
+        assert not settings_page.select(f'[data-terms="{key}"]'), f"{key}: a disclosure remains"
 
 
 # ---------------------------------------------------------------------------
-# The server render: Copy table B, template-built disclosures (S-2.5, S-2.11, S-2.18)
+# The server render: the Settings Glossary (S-4.1 to S-4.3; the order and text are also read by
+# test_host_glossaries_render)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("target", _targets(TEMPLATE_B))
-def test_a_template_built_disclosure_is_closed_named_and_lists_its_terms_in_order(
-    target, settings_page
+def test_the_settings_glossary_holds_the_credential_the_override_and_the_maintenance_terms(
+    settings_page,
 ):
-    keys = _keys_of_target(TEMPLATE_B, target)
-    found = settings_page.select(f'details[data-terms="{target}"]')
-    assert len(found) == 1, f"{len(found)} disclosures for {target}"
-    details = found[0]
-    assert "hp-more" in details.get("class", [])
-    assert not details.has_attr("open"), "a disclosure is closed on load"
-    summary = details.find("summary", recursive=False)
-    assert summary is not None and _text(summary) == SUMMARY_TEXT
-    got = [(p.get("data-term"), _text(p)) for p in details.find_all("p", recursive=False)]
-    assert got == [(k, _norm(copy.text(k))) for k in keys], f"{target}: terms or text differ"
-    explainer = settings_page.select_one(f'[data-explainer="{target}"]')
-    assert explainer.find_next_sibling() is details, (
-        f"the {target} disclosure is not directly after its description"
+    glossary = settings_page.select_one(
+        'details[data-terms="glossary"][data-glossary-host="Settings"]'
     )
+    assert glossary is not None, "the page has no Settings Glossary"
+    got = [(p.get("data-term"), _text(p)) for p in glossary.find_all("p", recursive=False)]
+    want = []
+    for line in SETTINGS_GLOSSARY:
+        want.append((line["key"], _norm(line["text"])))
+    assert got == want
+    assert not settings_page.select_one("#sec-credentials").select("[data-term]")
+    assert not settings_page.select_one("#sec-maintenance").select("[data-term]")
 
 
-@pytest.mark.parametrize("row", TEMPLATE_B, ids=[r["key"] for r in TEMPLATE_B])
-def test_a_term_is_defined_once_on_the_page(row, settings_page):
-    assert len(settings_page.select(f'[data-term="{row["key"]}"]')) == 1
+@pytest.mark.parametrize("line", SETTINGS_GLOSSARY, ids=[x["key"] for x in SETTINGS_GLOSSARY])
+def test_a_term_is_defined_once_on_the_page(line, settings_page):
+    assert len(settings_page.select(f'[data-term="{line["key"]}"]')) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -386,24 +380,23 @@ READ_CONTENT = (
 )
 
 
-def test_the_script_builds_one_closed_disclosure_for_the_symphony_overrides(settings_html, roster):
+def test_the_script_writes_no_disclosure_and_the_one_glossary_survives_the_roster_load(
+    settings_html, roster
+):
     out = run_settings(settings_html, READ_CONTENT, roster)
-    section = _soup(out.result["content"]).select_one("#sec-symphonies")
-    found = section.select('details[data-terms="S14"]')
-    assert len(found) == 1, f"{len(found)} S14 disclosures after one load"
-    details = found[0]
-    assert "hp-more" in details.get("class", []) and not details.has_attr("open")
-    summary = details.find("summary", recursive=False)
-    assert summary is not None and _text(summary) == SUMMARY_TEXT
-    got = [(p.get("data-term"), _text(p)) for p in details.find_all("p", recursive=False)]
-    assert got == [(r["key"], _norm(copy.text(r["key"]))) for r in SCRIPT_B], got
-    explainer = section.select_one('[data-explainer="S14"]')
-    assert explainer.find_next_sibling() is details, "not directly after the S14 description"
-    assert section.select_one(".sym-split") in details.find_next_siblings(), (
-        "the disclosure must sit outside the containers the script rewrites"
+    content = _soup(out.result["content"])
+    section = content.select_one("#sec-symphonies")
+    assert not section.select("details, [data-terms], [data-term]"), (
+        "the script writes a disclosure or a definition into the overrides section"
     )
-    assert details.find_parent(id="sym-list") is None
-    assert details.find_parent(id="sym-detail") is None
+    glossaries = content.select('details[data-terms="glossary"]')
+    assert len(glossaries) == 1, f"{len(glossaries)} Glossaries after one load"
+    got = [p.get("data-term") for p in glossaries[0].find_all("p", recursive=False)]
+    assert got == [x["key"] for x in SETTINGS_GLOSSARY]
+    assert (
+        content.select_one("main.settings-content, .settings-content").find_all(recursive=False)[-1]
+        is glossaries[0]
+    ), "the roster load moved the Glossary off the end of the content"
 
 
 def test_the_no_longer_held_row_keeps_its_title_and_the_meaning_is_also_in_a_line(
@@ -421,7 +414,7 @@ def test_the_no_longer_held_row_keeps_its_title_and_the_meaning_is_also_in_a_lin
 
 DISCARD_THREE_TIMES = """
 const before = H.$$('[data-explainer]').map((e) => e.textContent);
-const disclosure = H.$('details[data-terms="S14"]');
+const disclosure = H.$('details[data-terms="glossary"]');
 if (disclosure) disclosure.setAttribute('open', '');
 for (let i = 0; i < 3; i += 1) {
   await H.set('#execution-start-time', '09:3' + (i + 1));
@@ -431,19 +424,23 @@ const last = H.$$('.sym-list-btn').pop();
 await H.click('.sym-list-btn[data-sym-id="' + last.dataset.symId + '"]');
 const after = H.$$('[data-explainer]').map((e) => e.textContent);
 return {before, after, content: H.$('.settings-content').innerHTML,
-        open: !!H.$('details[data-terms="S14"]') && H.$('details[data-terms="S14"]').hasAttribute('open')};
+        open: !!H.$('details[data-terms="glossary"]') && H.$('details[data-terms="glossary"]').hasAttribute('open')};
 """
 
 
-def test_re_rendering_the_roster_never_duplicates_or_closes_a_description(settings_html, roster):
+def test_re_rendering_the_roster_never_duplicates_or_closes_a_description_or_the_glossary(
+    settings_html, roster
+):
     out = run_settings(settings_html, DISCARD_THREE_TIMES, roster)
     assert out.result["after"] == out.result["before"]
     soup = _soup(out.result["content"])
-    for key in [r["key"] for r in SCRIPT_B]:
-        assert len(soup.select(f'[data-term="{key}"]')) == 1, f"{key} was duplicated"
-    assert len(soup.select('details[data-terms="S14"]')) == 1
+    for line in SETTINGS_GLOSSARY:
+        assert len(soup.select(f'[data-term="{line["key"]}"]')) == 1, (
+            f"{line['key']} was duplicated"
+        )
+    assert len(soup.select('details[data-terms="glossary"]')) == 1
     assert len(soup.select('[data-explainer="S14"]')) == 1
-    assert out.result["open"] is True, "a re-render rebuilt the disclosure and closed it"
+    assert out.result["open"] is True, "a re-render rebuilt the Glossary and closed it"
 
 
 SWITCH_SECTIONS_WITH_AN_EDIT = """
@@ -567,33 +564,31 @@ def _modal_soup(out) -> BeautifulSoup:
     return _soup(out.result["modal"])
 
 
-def _assert_modal_copy(soup: BeautifulSoup, *, a_disclosure_may_be_open: bool = False) -> None:
+def _assert_modal_copy(soup: BeautifulSoup, *, glossary_may_be_open: bool = False) -> None:
+    """M04 to M07 read this plan's text once; the modal ends with one closed Glossary of M01 and M08."""
     for row in MODAL_A:
         found = soup.select(f'[data-explainer="{row["key"]}"]')
         assert len(found) == 1, f"{row['key']}: {len(found)} elements in the modal"
-        assert _text(found[0]) == _norm(copy.text(row["key"])), row["key"]
-    for target in _targets(MODAL_B):
-        details = soup.select(f'details[data-terms="{target}"]')
-        assert len(details) == 1, f"{len(details)} modal disclosures for {target}"
-        d = details[0]
-        assert "hp-more" in d.get("class", [])
-        assert a_disclosure_may_be_open or not d.has_attr("open"), f"{target} is not closed"
-        summary = d.find("summary", recursive=False)
-        assert summary is not None and _text(summary) == SUMMARY_TEXT
-        got = [(p.get("data-term"), _text(p)) for p in d.find_all("p", recursive=False)]
-        want = [(k, _norm(copy.text(k))) for k in _keys_of_target(MODAL_B, target)]
-        assert got == want, f"{target}: {got}"
-        explainer = soup.select_one(f'[data-explainer="{target}"]')
-        assert id(d) in {
-            id(x)
-            for x in (
-                explainer.find_next_sibling(),
-                (explainer.find_parent(class_="ssm-sec") or explainer).find_next_sibling(),
-            )
-        }, f"the {target} disclosure is not directly after its description"
+        assert _text(found[0]) == _norm(copy.a_text(row["key"])), row["key"]
+    assert not soup.select("[data-terms]:not([data-terms='glossary'])"), "a disclosure per section"
+    assert not [s for s in soup.select("summary") if _text(s) == "What the terms mean"]
+    found = soup.select('details[data-terms="glossary"]')
+    assert len(found) == 1, f"{len(found)} modal Glossaries, not one"
+    glossary = found[0]
+    assert "hp-more" in glossary.get("class", [])
+    assert glossary_may_be_open or not glossary.has_attr("open"), "the Glossary is not closed"
+    summary = glossary.find("summary", recursive=False)
+    assert summary is not None and _text(summary) == SUMMARY_TEXT
+    got = [(p.get("data-term"), _text(p)) for p in glossary.find_all("p", recursive=False)]
+    assert got == [(x["key"], _norm(x["text"])) for x in MODAL_GLOSSARY], got
+    body = soup.select_one(".ssm-body")
+    assert body is not None and glossary.parent is body, "the Glossary is not in the modal body"
+    assert body.find_all(recursive=False)[-1] is glossary, (
+        "the Glossary is not the body's last element"
+    )
 
 
-def test_the_modal_shows_each_description_and_each_closed_disclosure_in_order(symphonies):
+def test_the_modal_shows_each_description_and_ends_with_one_closed_glossary(symphonies):
     out = run_modal(
         OPEN(A) + f"return {{modal: {READ_MODAL}}};",
         route(GET_A, spec(symphonies[A]), method="GET"),
@@ -606,10 +601,42 @@ def test_the_modal_leaves_no_trace_of_the_old_sub_lines(symphonies):
         OPEN(A) + f"return {{modal: {READ_MODAL}}};",
         route(GET_A, spec(symphonies[A]), method="GET"),
     )
-    text = _text(_modal_soup(out))
+    soup = _modal_soup(out)
+    for glossary in soup.select('details[data-terms="glossary"]'):
+        glossary.decompose()
+    text = _text(soup)
     for row in MODAL_A:
-        if _is_literal_old_text(row["old_text"]):
-            assert _norm(row["old_text"]) not in text, row["key"]
+        old = _norm(copy.text(row["key"], "A"))
+        assert row["kind"] == "kept" or old not in text, (
+            f"{row['key']}: the old text is in the modal"
+        )
+
+
+def test_the_modal_glossary_is_the_markup_the_shared_macro_writes(symphonies, tmp_path):
+    """The modal writes the Glossary in JavaScript: its element, attributes and summary equal the
+    ones ``templates/_glossary.html`` renders, so one title script reads both."""
+    from flask import render_template_string
+
+    with app_module.app.test_request_context("/"):
+        server = _soup(
+            render_template_string(
+                '{% from "_glossary.html" import glossary %}'
+                '{% call glossary("settings modal") %}<p data-term="M01">x</p>{% endcall %}'
+            )
+        ).select_one("details")
+    out = run_modal(
+        OPEN(A) + f"return {{modal: {READ_MODAL}}};",
+        route(GET_A, spec(symphonies[A]), method="GET"),
+    )
+    script = _modal_soup(out).select_one('details[data-terms="glossary"]')
+    assert server is not None and script is not None
+    for attribute in ("class", "data-terms", "data-testid", "data-glossary-host"):
+        assert script.get(attribute) == server.get(attribute), attribute
+    assert script.has_attr("open") == server.has_attr("open")
+    assert _text(script.find("summary", recursive=False)) == _text(
+        server.find("summary", recursive=False)
+    )
+    assert script.find("summary", recursive=False) is script.find_all(recursive=False)[0]
 
 
 PENDING_TOGGLE_THEN_SAVE = f"""
@@ -655,13 +682,13 @@ def test_a_pending_live_toggle_keeps_the_descriptions_and_the_confirm_path_is_as
 
 OPEN_AND_CLOSE_THE_DISCLOSURE_WITH_A_PENDING_TOGGLE = f"""
 await H.click('{TOGGLE}');
-const details = () => H.$('details[data-terms="M04"]');
+const details = () => H.$('details[data-terms="glossary"]');
 const present = !!details();
 const beforeOpen = {READ_MODAL};
 if (present) {{
   // The click reaches every listener a re-render would hang on the summary; setting `open` is
   // the browser's own default action, which the harness does not perform.
-  await H.click('details[data-terms="M04"] summary');
+  await H.click('details[data-terms="glossary"] summary');
   details().setAttribute('open', '');
 }}
 const whileOpen = {{open: present && details().hasAttribute('open'), modal: {READ_MODAL}}};
@@ -676,7 +703,7 @@ return {{present, beforeOpen, whileOpen, dialog: confirmEl ? confirmEl.getAttrib
 """
 
 
-def test_opening_and_closing_a_modal_disclosure_leaves_a_pending_live_toggle_and_its_confirm_as_before(
+def test_opening_and_closing_the_modal_glossary_leaves_a_pending_live_toggle_and_its_confirm_as_before(
     symphonies,
 ):
     out = run_modal(
@@ -685,10 +712,10 @@ def test_opening_and_closing_a_modal_disclosure_leaves_a_pending_live_toggle_and
         route(r"/api/symphony-settings/", {"json": {"status": "ok"}}, method="POST"),
     )
     result = out.result
-    assert result["present"] is True, "the modal has no closed-by-default disclosure to open"
+    assert result["present"] is True, "the modal has no closed-by-default Glossary to open"
     _assert_modal_copy(_soup(result["beforeOpen"]))
     assert result["whileOpen"]["open"] is True
-    _assert_modal_copy(_soup(result["whileOpen"]["modal"]), a_disclosure_may_be_open=True)
+    _assert_modal_copy(_soup(result["whileOpen"]["modal"]), glossary_may_be_open=True)
     assert result["dialog"] == "Confirm live trading"
     assert result["postsBeforeConfirm"] == 0, "nothing may be sent before the confirmation"
     (body,) = result["posts"]
@@ -720,6 +747,7 @@ def test_a_failed_settings_fetch_shows_the_error_and_no_definitions(symphonies):
     soup = _modal_soup(out)
     assert "Failed to load settings. Please try again." in _text(soup)
     assert not soup.select("[data-explainer], [data-terms], [data-term]")
+    assert not soup.select('[data-testid="glossary"]'), "the error state shows a Glossary"
 
 
 def test_while_the_settings_load_the_modal_shows_no_definitions(symphonies):

@@ -95,6 +95,34 @@ RULED_REMOVALS = (
     "data:data-explainer=B03",
     "data:data-explainer=X05",
     "class:proposal-cards--fill",
+    # The dashboard and its detail panel: the page line and the Tracked, Armed, Triggered line are
+    # gone, and every term disclosure became a line of the dashboard's or the panel's Glossary.
+    "data:data-explainer=D01",
+    "data:data-explainer=D20",
+    "data:data-terms=dash.hero",
+    "data:data-terms=dash.rows",
+    "data:data-terms=D21",
+    "data:data-terms=D28",
+    "data:data-terms=D41",
+    "data:data-terms=D47",
+    "data:data-terms=dp.lead",
+    "data:data-terms=D57",
+    "data:data-terms=D59",
+    "data:data-terms=D67",
+    # Performance and History: the repeated header cells of the risk table are deleted with the
+    # two-group layout, and each term disclosure became a line of the page's Glossary.
+    "class:metrics-th-repeat",
+    "data:data-terms=F01",
+    "data:data-terms=F13",
+    "data:data-terms=F16",
+    "data:data-terms=F21",
+    "data:data-terms=Y01",
+    "data:data-terms=Y12",
+    # Settings: its two section disclosures and the one the page script writes for the symphony
+    # overrides became lines of the Settings Glossary.
+    "data:data-terms=S11",
+    "data:data-terms=S17",
+    "data:data-terms=S14",
 )
 
 # A token one file loses with the element or function it came from while another file keeps it:
@@ -225,7 +253,33 @@ REMOVED_OVERVIEW_DISCLOSURES = {
     "B03",
     "B07",
     "X05",
+    # The dashboard, its detail panel, Performance, History, Settings and the settings modal.
+    "dash.hero",
+    "dash.rows",
+    "D21",
+    "D28",
+    "D40",
+    "D41",
+    "D47",
+    "dp.lead",
+    "D57",
+    "D59",
+    "D67",
+    "F01",
+    "F13",
+    "F16",
+    "F21",
+    "Y01",
+    "Y12",
+    "S11",
+    "S14",
+    "S17",
+    "M04",
+    "M07",
 }
+# The hosts of the dashboard cycle: every definition they hold is a line of the host's Glossary.
+PAGE_GLOSSARY_HOSTS = ("/", "detail panel", "Performance", "History", "Settings")
+PAGE_GLOSSARY_KEYS = {line["key"] for host in PAGE_GLOSSARY_HOSTS for line in copy.glossary(host)}
 
 DEFINITION_ROWS = [
     r
@@ -235,45 +289,52 @@ DEFINITION_ROWS = [
     and r["key"] not in OVERVIEW_GLOSSARY_KEYS
     and r["key"] not in RETIREMENT_GLOSSARY_KEYS
     and r["key"] not in OTHER_TAB_GLOSSARY_KEYS
+    and r["key"] not in PAGE_GLOSSARY_KEYS
     and r.get("placement_target") not in REMOVED_OVERVIEW_DISCLOSURES
 ]
 
 
+def test_every_definition_row_is_a_line_of_some_hosts_glossary_or_names_a_removed_disclosure():
+    """Every host's definitions are Glossary lines now, read by the Glossary tests below and in
+    the host modules: no definition row is left to be a disclosure of its own section."""
+    assert DEFINITION_ROWS == [], [r["key"] for r in DEFINITION_ROWS]
+
+
 @pytest.mark.parametrize("world", ["empty", "full"])
-def test_a_term_is_defined_once_on_its_host_in_the_disclosure_its_row_names(
+def test_every_line_of_the_dashboard_performance_history_and_settings_glossaries_is_defined_once_inside_it(
     world, tmp_path, monkeypatch
 ):
     pages = render_hosts(world, tmp_path, monkeypatch)
-    soups = {host: adv.soup(html) for host, html in pages.items()}
-    texts = {host: visible_text(html) for host, html in pages.items()}
-    problems, found = [], 0
-    for record in DEFINITION_ROWS:
-        host = page_of(record["host"])
-        nodes = soups[host].select(f'[data-term="{record["key"]}"]')
-        if len(nodes) > 1:
-            problems.append(f"{record['key']} is defined {len(nodes)} times on {host}")
-        for node in nodes:
-            found += 1
-            owner = node.find_parent(attrs={"data-terms": True})
-            owner_key = owner["data-terms"] if owner else None
-            if owner_key != record["placement_target"]:
-                problems.append(
-                    f"{record['key']} sits under {owner_key!r} on {host}, "
-                    f"its row names {record['placement_target']!r}"
-                )
-        words = adv.norm(copy.text(record["key"], "B"))
-        # A longer row of the same host may carry this row's sentence as its own first words.
-        carriers = sum(
-            1
-            for other in DEFINITION_ROWS
-            if page_of(other["host"]) == host and words in adv.norm(copy.text(other["key"], "B"))
-        )
-        if texts[host].count(words) > carriers:
-            problems.append(f"the words of {record['key']} appear twice on {host}")
+    problems = []
+    for host in PAGE_GLOSSARY_HOSTS:
+        page = adv.soup(pages[page_of(host)])
+        glossary = page.select_one(f'details[data-terms="glossary"][data-glossary-host="{host}"]')
+        if glossary is None:
+            problems.append(f"{host}: no Glossary")
+            continue
+        for line in copy.glossary(host):
+            nodes = page.select(f'[data-term="{line["key"]}"]')
+            if len(nodes) != 1:
+                problems.append(f"{host}: {line['key']} is defined {len(nodes)} times on its page")
+            elif glossary not in nodes[0].parents:
+                problems.append(f"{host}: {line['key']} is outside the host's Glossary")
     assert not problems, "\n".join(problems)
-    if world == "full":
-        # Every Advisor tab's lines are Glossary lines now and are read by the Glossary tests.
-        assert found > 80, f"premise: the full world renders the definitions ({found})"
+
+
+def test_no_definition_on_any_page_sits_outside_a_glossary(tmp_path, monkeypatch):
+    pages = render_hosts("full", tmp_path, monkeypatch)
+    problems = []
+    for host, html in pages.items():
+        page = adv.soup(html)
+        for node in page.select("[data-term]"):
+            if node.find_parent("details", attrs={"data-terms": "glossary"}) is None:
+                problems.append(f"{host}: {node.get('data-term')} is outside every Glossary")
+        for node in page.select("[data-terms]:not([data-terms='glossary'])"):
+            problems.append(f"{host}: a disclosure marked {node.get('data-terms')}")
+        for summary in page.select("summary"):
+            if adv.norm(summary.get_text(" ")) == "What the terms mean":
+                problems.append(f"{host}: a 'What the terms mean' summary")
+    assert not problems, "\n".join(problems)
 
 
 def test_every_moved_overview_line_is_defined_once_inside_the_glossary(tmp_path, monkeypatch):
@@ -374,7 +435,7 @@ def _is_hidden(node) -> bool:
     return False
 
 
-def test_with_no_diagnostic_the_cvar_panel_is_hidden_and_holds_its_description_and_terms(
+def test_with_no_diagnostic_the_cvar_panel_is_hidden_and_holds_its_description_while_its_terms_stay_in_the_glossary(
     tmp_path, monkeypatch
 ):
     page = adv.soup(render_hosts("empty", tmp_path, monkeypatch)["/"])
@@ -382,11 +443,13 @@ def test_with_no_diagnostic_the_cvar_panel_is_hidden_and_holds_its_description_a
     assert panel is not None and _is_hidden(panel), "the CVaR panel must stay hidden"
     description = page.select_one('[data-explainer="D41"]')
     assert description is not None and panel in description.parents
-    disclosure = page.select_one('[data-terms="D41"]')
-    assert disclosure is not None and panel in disclosure.parents
-    for key in (r["key"] for r in copy.rows("B") if r.get("placement_target") == "D41"):
-        for node in page.select(f'[data-term="{key}"]'):
-            assert panel in node.parents, f"{key} is shown outside the hidden CVaR panel"
+    assert not page.select('[data-terms="D41"]'), "the panel keeps a disclosure of its own"
+    glossary = page.select_one('details[data-terms="glossary"][data-glossary-host="/"]')
+    assert glossary is not None
+    for key in ("D42", "D43", "D44", "D46"):
+        node = page.select_one(f'[data-term="{key}"]')
+        assert node is not None and glossary in node.parents, f"{key} is not a Glossary line"
+        assert panel not in node.parents, f"{key} is inside the hidden CVaR panel"
 
 
 @pytest.mark.parametrize("host", sorted(ABSENT_WITH_SECTION))
@@ -431,6 +494,39 @@ def test_every_section_that_renders_in_the_empty_state_shows_its_description(tmp
         if not absent_ok:
             problems.append(f"{host}: no description {record['key']} in the empty state")
     assert not problems, "\n".join(problems)
+
+
+def test_every_section_of_the_other_hosts_shows_its_new_description_in_the_empty_state(
+    tmp_path, monkeypatch
+):
+    """Copy table A for the dashboard, its detail panel, Performance, History and Settings: each row
+    that is neither removed nor moved reads its new text, with nothing stored and no slot filled (a
+    row with a slot reads its fallback phrase, which its own host module pins)."""
+    pages = render_hosts("empty", tmp_path, monkeypatch)
+    problems = []
+    for record in copy.a_rows():
+        host = page_of(record["host_place"])
+        if host not in ("/", "/performance", "/history", "/settings"):
+            continue
+        if record["kind"] in ("removed", "moved") or record["slots"]:
+            continue
+        found = adv.soup(pages[host]).select(f'[data-explainer="{record["key"]}"]')
+        if len(found) != 1:
+            problems.append(f"{host}: {len(found)} elements carry {record['key']}")
+        elif adv.norm(found[0].get_text(" ")) != adv.norm(copy.a_text(record["key"])):
+            problems.append(f"{host}: {record['key']} reads {adv.norm(found[0].get_text(' '))!r}")
+    assert not problems, "\n".join(problems)
+
+
+@pytest.mark.parametrize("world", ["empty", "full"])
+def test_the_two_removed_dashboard_lines_are_on_no_page(world, tmp_path, monkeypatch):
+    pages = render_hosts(world, tmp_path, monkeypatch)
+    page = adv.soup(pages["/"])
+    for key in ("D01", "D20"):
+        assert copy.a_row(key)["kind"] in ("removed", "moved")
+        assert not page.select(f'[data-explainer="{key}"]'), f"{key} is still on the dashboard"
+        old = adv.norm(copy.text(key, "A"))
+        assert old not in visible_text(pages["/"]), f"the old text of {key} is still on the page"
 
 
 # ---------------------------------------------------------------------------

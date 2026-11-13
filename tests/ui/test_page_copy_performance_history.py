@@ -7,12 +7,12 @@ and a slot is filled here from the authority the test patched, in the Values tab
 
 CONTRACT PINNED
 * Each description row of Copy table A for the two hosts is one element carrying
-  ``data-explainer="<key>"`` with the row's exact text, directly under its section heading, in the
+  ``data-explainer="<key>"`` with this plan's exact text, directly under its section heading, in the
   host's note class (``.metrics-caption`` on Performance, ``.hp-note`` on History), outside every
   container a script rewrites.
-* Each definition row of Copy table B placed ``D`` is one ``<p data-term="<key>">`` inside the one
-  closed ``<details class="hp-more" data-terms="<description key>">`` that follows its description,
-  summary "What the terms mean", rows in table order. A row placed ``V`` has no element of its own.
+* Every definition is a line of the page's one Glossary (``tests/ui/test_host_glossaries_render.py``
+  reads the lines); no section carries a disclosure of its own, and the one carried row, Y16, is a
+  Glossary line now.
 * The configured trading-cost value reaches the F24 definition from ``autotuner.SIM_EXIT_FRICTION_PCT``
   as a plain number; a value that is not a finite number, or an authority that raises, replaces the
   whole phrase (never the slot alone) and the page still renders.
@@ -93,25 +93,10 @@ def soup_of(client, path: str) -> BeautifulSoup:
 
 
 def filled(key: str, table: str, **slots: str) -> str:
-    return norm(pc.fill(pc.text(key, table), **slots))
-
-
-def term_groups(host: str) -> dict[str, list[dict]]:
-    """Copy table B rows of ``host`` by the description key they sit under, in table order."""
-    groups: dict[str, list[dict]] = {}
-    for record in pc.rows("B"):
-        if pc.host_of(record) != host:
-            continue
-        mode, _, anchor = record["placement"].partition(" ")
-        if mode == "D":
-            groups.setdefault(anchor, []).append(record)
-    return groups
-
-
-def carried_rows(host: str) -> list[dict]:
-    return [
-        r for r in pc.rows("B") if pc.host_of(r) == host and r["placement"].split(" ", 1)[0] == "V"
-    ]
+    """The expected text of a row: this plan's text for a description (table A), the reference
+    row's for a definition or a relabelled row."""
+    text = pc.a_text(key) if table == "A" else pc.text(key, table)
+    return norm(pc.fill(text, **slots))
 
 
 def all_visible_strings(soup: BeautifulSoup) -> list[str]:
@@ -148,9 +133,10 @@ def new_pieces(record: dict) -> list[str]:
 class TestFixturePremises:
     @pytest.mark.parametrize("path", sorted(DESCRIPTION_KEYS))
     def test_every_description_row_is_in_table_a_for_its_host(self, path):
+        rows = [r for r in pc.a_rows(HOST_OF_PATH[path]) if r["kind"] not in ("removed", "moved")]
+        assert {r["key"] for r in rows} == set(DESCRIPTION_KEYS[path])
         for key in DESCRIPTION_KEYS[path]:
-            record = pc.row(key, "A")
-            assert pc.host_of(record) == HOST_OF_PATH[path], key
+            assert pc.host_of(pc.a_row(key)) == HOST_OF_PATH[path], key
 
     @pytest.mark.parametrize("path", sorted(RELABEL_KEYS))
     def test_every_relabel_row_is_in_table_c_for_its_host(self, path):
@@ -159,15 +145,16 @@ class TestFixturePremises:
             assert (record.get("host_place") or "").startswith(HOST_OF_PATH[path]), key
 
     @pytest.mark.parametrize("path", sorted(DESCRIPTION_KEYS))
-    def test_every_definition_group_names_a_description_of_its_host(self, path):
-        groups = term_groups(HOST_OF_PATH[path])
-        assert groups, "premise: the host has definition rows"
-        assert set(groups) <= set(DESCRIPTION_KEYS[path]), set(groups)
+    def test_the_host_has_a_glossary_and_each_of_its_lines_has_a_key_of_its_own(self, path):
+        lines = pc.glossary(HOST_OF_PATH[path])
+        assert lines, "premise: the host has Glossary lines"
+        keys = [line["key"] for line in lines]
+        assert len(keys) == len(set(keys))
 
-    def test_the_one_carried_row_is_y16_under_y15(self):
-        assert [r["key"] for r in carried_rows("History")] == ["Y16"]
-        assert carried_rows("Performance") == []
-        assert pc.text("Y16", "B") == pc.text("Y15", "A")
+    def test_the_carried_row_y16_is_a_g2_glossary_line_of_its_own(self):
+        line = next(x for x in pc.glossary("History") if x["key"] == "Y16")
+        assert line["source"] == "G2"
+        assert line["text"].startswith("Detail: ")
 
 
 # ---------------------------------------------------------------------------
@@ -241,13 +228,6 @@ def friction_text(row_key: str, value: str | None) -> str:
     return norm(pc.fill(base, friction_pct=value))
 
 
-GROUP_CASES = [
-    (path, anchor)
-    for path in sorted(DESCRIPTION_KEYS)
-    for anchor in term_groups(HOST_OF_PATH[path])
-]
-
-
 @pytest.fixture
 def friction(monkeypatch):
     """A trading cost the page cannot have hard-coded (the production constant is another number)."""
@@ -261,60 +241,50 @@ def friction(monkeypatch):
     return "0.25"
 
 
-@pytest.mark.parametrize(("path", "anchor"), GROUP_CASES, ids=[f"{p}-{a}" for p, a in GROUP_CASES])
-class TestDefinitionDisclosures:
-    def test_one_closed_disclosure_follows_its_description(self, client, friction, path, anchor):
-        soup = soup_of(client, path)
-        found = soup.select(f'details[data-terms="{anchor}"]')
-        assert len(found) == 1, f"{len(found)} disclosures for {anchor}"
-        details = found[0]
-        assert "hp-more" in details.get("class", [])
-        assert not details.has_attr("open"), "a disclosure starts closed"
-        description = soup.select_one(f'[data-explainer="{anchor}"]')
-        assert description is not None
-        assert description.find_next_sibling() is details, (
-            f"the disclosure must follow the {anchor} description directly"
-        )
-        summary = details.find("summary", recursive=False)
-        assert summary is not None and norm(summary.get_text()) == SUMMARY_TEXT
-        assert details.find_all("summary") == [summary]
+class TestDefinitions:
+    """Each definition is a line of the page's Glossary, with the trading cost filled from its
+    authority; the Glossary's placement and order are read by test_host_glossaries_render."""
 
-    def test_its_rows_are_the_tables_rows_in_table_order_with_exact_text(
-        self, client, friction, path, anchor
-    ):
+    @pytest.mark.parametrize("path", sorted(DESCRIPTION_KEYS))
+    def test_no_section_carries_a_disclosure_of_its_own(self, client, friction, path):
         soup = soup_of(client, path)
-        details = soup.select_one(f'details[data-terms="{anchor}"]')
-        assert details is not None
-        rows = term_groups(HOST_OF_PATH[path])[anchor]
-        terms = details.select("[data-term]")
-        assert [t.get("data-term") for t in terms] == [r["key"] for r in rows]
-        for term, record in zip(terms, rows, strict=True):
-            assert term.name == "p" and term.parent is details
-            expected = filled(record["key"], "B", friction_pct=friction)
-            assert norm(term.get_text()) == expected, record["key"]
-
-    def test_the_disclosure_is_outside_every_script_rewritten_container(
-        self, client, friction, path, anchor
-    ):
-        details = soup_of(client, path).select_one(f'details[data-terms="{anchor}"]')
-        assert details is not None
+        assert not soup.select("[data-terms]:not([data-terms='glossary'])")
+        assert not [s for s in soup.select("summary") if norm(s.get_text()) == SUMMARY_TEXT]
         for selector in REWRITTEN:
-            assert not _inside(details, selector), f"{anchor} disclosure inside {selector}"
+            for container in soup.select(selector):
+                assert not container.select("[data-explainer], [data-terms], [data-term]"), (
+                    f"{path}: a script rewrites {selector}, so nothing may be placed in it"
+                )
 
+    @pytest.mark.parametrize("path", sorted(DESCRIPTION_KEYS))
+    def test_a_definition_appears_once_on_its_host_in_the_glossary(self, client, friction, path):
+        soup = soup_of(client, path)
+        host = HOST_OF_PATH[path]
+        glossary = soup.select_one(f'details[data-terms="glossary"][data-glossary-host="{host}"]')
+        assert glossary is not None, f"{host} has no Glossary"
+        keys = [t.get("data-term") for t in soup.select("[data-term]")]
+        assert len(keys) == len(set(keys)), "a term is defined twice on one page"
+        assert keys == [t.get("data-term") for t in glossary.select("[data-term]")]
+        assert keys == [line["key"] for line in pc.glossary(host)]
 
-@pytest.mark.parametrize("path", sorted(DESCRIPTION_KEYS))
-def test_a_definition_appears_once_on_its_host(client, friction, path):
-    soup = soup_of(client, path)
-    keys = [t.get("data-term") for t in soup.select("[data-term]")]
-    assert len(keys) == len(set(keys)), "a term is defined twice on one page"
-    expected = [r["key"] for rows in term_groups(HOST_OF_PATH[path]).values() for r in rows]
-    assert sorted(keys) == sorted(expected)
+    @pytest.mark.parametrize("path", sorted(DESCRIPTION_KEYS))
+    def test_a_slot_line_reads_the_patched_trading_cost(self, client, friction, path):
+        soup = soup_of(client, path)
+        for line in pc.glossary(HOST_OF_PATH[path]):
+            if "friction_pct" in line["slots"]:
+                node = soup.select_one(f'[data-term="{line["key"]}"]')
+                assert node is not None, line["key"]
+                assert norm(node.get_text()) == norm(
+                    pc.fill(line["text"], friction_pct=friction)
+                ), line["key"]
 
-
-def test_the_carried_row_has_no_element_of_its_own_and_its_text_is_the_description(client):
-    soup = soup_of(client, "/history")
-    assert soup.select('[data-term="Y16"]') == []
-    assert norm(soup.select_one('[data-explainer="Y15"]').get_text()) == norm(pc.text("Y16", "B"))
+    def test_the_history_detail_line_is_a_glossary_line_and_the_exits_description_stays_short(
+        self, client
+    ):
+        soup = soup_of(client, "/history")
+        line = next(x for x in pc.glossary("History") if x["key"] == "Y16")
+        assert norm(soup.select_one('[data-term="Y16"]').get_text()) == norm(line["text"])
+        assert norm(soup.select_one('[data-explainer="Y15"]').get_text()) == norm(pc.a_text("Y15"))
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +429,8 @@ class TestHistoryRelabelsServerRendered:
     def test_the_caption_reads_totals_from_daily_exit_records(self, client):
         soup = soup_of(client, "/history")
         caption = soup.select_one('[data-testid="history-caption"]')
-        assert norm(caption.get_text()) == norm(pc.text("Y02", "C"))
+        assert norm(caption.get_text()) == norm(pc.x_row("CX-8")["new_text"])
+        assert norm(pc.text("Y02", "C")) not in norm(soup.get_text()), "the longer caption is back"
 
     def test_the_exits_count_is_named_exits_in_the_hero_the_header_and_every_cell_label(
         self, client

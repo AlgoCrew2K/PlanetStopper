@@ -9,10 +9,12 @@ patched, in the format the Values table states, and the production formatter is 
 What is read, all from the server's markup (the scripts are not run here, so a text the page shows
 only after a script ran cannot pass these):
 
-* every description row of the host sits in an element marked ``data-explainer``, once, with its
-  exact text, in the place the copy table names;
-* every term definition sits in a closed "What the terms mean" disclosure directly after the
-  description it belongs to, one paragraph per term in table order, and nowhere else on the page;
+* every description row of Copy table A for the host sits in an element marked ``data-explainer``,
+  once, with the plan's exact text, in the place the copy table names; the two rows the plan removes
+  (D01, the page line, and D20, the Tracked, Armed, Triggered line) are on no page, with their old
+  words;
+* every term definition is a line of the host's one Glossary (``tests/ui/test_host_glossaries_render.py``
+  reads the Glossaries; this module reads the lines it still depends on through their keys);
 * a configured value (the shadow-history retention, the exit trading cost) prints the value its
   authority holds, and the whole phrase that holds it is replaced when the authority cannot be read;
 * every reworded label shows its new text and its old text is gone;
@@ -23,6 +25,8 @@ The browser readings (visibility, opening a disclosure, the poll rewriting the s
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
@@ -35,11 +39,12 @@ from tests.ui._shell_support import (  # noqa: F401  (the overrides and the empt
     _stub_get_api_state_dict,
 )
 
+# The page line (D01) and the Tracked, Armed, Triggered line (D20) are removed: their keys are in
+# REMOVED_DESCRIPTIONS and every other row of the hosts reads Copy table A's new text.
+REMOVED_DESCRIPTIONS = ("D01", "D20")
 DASHBOARD_DESCRIPTIONS = (
-    "D01",
     "dash.hero",
     "dash.rows",
-    "D20",
     "D21",
     "D28",
     "D40",
@@ -66,11 +71,24 @@ WORDS_FOR_RELABEL_ROWS = (
 )
 # Containers a script rewrites with innerHTML: nothing the page adds may sit inside one.
 SCRIPT_REWRITTEN = "#detail-risk-profile, #events-timeline, #vars-section"
-DISCLOSURE_SUMMARY = "What the terms mean"
 
 
 def _words(node) -> str:
     return " ".join(node.get_text().split())
+
+
+def _without_glossaries(soup) -> str:
+    """What a reader sees outside every Glossary: no script, style, template or comment."""
+    from bs4 import BeautifulSoup, Comment
+
+    clone = BeautifulSoup(str(soup), "html.parser")
+    for dead in clone(["script", "style", "template"]):
+        dead.decompose()
+    for glossary in clone.select('details[data-terms="glossary"]'):
+        glossary.decompose()
+    for comment in clone.find_all(string=lambda s: isinstance(s, Comment)):
+        comment.extract()
+    return " ".join(clone.get_text(" ").split())
 
 
 def _plain(value: float) -> str:
@@ -133,9 +151,14 @@ def _explainer(soup, key: str):
 # ---------------------------------------------------------------------------
 
 
-def test_the_description_rows_walked_here_are_every_description_row_of_the_three_hosts():
-    hosts = {r["key"] for r in copy.rows("A") if copy.host_of(r) in ("/", "detail panel", "header")}
-    assert hosts == set(ALL_DESCRIPTIONS)
+def test_the_description_rows_walked_here_are_every_description_row_of_the_two_hosts():
+    rows = [r for r in copy.a_rows() if copy.host_of(r) in ("/", "detail panel")]
+    shown = {r["key"] for r in rows if r["kind"] not in ("removed", "moved")}
+    gone = {r["key"] for r in rows if r["kind"] in ("removed", "moved")}
+    assert shown == set(ALL_DESCRIPTIONS)
+    assert gone == set(REMOVED_DESCRIPTIONS)
+    for key in REMOVED_DESCRIPTIONS:
+        assert copy.a_text(key) is None, key
 
 
 def test_the_relabel_rows_walked_here_are_every_relabel_row_of_the_dashboard_hosts():
@@ -159,7 +182,7 @@ class TestDescriptions:
     @pytest.mark.parametrize("key", [k for k in ALL_DESCRIPTIONS])
     def test_a_description_shows_its_exact_text_once_in_an_element_marked_for_it(self, render, key):
         soup = render("dashboard_full")
-        assert _words(_explainer(soup, key)) == copy.text(key, "A")
+        assert _words(_explainer(soup, key)) == copy.a_text(key)
 
     @pytest.mark.parametrize("world", ["empty", "dashboard_sleeves"])
     @pytest.mark.parametrize("key", [k for k in ALL_DESCRIPTIONS if k != "D48"])
@@ -167,7 +190,7 @@ class TestDescriptions:
         self, render, world, key
     ):
         soup = render(world)
-        assert _words(_explainer(soup, key)) == copy.text(key, "A")
+        assert _words(_explainer(soup, key)) == copy.a_text(key)
 
     def test_the_sleeves_empty_line_is_the_element_that_carries_its_row(self, render):
         soup = render("dashboard_full")
@@ -178,7 +201,28 @@ class TestDescriptions:
         soup = render("dashboard_sleeves")
         line = _explainer(soup, "D48")
         assert line.has_attr("hidden")
-        assert _words(line) == copy.text("D48", "A")
+        assert _words(line) == copy.a_text("D48")
+
+    @pytest.mark.parametrize("world", ["empty", "dashboard_full", "dashboard_sleeves"])
+    @pytest.mark.parametrize("key", REMOVED_DESCRIPTIONS)
+    def test_a_removed_description_is_on_no_page_and_its_old_words_are_gone(
+        self, render, world, key
+    ):
+        soup = render(world)
+        assert not soup.select(f'[data-explainer="{key}"]'), f"{key} is still on the page"
+        assert copy.text(key, "A") not in _page_words(soup), f"the old text of {key} is on the page"
+
+    @pytest.mark.parametrize("key", ["dash.hero", "dash.rows", "D21", "D28", "D40", "D41", "D47"])
+    def test_a_shortened_description_drops_the_sentences_its_new_text_does_not_keep(
+        self, render, key
+    ):
+        soup = render("dashboard_full")
+        old = copy.text(key, "A")
+        kept = {s for s in re.split(r"(?<=[.?!])\s+", copy.a_text(key)) if s}
+        body = _without_glossaries(soup)
+        for sentence in (s for s in re.split(r"(?<=[.?!])\s+", old) if s):
+            if sentence not in kept:
+                assert sentence not in body, f"{key}: the old sentence {sentence!r} is on the page"
 
     def test_the_cvar_description_sits_inside_the_panel_and_the_panel_is_hidden_without_a_diagnostic(
         self, render
@@ -203,7 +247,6 @@ class TestDescriptions:
     @pytest.mark.parametrize(
         ("key", "inside", "after", "before"),
         [
-            ("D01", ".page-wrap", None, '[data-testid="hero-section"]'),
             (
                 "dash.hero",
                 '[data-testid="hero-left"]',
@@ -211,7 +254,6 @@ class TestDescriptions:
                 '[data-testid="guard-alpha-descriptor"]',
             ),
             ("dash.rows", '[data-testid="hero-right"]', None, '[data-testid="vs-row"]'),
-            ("D20", '[data-testid="hero-right"]', None, '[data-testid="mini-stats"]'),
             (
                 "D21",
                 '[data-testid="dollar-saved-panel"]',
@@ -308,9 +350,9 @@ class TestDescriptions:
         soup = render("dashboard_full")
         for key in ALL_DESCRIPTIONS:
             element = _explainer(soup, key)
-            assert _words(element) == copy.text(key, "A")
-            assert element.get("title") != copy.text(key, "A")
-            assert element.get("aria-label") != copy.text(key, "A")
+            assert _words(element) == copy.a_text(key)
+            assert element.get("title") != copy.a_text(key)
+            assert element.get("aria-label") != copy.a_text(key)
 
 
 # ---------------------------------------------------------------------------
@@ -318,110 +360,42 @@ class TestDescriptions:
 # ---------------------------------------------------------------------------
 
 
-def _disclosure_rows(host: str, target: str) -> list[dict]:
-    return [
-        r
-        for r in copy.rows("B")
-        if copy.host_of(r) == host
-        and r["placement_kind"] == "D"
-        and r["placement_target"] == target
-    ]
-
-
-def _all_disclosure_rows() -> list[dict]:
-    return [
-        r
-        for r in copy.rows("B")
-        if copy.host_of(r) in ("/", "detail panel") and r["placement_kind"] == "D"
-    ]
-
-
-def _targets() -> list[str]:
-    seen: list[str] = []
-    for r in _all_disclosure_rows():
-        if r["placement_target"] not in seen:
-            seen.append(r["placement_target"])
-    return seen
-
-
-def _expected_term(record: dict, **slots: str) -> str:
-    return copy.fill(record["new_text"], **slots)
-
-
-DEFAULT_SLOTS = {"shadow_retention_days": "180"}
-
-
-def _slots_for_default_render() -> dict[str, str]:
-    import autotuner
-
-    return {**DEFAULT_SLOTS, "friction_pct": _plain(autotuner.SIM_EXIT_FRICTION_PCT)}
+GLOSSARY_HOSTS = ("/", "detail panel")
 
 
 class TestTermDefinitions:
-    def test_every_target_of_a_disclosure_is_a_description_the_page_carries(self):
-        assert set(_targets()) <= set(ALL_DESCRIPTIONS)
+    """Every definition of the two hosts is a Glossary line, none a disclosure of its section."""
 
-    @pytest.mark.parametrize("target", _targets())
-    def test_a_disclosure_follows_its_description_closed_and_named(self, render, target):
+    def test_no_section_carries_a_disclosure_of_its_own(self, render):
         soup = render("dashboard_full")
-        description = _explainer(soup, target)
-        disclosure = description.find_next_sibling()
-        assert disclosure is not None and disclosure.name == "details", (
-            f"the element after {target} is {getattr(disclosure, 'name', None)}, not a disclosure"
-        )
-        assert disclosure.get("data-terms") == target
-        assert "hp-more" in disclosure.get("class", [])
-        assert not disclosure.has_attr("open")
-        assert _words(disclosure.find("summary")) == DISCLOSURE_SUMMARY
-        assert len(soup.select(f'[data-terms="{target}"]')) == 1
+        assert not soup.select("[data-terms]:not([data-terms='glossary'])")
+        assert not [s for s in soup.select("summary") if _words(s) == "What the terms mean"]
 
-    @pytest.mark.parametrize("target", _targets())
-    def test_a_disclosure_holds_one_paragraph_per_term_in_table_order(self, render, target):
+    @pytest.mark.parametrize("host", GLOSSARY_HOSTS)
+    def test_every_definition_of_the_host_is_a_line_of_its_glossary_defined_once(
+        self, render, host
+    ):
         soup = render("dashboard_full")
-        disclosure = _one(soup, f'[data-terms="{target}"]')
-        host = "detail panel" if target in DETAIL_DESCRIPTIONS else "/"
-        wanted = _disclosure_rows(host, target)
-        assert wanted, f"the copy table has no term for {target}"
-        slots = _slots_for_default_render()
-        got = [(p.get("data-term"), _words(p)) for p in disclosure.find_all("p", recursive=False)]
-        assert got == [(r["key"], _expected_term(r, **slots)) for r in wanted]
+        glossary = _one(soup, f'details[data-terms="glossary"][data-glossary-host="{host}"]')
+        got = [p.get("data-term") for p in glossary.select("p[data-term]")]
+        assert got == [line["key"] for line in copy.glossary(host)]
+        for key in got:
+            assert len(soup.select(f'[data-term="{key}"]')) == 1, f"{key} is defined twice"
 
-    def test_every_term_is_defined_once_on_the_page_and_in_the_section_its_row_names(self, render):
-        soup = render("dashboard_full")
-        keys = [p.get("data-term") for p in soup.select("[data-term]")]
-        assert sorted(keys) == sorted(r["key"] for r in _all_disclosure_rows())
-        for record in _all_disclosure_rows():
-            holder = _one(soup, f'[data-term="{record["key"]}"]').find_parent("details")
-            assert holder.get("data-terms") == record["placement_target"], record["key"]
-
-    def test_a_term_a_description_already_carries_has_no_paragraph_of_its_own(self, render):
-        soup = render("dashboard_full")
-        carried = [
-            r
-            for r in copy.rows("B")
-            if copy.host_of(r) in ("/", "detail panel") and r["placement_kind"] == "V"
-        ]
-        assert carried, "premise: the copy table has terms carried by a description"
-        for record in carried:
-            assert not soup.select(f'[data-term="{record["key"]}"]'), record["key"]
-            assert copy.text(record["placement_target"], "A") == record["new_text"], record["key"]
-
-    def test_a_header_term_is_not_a_disclosure_paragraph(self, render):
+    def test_a_header_term_is_not_a_glossary_line(self, render):
         soup = render("dashboard_full")
         for record in copy.rows("B"):
             if record["key"].startswith("H"):
                 assert not soup.select(f'[data-term="{record["key"]}"]'), record["key"]
 
-    def test_the_sleeves_and_cvar_disclosures_are_inside_their_panels(self, render):
-        soup = render("empty")
-        assert _one(soup, '[data-terms="D41"]').find_parent(id="cvar-diagnostic-panel")
-        assert _one(soup, '[data-terms="D47"]').find_parent(attrs={"data-testid": "sleeves-panel"})
-
-    def test_a_term_is_not_defined_by_a_title_alone(self, render):
+    def test_a_removed_definition_row_has_no_line(self, render):
         soup = render("dashboard_full")
-        for record in _all_disclosure_rows():
-            paragraph = _one(soup, f'[data-term="{record["key"]}"]')
-            assert paragraph.get_text().strip(), record["key"]
+        assert not soup.select('[data-term="D40t"]'), "the Standby description says what it is"
+
+    def test_the_cvar_and_sleeves_panels_carry_no_definitions_of_their_own(self, render):
+        soup = render("empty")
+        assert not _one(soup, "#cvar-diagnostic-panel").select("[data-term], [data-terms]")
+        assert not _one(soup, '[data-testid="sleeves-panel"]').select("[data-term], [data-terms]")
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +469,7 @@ class TestConfiguredValues:
             "dashboard_full", env="SHADOW_HISTORY_RETENTION_DAYS=abc\n", SIM_EXIT_FRICTION_PCT=None
         )
         for key in ALL_DESCRIPTIONS:
-            assert _words(_explainer(soup, key)) == copy.text(key, "A")
+            assert _words(_explainer(soup, key)) == copy.a_text(key)
         assert _term_text(soup, "D07") == _with_fallback("D07", "shadow_retention_days", "D07")
         assert _term_text(soup, "D25") == _with_fallback("D25", "friction_pct", "D25")
 
