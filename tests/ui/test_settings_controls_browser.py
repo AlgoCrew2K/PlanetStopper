@@ -1007,10 +1007,16 @@ def test_what_pinned_means_is_said_once_for_the_list_not_on_every_entry(probe):
     for name in (NAME_PARENS_PLUS, NAME_PARENS_WORDS):
         text = entry_text(probe, _norm(name))
         assert "at the global value" not in text, text
+    # The Settings Glossary (line S14p) says it once for the whole page; the section description
+    # is one short sentence.
+    meaning = probe.page.evaluate(
+        "() => document.querySelector('[data-term=\"S14p\"]').textContent"
+    )
+    assert "Pinned value" in meaning and "will not follow a later global change" in meaning, meaning
     subtitle = probe.page.evaluate(
         "() => document.querySelector('#sec-symphonies .sec-subtitle').innerText"
     )
-    assert "pinned" in subtitle and "will not follow a later global change" in subtitle, subtitle
+    assert "pinned" not in subtitle.lower(), subtitle
 
 
 def test_the_credential_rows_are_quiet_until_something_is_typed(probe):
