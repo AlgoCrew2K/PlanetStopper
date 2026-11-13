@@ -586,8 +586,9 @@ def test_opening_every_history_moves_no_line_field_and_never_scrolls_the_page_si
     advisor_probe, width
 ):
     """PM ruling R2-1 (the field offsets of the observation lines do not move when the History
-    opens). Rejects content-sized columns whose table widens the section's grid and moves the lines
-    or the page's width at a narrow desktop width."""
+    opens) and the table keeps the section's content edges at every width. Rejects content-sized
+    columns whose table widens the section's grid, moves the lines or the page's width, or runs
+    past the section edge at a narrow desktop width."""
     _seed_lines()
     _open_lines(advisor_probe, width)
     closed = _offsets_of_the_lines(advisor_probe)
@@ -605,6 +606,9 @@ def test_opening_every_history_moves_no_line_field_and_never_scrolls_the_page_si
             assert abs(before[field] - after[field]) <= al.TOLERANCE_PX, (
                 f"{before['role']} {field} moved from {before[field]:.1f} to {after[field]:.1f}"
             )
+    read = advisor_probe.page.evaluate(_HISTORY_FIT_JS)
+    assert abs(read["table"]["left"] - read["content"]["left"]) <= al.TOLERANCE_PX, read
+    assert abs(read["table"]["right"] - read["content"]["right"]) <= al.TOLERANCE_PX, read
     scroll = advisor_probe.page.evaluate(
         "() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]"
     )

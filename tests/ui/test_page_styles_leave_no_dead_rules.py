@@ -233,6 +233,23 @@ def test_the_shared_stylesheet_styles_no_element_type_that_no_template_or_script
     assert not dead, "static/layout.css styles markup that is gone:\n" + "\n".join(dead)
 
 
+def test_no_history_table_column_is_a_fixed_share_of_its_table():
+    """PM ruling R2-1: the opened observation history's columns are content-sized, so no rule sets a
+    percentage width on a cell or header of ``.obs-table`` (the table itself fills its box). Rejects
+    the 19, 22, 20 and 20 percent columns, whether in the base block or under a media query."""
+    from tests.ui import _dashboard_primitives_capture as cap
+
+    shares = [
+        (context, selector, value)
+        for context, selectors, declarations in cap.iter_rules(_style_of("ai_advisor"))
+        for selector in selectors
+        if ".obs-table" in selector and re.search(r"\b(th|td)\b|nth-child", selector)
+        for prop, value in declarations
+        if prop in ("width", "min-width", "max-width", "flex-basis") and value.endswith("%")
+    ]
+    assert shares == [], f"a history column is a share of the table: {shares}"
+
+
 @pytest.mark.parametrize("page", ["history", "performance"])
 def test_the_toolbar_note_margin_is_reset_by_one_rule_and_not_repeated(page):
     """PM ruling R2-3. The toolbar's note has its left margin reset to zero in a rule of its own;
