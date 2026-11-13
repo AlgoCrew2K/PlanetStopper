@@ -1136,7 +1136,10 @@
                 display: grid;
                 grid-template-columns: subgrid;
             }
-            .obs-history > :not(summary) { grid-column: 1 / -1; }
+            .obs-history > :not(summary) { grid-column: 1 / -1; contain: inline-size; }
+            /* The suggestion cards the script writes: a text track and one actions track of one width. */
+            .suggestion-row { display: grid !important; grid-template-columns: minmax(0, 1fr) 12rem; }
+            .suggestion-actions { width: 12rem; }
             .obs-history::details-content { grid-column: 1 / -1; }
         }
         .obs-history-toggle, .obs-row-link { color: var(--studio-ink-dim); font-size: 12px; text-align: left; }

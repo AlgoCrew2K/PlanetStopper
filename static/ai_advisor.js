@@ -327,7 +327,7 @@
                 'border-radius:1rem;padding:1.25rem 1.5rem;' +
                 (isOosRejected ? 'opacity:0.7;' : '') + '">' +
 
-                '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">' +
+                '<div class="suggestion-row" style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">' +
 
                 // The text column asks for 12rem before it shrinks: on a phone the actions wrap under it
                 // instead of sitting on top of the config key. min-width:0 lets it shrink if it must.
@@ -362,7 +362,7 @@
                 '<span style="font-size:0.6875rem;color:' + oosColor + ';">OOS: ' + oosLabel + '</span>' +
                 '</div>' +
 
-                '<div style="display:flex;flex-direction:column;gap:0.5rem;flex-shrink:0;">' +
+                '<div class="suggestion-actions" style="display:flex;flex-direction:column;gap:0.5rem;flex-shrink:0;">' +
                 (isOosRejected
                     ? '<button disabled ' +
                       'style="padding:0.375rem 1rem;background:' + cssVar('--studio-chip-bg') + ';' +
