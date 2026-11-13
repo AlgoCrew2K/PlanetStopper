@@ -124,6 +124,10 @@ REWRITTEN_CONTROL_TESTIDS = frozenset({"retirement-pointer", "autotune-older-sum
 # hedge, redundancy), so each is compared as a multiset and not by position.
 ORDER_RULED_FIGURE_KEYS = frozenset({"testid:tenure-review-evidence-heading"})
 
+# A figure that is a live clock: compared by its shape (hh:mm:ss), never by its second.
+TICKING_FIGURE_KEYS = frozenset({"id:et-clock"})
+_CLOCK_SHAPE = re.compile(r"\d{2}:\d{2}:\d{2}")
+
 # Term disclosures the plan removes from a host, as (host, tag, text) -> how many: the Overview's
 # five (its tab line, O03, O08, O15 and O27) became lines of its one Glossary. A later cycle adds
 # its host's. At most this many may be missing, so a sixth lost disclosure is still reported.
@@ -198,6 +202,11 @@ def figure_differences(reading: list, reference: list, matchers: list[re.Pattern
         heads = got.get(key, [])
         if index >= len(heads):
             problems.append(f"{key}: lost (reference {text!r})")
+        elif key in TICKING_FIGURE_KEYS:
+            # A live clock reads the second the page was measured at, which the first, cold
+            # browser start can move by one: the figure is the readout's shape, not its second.
+            if _CLOCK_SHAPE.sub("#", heads[index]) != _CLOCK_SHAPE.sub("#", text):
+                problems.append(f"{key}: page {heads[index]!r} is not shaped like {text!r}")
         elif heads[index] != text:
             problems.append(f"{key}: page {heads[index]!r} != reference {text!r}")
     return problems
@@ -334,6 +343,18 @@ def test_the_figure_comparison_reports_a_changed_a_lost_and_an_excluded_figure()
     assert problems == [
         "id:a: page '1.6%' != reference '1.5%'",
         "id:b: lost (reference '2')",
+    ]
+
+
+def test_a_ticking_clock_is_compared_by_its_shape_and_still_reported_when_lost_or_misshapen():
+    reference = [["id:et-clock", "11:00:01"]]
+    matchers = _relabel_matchers()
+    assert figure_differences([["id:et-clock", "11:00:02"]], reference, matchers) == []
+    assert figure_differences([["id:et-clock", "closed"]], reference, matchers) == [
+        "id:et-clock: page 'closed' is not shaped like '11:00:01'"
+    ]
+    assert figure_differences([], reference, matchers) == [
+        "id:et-clock: lost (reference '11:00:01')"
     ]
 
 
