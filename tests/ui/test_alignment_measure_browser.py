@@ -700,6 +700,70 @@ def test_figure_rows_packed_with_values_ending_at_one_edge_have_no_violation(fir
     assert [c["column"] for c in found["columns"]] == ["Baseline", "Variant"]
 
 
+STACKED_SPEC = {**FIGURE_SPEC, "stacked_shares_tracks": True}
+# Two blocks stacked in one card on one pair of tracks (PM ruling R2-2): the grid's two tracks are
+# shared by both blocks through subgrid, values right-aligned in the value track.
+STACKED_SHARED_TRACKS = (
+    ".card {width:300px} .cols {display:grid;grid-template-columns:max-content {value_track};"
+    "column-gap:12px;width:max-content} .blk {display:grid;grid-column:1/-1;"
+    "grid-template-columns:subgrid} .col {grid-column:1/-1} .row {display:contents}"
+    " .v {text-align:right}"
+)
+
+
+def _stacked_card(first: tuple[str, ...], second: tuple[str, ...]) -> str:
+    return (
+        '<div class="card"><div class="cols">'
+        f'<div class="blk"><div class="col">Baseline</div>{_figure_rows(*first)}</div>'
+        f'<div class="blk"><div class="col">Variant</div>{_figure_rows(*second)}</div>'
+        "</div></div>"
+    )
+
+
+def test_stacked_blocks_sharing_tracks_are_one_column_for_the_gap_rule(firefox):  # noqa: F811
+    """Where the blocks share tracks the narrower block's values end at the wider block's, so its own
+    label-to-value gap is the difference of their widths; the gap rule reads both as one column
+    when the spec says so, and still reads them one by one when it does not."""
+    body = _stacked_card(("1.27", "2.43", "1234567.891234"), ("-0.41", "12", "7%"))
+    css = STACKED_SHARED_TRACKS.replace("{value_track}", "max-content")
+    shared = _run(firefox, al.FIGURE_COLUMNS_JS, STACKED_SPEC, body, css)
+    assert shared["violations"] == [], shared
+    assert all(c["stacked"] for c in shared["columns"]), shared
+    apart = _run(firefox, al.FIGURE_COLUMNS_JS, FIGURE_SPEC, body, css)
+    assert any("Variant" in v and "apart, more than 48" in v for v in apart["violations"]), apart
+
+
+def test_a_shared_value_track_wider_than_its_widest_value_is_reported_as_a_gap(firefox):  # noqa: F811
+    """Rejects a shared track set sized past its content: a fixed 300 px value track leaves the
+    nearest value of either block far from the widest label."""
+    body = _stacked_card(("1.27", "2.43", "26.16%"), ("-0.41", "12", "7%"))
+    css = STACKED_SHARED_TRACKS.replace("{value_track}", "300px")
+    found = _run(firefox, al.FIGURE_COLUMNS_JS, STACKED_SPEC, body, css)
+    assert any("blocks stacked" in v and "apart, more than 48" in v for v in found["violations"]), (
+        found
+    )
+
+
+def test_side_by_side_blocks_stay_separate_columns_when_the_spec_allows_stacking(firefox):  # noqa: F811
+    """The merged reading applies only to blocks that sit under each other."""
+    css = (
+        ".card {width:400px} .cols {display:grid;grid-template-columns:1fr 1fr;gap:24px}"
+        " .col-body {display:grid;grid-template-columns:auto auto;justify-content:start;"
+        "column-gap:24px} .row {display:contents} .v {text-align:right}"
+    )
+    body = (
+        '<div class="card"><div class="cols">'
+        '<div><div class="col">Baseline</div><div class="col-body">'
+        + _figure_rows("1.27", "2.43", "26.16%")
+        + '</div></div><div><div class="col">Variant</div><div class="col-body">'
+        + _figure_rows("-0.41", "12.84", "7%")
+        + "</div></div></div></div>"
+    )
+    found = _run(firefox, al.FIGURE_COLUMNS_JS, STACKED_SPEC, body, css)
+    assert found["violations"] == [], found
+    assert not any(c["stacked"] for c in found["columns"]), found
+
+
 def test_a_value_pushed_to_the_far_end_of_its_row_is_reported_as_a_gap(firefox):  # noqa: F811
     body = _figure_card(_figure_rows("1.27", "2.43", "26.16%"), _figure_rows("-0.41", "12", "7%"))
     css = (

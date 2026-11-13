@@ -398,10 +398,26 @@ cards.forEach((card, ci) => {
     });
     if (owner >= 0) cols[owner].rows.push(row);
   });
-  cols.forEach((col) => {
+  // Blocks stacked in a card that shares one label track and one value track (spec.stacked_shares_
+  // tracks, PM ruling R2-2) are one column for the gap rule: the narrower block's values end at the
+  // wider block's, so its own label-to-value gap is the difference of their widths by design.
+  const stacked = !!spec.stacked_shares_tracks && heads.length > 1 && cols.every((c, i) => {
+    if (i === 0 || !c.rows.length || !cols[i - 1].rows.length) return i === 0;
+    // A row laid out with display: contents has no box, so the last label's box says where it ends.
+    const last = cols[i - 1].rows[cols[i - 1].rows.length - 1];
+    const lastLabel = [...last.querySelectorAll(spec.label)].find(shown);
+    return !!lastLabel && heads[i].getBoundingClientRect().top >= lastLabel.getBoundingClientRect().bottom - 1;
+  });
+  const read = cols.map((col) => ({
+    col,
+    labels: col.rows.map((r) => boxOf(r, spec.label)).filter(Boolean),
+    values: col.rows.map((r) => boxOf(r, spec.value)).filter(Boolean),
+  }));
+  const gapOf = (parts) => Math.min(...parts.flatMap((p) => p.values.map((b) => b.left)))
+    - Math.max(...parts.flatMap((p) => p.labels.map((b) => b.right)));
+  const gapGroups = stacked ? [read] : read.map((r) => [r]);
+  read.forEach(({ col, labels, values }) => {
     const where = 'card ' + (ci + 1) + ', column "' + col.name + '"';
-    const labels = col.rows.map((r) => boxOf(r, spec.label)).filter(Boolean);
-    const values = col.rows.map((r) => boxOf(r, spec.value)).filter(Boolean);
     if (!labels.length || !values.length) {
       out.violations.push(where + ' holds no figure row');
       return;
@@ -409,14 +425,15 @@ cards.forEach((card, ci) => {
     const spread = (xs) => Math.max(...xs) - Math.min(...xs);
     const labelSpread = spread(labels.map((b) => b.left));
     const valueSpread = spread(values.map((b) => b.right));
-    const gap = Math.min(...values.map((b) => b.left)) - Math.max(...labels.map((b) => b.right));
-    out.columns.push({ card: ci + 1, column: col.name, rows: col.rows.length,
+    const group = gapGroups.find((g) => g.some((p) => p.col === col));
+    const gap = gapOf(group);
+    out.columns.push({ card: ci + 1, column: col.name, rows: col.rows.length, stacked,
                        label_spread: fix(labelSpread), value_spread: fix(valueSpread), gap: fix(gap) });
     if (labelSpread > tol) out.violations.push(where + ': labels start ' + fix(labelSpread) + ' px apart');
     if (valueSpread > tol) out.violations.push(where + ': values end ' + fix(valueSpread) + ' px apart');
-    if (gap > maxGap) {
+    if (gap > maxGap && (!stacked || group[0].col === col)) {
       out.violations.push(where + ': the widest label and the nearest value are ' + fix(gap)
-                          + ' px apart, more than ' + maxGap);
+                          + ' px apart, more than ' + maxGap + (stacked ? ' (blocks stacked, one track set)' : ''));
     }
   });
 });
@@ -1017,6 +1034,7 @@ TABLE_GROUPS: dict[str, dict] = {
         ],
         "figure_columns": {
             "cards": "#swap-results-area .sym-card",
+            "stacked_shares_tracks": True,
             "column_label": ".stats-col-label",
             "row": ".stat-row",
             "label": ".stat-label",
@@ -1039,6 +1057,7 @@ TABLE_GROUPS: dict[str, dict] = {
         ],
         "figure_columns": {
             "cards": "#logic-results-area .sym-card",
+            "stacked_shares_tracks": True,
             "column_label": ".stats-col-label",
             "row": ".stat-row",
             "label": ".stat-label",
