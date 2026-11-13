@@ -320,18 +320,16 @@ def test_blocks_stacked_in_a_card_share_one_label_track_and_one_value_track(
     _assert_stacked_blocks_share_tracks(read)
 
 
-# Where the blocks stack at the widths the review captured (the ruling's evidence): the Asset Swaps
-# cards at 1440 and 1920 and the Logic Changes cards at 1920. The test above holds nothing for a
-# width where no card stacks, so these three pin that a stacked card is what it measured.
-@pytest.mark.parametrize(("name", "width"), [("swap", 1440), ("swap", 1920), ("logic", 1920)])
-def test_the_captured_stacked_widths_stack_every_card_so_the_shared_track_rule_is_measured(
+# The Logic Changes cards at 1920 are the width the review captured with Variant under Baseline (the
+# Asset Swaps cards sit side by side at every Table W width). The test above holds nothing for a
+# width where no card stacks, so this one pins that the captured card stacks and is measured.
+def test_the_captured_stacked_logic_cards_stack_every_card_so_the_shared_track_rule_is_measured(
     firefox,
     advisor_server,
     tmp_path,
-    monkeypatch,
-    name,
-    width,  # noqa: F811
+    monkeypatch,  # noqa: F811
 ):
+    name, width = "logic", 1920
     _prepare(tmp_path, monkeypatch)
     with _evaluated(firefox, advisor_server, monkeypatch, name, width) as probe:
         read = probe.page.evaluate(_SHARED_TRACKS_JS, KINDS[name]["results"])
@@ -380,6 +378,8 @@ def test_stacked_blocks_share_tracks_when_the_figures_are_at_the_edge_of_their_f
     with _evaluated(firefox, advisor_server, monkeypatch, name, width, edit=edge_figures) as probe:
         read = probe.page.evaluate(_SHARED_TRACKS_JS, KINDS[name]["results"])
         contained = probe.page.evaluate(_CONTAINMENT_JS, KINDS[name]["results"])
+    if (name, width) == ("logic", 1920):
+        assert read["stacked"] >= 1, f"premise: the wide figures stack the blocks: {read}"
     _assert_stacked_blocks_share_tracks(read)
     _assert_contained(contained, CARD_COUNT)
 
