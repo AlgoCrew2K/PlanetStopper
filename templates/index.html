@@ -1190,7 +1190,7 @@
          so no wide gap opens between them. */
       .vs-rows {
         display: grid;
-        grid-template-columns: minmax(0, max-content) max-content max-content minmax(max-content, 1fr);
+        grid-template-columns: minmax(0, max-content) max-content max-content max-content 1fr;
         column-gap: 12px;
       }
       .vs-row {
@@ -1207,8 +1207,6 @@
       }
       .vs-row-top [data-testid$="-bot-text"] { margin-left: 0; }
       .vs-val, .vs-delta { min-width: 0; }
-      /* The last column takes the box's spare width, so its figure starts where the column does. */
-      .vs-delta { text-align: left; }
       .vs-row-top > .basis-chip { grid-column: 1 / -1; }
       .vs-row-lead { display: flex; align-items: baseline; gap: 4px 6px; }
       .vs-bars { grid-column: 1 / -1; }
@@ -1241,9 +1239,7 @@
          column 40 px to its right; every line stays on one line. */
       .dollar-panel {
         grid-template-columns: max-content max-content;
-        justify-content: start;
         column-gap: 40px;
-        align-items: start;
       }
       .dollar-lines { display: block; }
       .dollar-lead, .dollar-line { white-space: nowrap; }
