@@ -248,6 +248,26 @@ def test_the_figure_lines_keep_their_gaps_after_a_poll_and_a_window_pick_and_bac
             _offsets(probe.page, "comparison_rows", f"comparison rows {label}", at_least=3)
 
 
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_the_hero_top_row_puts_no_text_at_its_far_end(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    seeded,  # noqa: F811
+    width,
+):
+    """The headline block and the window selector: the selector is a control and may end the row; the
+    text of the headline block starts at the row's left edge or within 24 px of what precedes it."""
+    seeded("dashboard_full")
+    with _Dashboard(firefox, advisor_server, width, al.VIEWPORT_HEIGHT) as probe:
+        entry = al.TOOLBAR_ROWS["hero_top"]
+        found = al.measure(
+            probe.page,
+            al.ROW_START_JS,
+            {"name": "hero_top", "row": entry["row"], "max_gap": al.MAX_NON_CONTROL_GAP_PX},
+        )
+        _clean(found, f"hero top at {width}")
+
+
 # ---------------------------------------------------------------------------
 # Sleeves
 # ---------------------------------------------------------------------------

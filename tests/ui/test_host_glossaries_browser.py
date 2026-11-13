@@ -38,9 +38,15 @@ from tests.ui._shell_support import (  # noqa: F401  (fixtures: overrides, empty
 from tests.ui.test_page_explainers_dashboard_browser import (  # noqa: F401  (fixture and helpers)
     POLL_MS,
     _Dashboard,
+)
+from tests.ui.test_page_explainers_dashboard_browser import (  # noqa: F401  (the dashboard's world)
+    seeded as dashboard_seeded,
+)
+from tests.ui.test_page_explainers_performance_history_browser import (  # noqa: F401
+    _open,
+    _open_exit_day,
     seeded,
 )
-from tests.ui.test_page_explainers_performance_history_browser import _open, _open_exit_day
 from tests.ui.test_page_explainers_settings_browser import (  # noqa: F401
     go_to,
     settings_open,
@@ -132,9 +138,9 @@ def _expect_dashboard(probe, where: str) -> None:
 def test_the_dashboard_labels_carry_their_glossary_line_as_a_title(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
-    seeded,  # noqa: F811
+    dashboard_seeded,
 ):
-    seeded("dashboard_full")
+    dashboard_seeded("dashboard_full")
     with _Dashboard(firefox, advisor_server, 1440, al.VIEWPORT_HEIGHT) as probe:
         probe.page.wait_for_timeout(400)
         _expect_dashboard(probe, "after load")
@@ -143,9 +149,9 @@ def test_the_dashboard_labels_carry_their_glossary_line_as_a_title(
 def test_the_dashboard_labels_keep_their_titles_after_three_polls_rewrite_the_rows(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
-    seeded,  # noqa: F811
+    dashboard_seeded,
 ):
-    seeded("dashboard_full")
+    dashboard_seeded("dashboard_full")
     with _Dashboard(firefox, advisor_server, 1440, al.VIEWPORT_HEIGHT) as probe:
         for poll in range(3):
             probe.page.clock.run_for(POLL_MS)
@@ -156,9 +162,9 @@ def test_the_dashboard_labels_keep_their_titles_after_three_polls_rewrite_the_ro
 def test_a_label_that_carried_a_title_keeps_it_and_the_script_marks_only_what_it_titled(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
-    seeded,  # noqa: F811
+    dashboard_seeded,
 ):
-    seeded("dashboard_full")
+    dashboard_seeded("dashboard_full")
     with _Dashboard(firefox, advisor_server, 1440, al.VIEWPORT_HEIGHT) as probe:
         probe.page.wait_for_timeout(400)
         marks = _titles(probe, ".info-mark")

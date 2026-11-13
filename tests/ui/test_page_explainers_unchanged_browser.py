@@ -115,6 +115,11 @@ REWRITTEN_FIGURE_KEYS = frozenset(
         "id:autotune-older-summary",
         # The tenure card's missing line states the redundancy once, without peer names.
         "testid:tenure-review-missing",
+        # Descriptions and captions the plan shortens in place, each a figure by its test id: the
+        # sleeves' empty line (D48), the History caption (CX-8) and the Settings caption (S01).
+        "testid:sleeves-empty",
+        "testid:history-caption",
+        "testid:settings-caption",
     }
 )
 REWRITTEN_CONTROL_TESTIDS = frozenset({"retirement-pointer", "autotune-older-summary"})
@@ -131,7 +136,15 @@ _CLOCK_SHAPE = re.compile(r"\d{2}:\d{2}:\d{2}")
 # Term disclosures the plan removes from a host, as (host, tag, text) -> how many: the Overview's
 # five (its tab line, O03, O08, O15 and O27) became lines of its one Glossary. A later cycle adds
 # its host's. At most this many may be missing, so a sixth lost disclosure is still reported.
-REMOVED_DISCLOSURES = {("/ai-advisor", "summary", "What the terms mean"): 13}
+REMOVED_DISCLOSURES = {
+    ("/ai-advisor", "summary", "What the terms mean"): 13,
+    # The dashboard (six on the page, four in the detail panel), Performance, History and Settings:
+    # each disclosure's lines became lines of the host's one Glossary.
+    ("/", "summary", "What the terms mean"): 10,
+    ("/performance", "summary", "What the terms mean"): 4,
+    ("/history", "summary", "What the terms mean"): 2,
+    ("/settings", "summary", "What the terms mean"): 3,
+}
 
 # The summary of a tenure evidence cell of an item the missing line names reads its heading and its
 # status only: the reason moved to the line. The reference's summary carried "<heading> unavailable:

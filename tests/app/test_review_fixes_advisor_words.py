@@ -88,13 +88,31 @@ def test_observation_verdicts_and_subjects_read_as_words(client, isolated_db):
 def test_the_same_words_are_used_on_the_producer_line_and_in_the_history_rows(client, isolated_db):
     _seed_observations()
     section = _page(client).find("advisor-observations-section")
-    line = {
-        n.ancestor("obs-producer").attrs["data-role"]: n.text()
-        for n in section.walk()
-        if n.testid == "obs-producer-verdict"
-    }
+    # The producer lines are the ``obs-producer`` rows of the stored observations. The plan puts one
+    # more row after them, the Retirement pointer (its own ``data-role`` and no history rows): its
+    # verdict cell is a status line and not a producer's latest verdict, so it is read apart, and
+    # every other verdict cell is still compared with its producer's line.
+    line: dict[str, str] = {}
+    pointer_verdicts = []
+    for n in section.walk():
+        if n.testid != "obs-producer-verdict":
+            continue
+        owner = n.ancestor("obs-producer")
+        if owner is not None:
+            line[owner.attrs["data-role"]] = n.text()
+        else:
+            row = n.parent
+            while row is not None and "data-role" not in row.attrs:
+                row = row.parent
+            assert row is not None and row.attrs.get("data-role") == "RETIREMENT", (
+                f"a verdict cell sits in no producer line and is not the Retirement row: {n.text()}"
+            )
+            pointer_verdicts.append(n)
+    assert len(pointer_verdicts) == 1, "the Retirement row is the one verdict cell outside a line"
+    assert not UPPER_SNAKE.search(pointer_verdicts[0].text()), pointer_verdicts[0].text()
     rows = [r for r in section.walk() if r.testid == "obs-row"]
     assert line and rows
+    assert set(line) == set(_VERDICTS), "a producer line is missing or one was added"
     for row in rows:
         verdict_cell = next(c for c in row.walk() if c.testid == "obs-verdict").text()
         assert verdict_cell in line.values() or not UPPER_SNAKE.search(verdict_cell)

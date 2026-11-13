@@ -25,6 +25,7 @@ import re
 import pytest
 
 from tests.dashboard import _refresh_timing_support as sup
+from tests.ui import _alignment as al
 from tests.ui._dashboard_refresh_browser_support import (  # noqa: F401  (fixtures)
     firefox,
     text,
@@ -119,4 +120,32 @@ def test_a_failed_strip_leaves_the_figures_dashed_and_a_notice_naming_the_window
         arg=want,
     )
     assert probe.page.evaluate(f"!({NOTICE})()"), "the notice outlived the next pick"
+    assert probe.page_errors == []
+
+
+def test_the_dollar_figures_keep_equal_gaps_when_the_summary_answers_500_and_after_a_failed_pick(
+    probe,
+):
+    """S-2.14: the four dollar figures read as dashes and still sit on one line each with equal
+    gaps of at most 48 px, on the first paint and after a pick whose summary also fails."""
+    probe.page.route(
+        "**/api/guard-alpha-summary*",
+        lambda route: route.fulfill(
+            status=500,
+            content_type="application/json",
+            body=json.dumps({"status": "error", "message": "An internal error occurred"}),
+        ),
+    )
+    _open(probe)
+    entry = al.FIGURE_LINES["dollar_saved_line"]
+    spec = al.spec_of(entry, name="dollar_saved_line", no_wrap=True)
+    for label in ("first paint", "after a failed pick"):
+        if label == "after a failed pick":
+            probe.page.locator('[data-testid="window-1y"]').click()
+            probe.page.wait_for_timeout(1200)
+        headline = text(probe, "#dollar-saved-headline")
+        assert not re.search(r"\d", headline), f"{label}: the headline reads {headline!r}"
+        found = al.measure(probe.page, al.LINE_GAPS_JS, spec)
+        assert found["found"] == 1, f"{label}: the dollar line is not on the page"
+        assert found["violations"] == [], f"{label}: " + "; ".join(found["violations"])
     assert probe.page_errors == []
