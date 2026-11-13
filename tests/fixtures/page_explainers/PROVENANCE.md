@@ -6,11 +6,13 @@ match a parser or a test.
 ## copy.json (the expected text of every copy row, Glossary line and Glossary title)
 
 - **Sources**, both read through `git show` and never from the working tree:
-  - the plan `feature-plans/aligned-tables-and-quiet-copy.md` with the fix round's amendments, read
-    at commit `75243235526c367d6b09b0da245b7794f8ddf63d` (`75243235`, "record the PM's slice-review
-    rulings R1 for the fix round"). The tables read are Copy table A, Copy table X, the Values
-    table, Table G, Table G2 and Table G3; `extract_copy.py --check 75243235` reports no difference
-    from `copy.json`;
+  - the plan `feature-plans/aligned-tables-and-quiet-copy.md`, read at commit
+    `75243235526c367d6b09b0da245b7794f8ddf63d` (`75243235`, "record the PM's slice-review rulings R1
+    for the fix round"). The tables read (Copy table A, Copy table X, the Values table, Table G,
+    Table G2 and Table G3) equal the plan as approved at `f1d07c75` (itself byte-equal to `ac4563cb`)
+    apart from what the R1 rulings add: Copy table X rows CX-15 to CX-20, the Frontrunner Builder
+    Glossary's X11 split into X11a to X11c, History's four exit reason lines and their Table G3
+    titles. `extract_copy.py --check 75243235` reports no difference;
   - the reference commit's own fixture, `tests/fixtures/page_explainers/copy.json` at commit
     `c0760e70eb6f8c6620002570b493bb9ca4ec6b1e` (`c0760e70`), and the reference template
     `templates/ai_advisor.html` at the same commit (the guardrail paragraph the three Overview

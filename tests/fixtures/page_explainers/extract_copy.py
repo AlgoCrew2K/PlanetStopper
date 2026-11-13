@@ -49,8 +49,8 @@ PLAN_PATH = "feature-plans/aligned-tables-and-quiet-copy.md"
 REF_FIXTURE_PATH = "tests/fixtures/page_explainers/copy.json"
 REF_TEMPLATE_PATH = "templates/ai_advisor.html"
 REFERENCE_COMMIT = "c0760e70eb6f8c6620002570b493bb9ca4ec6b1e"
-# The commit of the plan with the fix round's amendments (G-35 to G-55, CX-15 to CX-20, Table G2's
-# X11a to X11c).
+# The approved commit; the tables read here are byte-equal at ac4563cb, the commit that last
+# changed them.
 PLAN_COMMIT = "75243235"
 OUT = HERE / "copy.json"
 
