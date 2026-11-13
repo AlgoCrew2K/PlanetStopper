@@ -58,7 +58,9 @@ _REFERENCE_DIGESTS = {
     # Re-pinned after the fix round took the captions' right-hand column grid out and let the stacked
     # tables wrap their headers and first column (the turnover table fits its panel); the diff is
     # those rules.
-    "performance.html": "d9d71917ebf0c09aaf409bde57550713ff30994cc17151385b2c01102c1114e1",
+    # Re-pinned after the stacked table's `max-width: 100%` and its headers' `white-space: normal`
+    # were removed (no test could tell them from the defaults); the diff is those two declarations.
+    "performance.html": "d6292dcec164f6740b2d064a09b4bd202c7769a0bee6bbf937ff3e6372cf8b58",
     "settings.html": "8d12e03679dfe44dc055d3fee78ca322f20d1caaea6a7ee6499c30df18e3abfe",
 }
 
