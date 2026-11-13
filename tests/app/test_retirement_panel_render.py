@@ -42,6 +42,7 @@ import database as db_module
 from database import init_db, run_migrations
 from tests.advisors import _tenure_review_builders as review_builders
 from tests.app import _tenure_review_panel_builders as pb
+from tests.ui import _page_copy as copy_fixture
 
 
 def _sample_raw_response(candidate_id="cand-sym", sibling_id="sib-sym", explanation=None):
@@ -2274,8 +2275,12 @@ class TestPairsThatCouldNotDecideAreShownAndAreMissingEvidence:
     def test_the_entry_lists_redundancy_as_missing_and_offers_no_retirement(self, shown):
         stored, item, node = shown
         missing = node.find("tenure-review-missing")
+        expected = pb.expected_missing_line(stored, NEEDED)
+        assert expected is not None, "fixture sanity: another item is missing too"
         assert missing is not None, "an item that decides nothing must be listed as missing"
-        assert "redundancy" in missing.text().lower()
+        # A too-few-days redundancy item is said by the fleet line under the run line, not here;
+        # every other undecided item stays in the line.
+        assert missing.text() == expected
         chip = node.find("tenure-review-verdict-chip")
         assert chip.text() == stored["verdict_text"]
         assert stored["verdict"] != "retire_candidate"
@@ -2296,28 +2301,16 @@ class TestMissingItemsAreListedOnEveryRecord:
             node = pb.entry_node(panel, stored["symphony_id"])
             missing = node.find("tenure-review-missing")
             where = stored["display_name"]
-            if not stored["missing_items"]:
+            expected = pb.expected_missing_line(stored, NEEDED) if stored["missing_items"] else None
+            if expected is None:
+                # nothing is missing, or the only missing item is a redundancy the fleet line says
                 assert missing is None, where
                 continue
             assert missing is not None, where
-            text = missing.text().lower().replace("_", " ")
-            # a listed item carries its reason, which may itself name another item
-            for listed_name in stored["missing_items"]:
-                reason = stored["evidence"][listed_name].get("reason")
-                if isinstance(reason, str) and reason:
-                    text = text.replace(reason.lower(), " ")
-            for name in (
-                "performance",
-                "composite",
-                "redundancy",
-                "backtest",
-                "marginal",
-                "long vix",
-            ):
-                stored_name = name.replace(" ", "_")
-                assert (name in text) == (stored_name in stored["missing_items"]), (where, name)
+            # each stored item once and no other, by the plan's rule for a too-few-days redundancy
+            assert missing.text() == expected, where
             listed += 1
-        assert listed >= 2
+        assert listed >= 1
 
     def test_an_item_that_says_no_redundant_sibling_is_not_listed_as_missing(
         self, client, isolated_db
@@ -4117,6 +4110,33 @@ def _not_used_lines(block: pb.Node) -> list[pb.Node]:
     ]
 
 
+def _reason_sits_in_the_cell(item: dict) -> bool:
+    """The undecided-peer list is the one stored reason a Redundancy cell holds, once, inside its
+    closed disclosure; the reason of any other item the missing line names prints in the line only."""
+    reason = item.get("reason")
+    return isinstance(reason, str) and reason.startswith(tenure_review._UNDECIDED_PREFIX)
+
+
+def _cell_reason_problems(item: dict, block: pb.Node) -> list[str]:
+    """What is wrong with where a Redundancy cell prints the stored reason of an item the missing
+    line names: the undecided-peer list once, inside the disclosure and never in the summary; any
+    other reason not at all."""
+    reason = item.get("reason")
+    if not isinstance(reason, str) or not reason:
+        return []
+    body = _without_basis_label(block)
+    if _reason_sits_in_the_cell(item):
+        problems = []
+        if body.count(reason) != 1:
+            problems.append(f"the cell holds the stored list {body.count(reason)} times, not once")
+        if reason in _summary_of(block).text():
+            problems.append("the stored list is in the cell's summary, not behind its disclosure")
+        if reason in pb.visible_text(block):
+            problems.append("the stored list shows while the cell's disclosure is closed")
+        return problems
+    return ["the cell repeats the reason the missing line states"] if reason in body else []
+
+
 class TestAnUnusedPairSaysItIsNotUsedInTheVerdict:
     _CASES = [
         ("small", pb.SMALL_IDS["first"]),
@@ -4141,11 +4161,7 @@ class TestAnUnusedPairSaysItIsNotUsedInTheVerdict:
         lines = _not_used_lines(block)
         assert len(lines) == 1, [n.text() for n in lines]
         assert lines[0].text() == _NOT_USED, lines[0].text()
-        stored = item.get("reason")
-        if isinstance(stored, str) and stored:
-            assert stored not in _without_basis_label(block), (
-                "the cell repeats the reason the missing line states"
-            )
+        assert _cell_reason_problems(item, block) == []
 
     def test_the_line_sits_in_the_box_that_shows_the_pair(self, unused):
         item, block = unused
@@ -4584,22 +4600,28 @@ class TestEveryMissingItemIsListedWithItsReason:
                 continue
             where = f"{which} / {stored['display_name']}"
             missing = pb.entry_node(panel, stored["symphony_id"]).find("tenure-review-missing")
+            expected = pb.expected_missing_line(stored, NEEDED)
+            if expected is None:
+                # only a too-few-days redundancy is missing: the fleet line says it, this card not
+                assert missing is None, where
+                continue
             assert missing is not None, where
             text = missing.text()
+            assert text == expected, where
             for name in stored["missing_items"]:
                 item = stored["evidence"][name]
                 assert item["status"] != "available", f"{where} / {name}: fixture sanity"
-                shown = (
-                    pb.expected_redundancy_phrase(item["reason"], NEEDED)
-                    if name == "redundancy"
-                    else item["reason"]
-                )
-                assert shown in text, f"{where} / {name}: its reason is not listed"
+                if name == "redundancy" and pb.is_too_few_days(stored, NEEDED):
+                    assert "redundancy (" not in text, (
+                        f"{where}: a too-few-days redundancy is listed"
+                    )
+                    continue
                 if item["status"] == "not_applicable":
                     assert "not applicable" in text.lower(), f"{where} / {name}"
                     not_applicable += 1
                 listed += 1
-        assert listed >= 3
+        # the gap record's redundancy items are the too-few-days ones the fleet line states
+        assert listed >= (1 if which == "gap" else 3)
         if which in ("lone", "solo", "apart"):
             assert not_applicable >= 1, "the record must hold a not applicable item"
 
@@ -4696,8 +4718,8 @@ def _redundancy_problems(stored: dict, block: pb.Node) -> list[str]:
             "the words 'no redundant sibling' appear on an item that does not carry them"
         )
     named = "redundancy" in stored["missing_items"]
-    if not available and named and item["reason"] in _without_basis_label(block):
-        problems.append("the cell repeats the reason the missing line states")
+    if not available and named:
+        problems += _cell_reason_problems(item, block)
     if not available and not named and item["reason"] not in _without_basis_label(block):
         problems.append("an item the line does not name lost its reason")
     if pair:
@@ -5808,9 +5830,11 @@ class TestAValueThatRoundsToZeroPrintsZero:
 
 
 # ===========================================================================
-# A redundancy item the missing line names prints its reason once, in that line (the undecided-peer
-# list as its short phrase, with the stored list itself in the card's one disclosure); its cell
-# names only its status.
+# A redundancy item the missing line names prints its reason once, in that line, and its cell names
+# only its status; the one exception is the undecided-peer list, which is never in the line as
+# stored: a too-few-days card leaves the item out of the line (the fleet line under the run line
+# says it), any other card words it as the no-result phrase, and the stored list sits once inside
+# the Redundancy cell's own closed disclosure.
 # ===========================================================================
 
 
@@ -5840,16 +5864,27 @@ class TestARedundancyItemStatesItsReasonOnceInTheMissingLine:
                         problems.append(f"{where}: summary reads {_summary_of(block).text()!r}")
                     checked += 1
                     continue
-                if reason in _without_basis_label(block):
-                    problems.append(f"{where}: the cell repeats the reason")
+                problems += [f"{where}: {p}" for p in _cell_reason_problems(item, block)]
                 if _summary_of(block).text() != f"Redundancy {status_word}":
                     problems.append(f"{where}: summary reads {_summary_of(block).text()!r}")
                 decided_nothing += 1
-                line = card.find("tenure-review-missing").text()
-                expected = pb.expected_redundancy_phrase(reason, NEEDED)
-                named = f"redundancy ({status_word + ': ' if status_word == 'not applicable' else ''}{expected})"
-                if line.count(named) != 1:
-                    problems.append(f"{where}: the missing line reads {line!r}")
+                node = card.find("tenure-review-missing")
+                line = node.text() if node is not None else ""
+                if pb.is_too_few_days(stored, NEEDED):
+                    # the fleet line under the run line states it; the card's line never does
+                    if "redundancy (" in line:
+                        problems.append(f"{where}: the missing line reads {line!r}")
+                else:
+                    expected = (
+                        pb.NO_RESULT_PHRASE
+                        if pb.redundancy_form(reason, NEEDED) == "no_result"
+                        else reason
+                    )
+                    inner = (
+                        "not applicable: " if status_word == "not applicable" else ""
+                    ) + expected
+                    if line.count(f"redundancy ({inner})") != 1:
+                        problems.append(f"{where}: the missing line reads {line!r}")
                 if [n.text() for n in _not_used_lines(block)] != [_NOT_USED]:
                     problems.append(f"{where}: the not-used line carries more than its words")
                 checked += 1
@@ -5867,7 +5902,7 @@ class TestARedundancyItemStatesItsReasonOnceInTheMissingLine:
             "tenure-review-evidence-redundancy"
         )
         assert [n.text() for n in _not_used_lines(block)] == [_NOT_USED]
-        assert item["reason"] not in _without_basis_label(block)
+        assert _cell_reason_problems(item, block) == []
 
     def test_the_stored_reason_is_the_one_printed_once(self, client, isolated_db):
         reason = "a stored reason no template carries"
@@ -6549,20 +6584,75 @@ class TestAnIdThatIsNotTextIsResolvedToNoName:
 
 
 # ===========================================================================
-# A tenure card states the redundancy it is missing once, in one line that names no peer; the
-# stored list of peers whose comparison decided nothing sits in one closed disclosure after it.
+# The redundancy fact every too-few-days card shares is said once, in one line directly under the
+# tenure run line; a card names no peer and lists no redundancy entry for it. The stored list of
+# peers whose comparison decided nothing sits once inside the Redundancy cell's own closed
+# disclosure, and the card carries no separate disclosure for it.
 #
 # Every record comes from the real review compute (tests/app/_tenure_review_panel_builders.py,
 # ``undecided_record`` and its edge records). The number of aligned days the redundancy
-# comparison needs is the oracle ``pb.structural_gate_days()``, never typed here.
+# comparison needs is the oracle ``pb.structural_gate_days()``, never typed here; the line's words
+# are the copy fixture's CX-15 row, and which cards it counts is the oracle ``pb.fleet_counts``,
+# written from the plan's rule and independent of the page code.
 # ===========================================================================
 
 NEEDED = pb.structural_gate_days()
-_NOT_DECIDED_LINE = f"missing: redundancy ({pb.NOT_DECIDED_PHRASE.format(n=NEEDED)})"
 _NO_RESULT_LINE = f"missing: redundancy ({pb.NO_RESULT_PHRASE})"
-_UNDECIDED_TESTID = "tenure-review-undecided"
-_UNDECIDED_SUMMARY = "Comparisons that decided nothing"
+_UNDECIDED_TESTID = "tenure-review-undecided"  # no card carries it any more
+_UNDECIDED_SUMMARY = "Comparisons that decided nothing"  # and no page says it
 _UNDECIDED_PREFIX = "comparison decides nothing for: "
+_FLEET_START = "Redundancy not decided for"
+
+
+def _fleet_text(k: int, n: int, needed: int = NEEDED) -> str:
+    return copy_fixture.fill(
+        copy_fixture.x_row("CX-15")["new_text"], k=str(k), n=str(n), needs_days=str(needed)
+    )
+
+
+def _run_line(panel: pb.Node) -> pb.Node:
+    """The tenure run line (as of, run time, trigger, threshold), found by its class."""
+    found = [n for n in panel.walk() if "tenure-review-run" in n.classes()]
+    assert len(found) == 1, f"{len(found)} tenure run lines"
+    return found[0]
+
+
+def _fleet_lines(node: pb.Node) -> list[pb.Node]:
+    """Every innermost element under ``node`` whose text starts the fleet line's words."""
+    return [
+        n for n in pb.leaf_nodes_containing(node, _FLEET_START) if n.text().startswith(_FLEET_START)
+    ]
+
+
+def _store(record: dict) -> dict:
+    pb.seed_roster_state(record)
+    pb.store_run(record)
+    return record
+
+
+def _set_reason(stored: dict, reason: str) -> None:
+    stored["evidence"]["redundancy"]["reason"] = reason
+
+
+def _expect_cards(client, record: dict, needed: int = NEEDED) -> pb.Node:
+    """The panel of a stored record with every card checked against the plan's rule for the
+    missing line: each stored item once, a too-few-days redundancy left out, no line when nothing
+    else is missing. Returns the panel."""
+    panel = _panel(client)
+    for stored in record["entries"]:
+        card = pb.entry_node(panel, stored["symphony_id"])
+        line = card.find("tenure-review-missing")
+        expected = pb.expected_missing_line(stored, needed) if stored["missing_items"] else None
+        assert (line.text() if line is not None else None) == expected, stored["display_name"]
+        assert card.find(_UNDECIDED_TESTID) is None, stored["display_name"]
+        if "redundancy" in stored["missing_items"]:
+            # the stored undecided list sits once in the cell; any other reason is in the line only
+            problems = _cell_reason_problems(
+                stored["evidence"]["redundancy"], _redundancy_cell(card)
+            )
+            assert problems == [], (stored["display_name"], problems)
+    assert _UNDECIDED_SUMMARY not in panel.text()
+    return panel
 
 
 def _undecided_world(record: dict | None = None) -> dict:
@@ -6609,43 +6699,129 @@ def _without(card: pb.Node, testid: str) -> str:
     return card.text().replace(cell.text(), " ") if cell is not None else card.text()
 
 
-class TestTheMissingLineStatesTheRedundancyOnceAndNamesNoPeer:
-    def test_a_card_whose_every_comparison_was_too_short_reads_the_not_decided_form(
+class TestOneLineUnderTheRunLineStatesTheTooFewDaysFactForTheWholeReview:
+    """S-6.1, S-6.28, S-6.29, S-6.30, S-6.16: the line reads CX-15 with k the too-few-days cards,
+    n every tenure card and N the review's own derivation; it sits directly under the run line and
+    shows once; no card repeats the fact."""
+
+    def test_the_production_shape_reads_ten_of_eleven_directly_under_the_run_line(
         self, client, isolated_db
     ):
-        record, stored, card = _keep_card(client)
-        peers = pb.undecided_peers(stored)
-        assert len(peers) >= 3 and all(days < NEEDED for _, days in peers), "fixture sanity"
-        assert card.find("tenure-review-missing").text() == _NOT_DECIDED_LINE
+        record = _store(pb.undecided_record())
+        k, n = pb.fleet_counts(record, NEEDED)
+        assert (k, n) == (10, 11), "fixture sanity: ten too-few-days cards of eleven"
+        panel = _panel(client)
+        lines = _fleet_lines(panel)
+        assert [x.text() for x in lines] == [_fleet_text(k, n)], "the line shows exactly once"
+        under = _next_element(_run_line(panel))
+        assert under is not None and under.text() == _fleet_text(k, n), (
+            "the line is not the element directly under the run line"
+        )
+
+    def test_the_line_says_it_once_and_no_card_repeats_the_fact(self, client, isolated_db):
+        record = _store(pb.undecided_record())
+        panel = _panel(client)
+        for stored in record["entries"]:
+            card = pb.entry_node(panel, stored["symphony_id"])
+            assert "too few shared trading days" not in card.text(), stored["display_name"]
+            assert "are needed" not in card.text(), stored["display_name"]
+        assert panel.text().count("too few shared trading days") == 1
 
     def test_the_number_printed_is_the_one_the_review_derives(self, client, isolated_db):
         assert tenure_review._structural_needs_days() == NEEDED, "the oracle drifted"
-        _, _, card = _keep_card(client)
-        assert f"{NEEDED} are needed" in card.find("tenure-review-missing").text()
+        record = _store(pb.undecided_record())
+        assert pb.fleet_counts(record, NEEDED)[0] >= 1, "fixture sanity"
+        assert f"{NEEDED} are needed" in _fleet_lines(_panel(client))[0].text()
 
-    def test_the_missing_line_names_none_of_the_peers_nor_their_day_counts(
+    def test_a_different_derivation_prints_its_own_number(self, client, isolated_db, monkeypatch):
+        """Rejects a number typed into the template, the script or app.py: moving both floors the
+        review uses moves the printed number, and the cards still count as too short."""
+        import advisors.retirement_recommender as recommender
+
+        record = pb.undecided_record()  # built before the patch: the review itself reads it
+        larger = NEEDED + 500
+        monkeypatch.setattr(tenure_review, "_structural_needs_days", lambda: larger)
+        monkeypatch.setattr(recommender, "MIN_OBS_FLOOR", larger)
+        _store(record)
+        k, n = pb.fleet_counts(record, larger)
+        assert (k, n) == (10, 11), "fixture sanity: the same cards are short of the larger number"
+        lines = _fleet_lines(_panel(client))
+        assert [x.text() for x in lines] == [_fleet_text(k, n, larger)]
+
+    def test_a_review_of_eleven_with_exactly_one_too_few_days_card_reads_one_of_eleven(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_record()
+        kept = pb.undecided_id(pb.UNDECIDED_KEEP)
+        for stored in record["entries"]:
+            if stored["symphony_id"] != kept and "redundancy" in stored["missing_items"]:
+                _set_reason(stored, "this symphony has no composite")
+        k, n = pb.fleet_counts(record, NEEDED)
+        assert (k, n) == (1, 11), "fixture sanity"
+        _store(record)
+        panel = _expect_cards(client, record)
+        assert [x.text() for x in _fleet_lines(panel)] == [_fleet_text(1, 11)]
+
+    def test_three_too_few_days_cards_beside_two_no_result_cards_count_three(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_record()
+        listed = [e for e in record["entries"] if "redundancy" in e["missing_items"]]
+        for stored in listed[3:5]:
+            # a listed peer at exactly the days the review needs is a comparison that could run
+            _set_reason(stored, f"{_UNDECIDED_PREFIX}Peer ({NEEDED} aligned days)")
+        for stored in listed[5:]:
+            _set_reason(stored, "this symphony has no composite")
+        k, n = pb.fleet_counts(record, NEEDED)
+        assert (k, n) == (3, 11), "fixture sanity"
+        _store(record)
+        panel = _expect_cards(client, record)
+        assert [x.text() for x in _fleet_lines(panel)] == [_fleet_text(3, 11)]
+        for stored in listed[3:5]:
+            line = pb.entry_node(panel, stored["symphony_id"]).find("tenure-review-missing")
+            assert line.text().startswith(_NO_RESULT_LINE), stored["display_name"]
+
+    def test_no_card_whose_redundancy_reason_is_the_undecided_list_means_no_line(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_record()
+        for stored in record["entries"]:
+            if "redundancy" in stored["missing_items"]:
+                _set_reason(stored, "no same-basis peer has a composite")
+        assert pb.fleet_counts(record, NEEDED)[0] == 0, "fixture sanity"
+        _store(record)
+        panel = _expect_cards(client, record)
+        assert _fleet_lines(panel) == []
+        assert _FLEET_START not in panel.text()
+
+    def test_a_card_with_exactly_one_listed_peer_of_170_days_counts_in_k(self, client, isolated_db):
+        record = pb.undecided_record()
+        listed = [e for e in record["entries"] if "redundancy" in e["missing_items"]]
+        for stored in listed[1:]:
+            _set_reason(stored, "no same-basis peer has a composite")
+        _set_reason(listed[0], f"{_UNDECIDED_PREFIX}Lone Peer (170 aligned days)")
+        assert NEEDED > 170, "fixture sanity: 170 days are below the days the review needs"
+        _store(record)
+        panel = _expect_cards(client, record)
+        assert [x.text() for x in _fleet_lines(panel)] == [_fleet_text(1, 11)]
+
+    def test_the_line_is_absent_with_no_stored_review(self, client, isolated_db):
+        assert _fleet_lines(_panel(client)) == []
+
+
+class TestATooFewDaysCardNamesNoRedundancyEntryAndNoPeer:
+    """S-6.2, S-6.6, S-6.17: the card's missing line leaves the redundancy entry out and shows only
+    when another item is missing; no peer is named on the closed card."""
+
+    def test_a_card_whose_only_missing_item_is_a_too_few_days_redundancy_shows_no_missing_line(
         self, client, isolated_db
     ):
         record, stored, card = _keep_card(client)
-        text = card.find("tenure-review-missing").text()
-        for name, _days in pb.undecided_peers(stored):
-            assert name not in text, name
-        assert "aligned days" not in text
+        assert stored["missing_items"] == ["redundancy"] and pb.is_too_few_days(stored, NEEDED)
+        assert card.find("tenure-review-missing") is None
+        assert "missing:" not in card.text()
 
-    def test_the_list_of_peers_is_in_the_one_closed_disclosure_directly_after_the_line(
-        self, client, isolated_db
-    ):
-        record, stored, card = _keep_card(client)
-        disclosures = card.find_all(_UNDECIDED_TESTID)
-        assert len(disclosures) == 1, len(disclosures)
-        details = disclosures[0]
-        assert details.tag == "details" and "open" not in details.attrs, "it opens on load"
-        assert _summary_of(details).text() == _UNDECIDED_SUMMARY
-        assert _next_element(card.find("tenure-review-missing")) is details
-        body = details.text().replace(_UNDECIDED_SUMMARY, "", 1).strip()
-        assert body == stored["evidence"]["redundancy"]["reason"], body
-
-    def test_with_every_disclosure_closed_no_undecided_peer_is_visible_on_the_card(
+    def test_the_card_names_none_of_the_peers_nor_their_day_counts_while_closed(
         self, client, isolated_db
     ):
         record, stored, card = _keep_card(client)
@@ -6653,50 +6829,92 @@ class TestTheMissingLineStatesTheRedundancyOnceAndNamesNoPeer:
         for name, _days in pb.undecided_peers(stored):
             assert name not in visible, f"{name} shows on the closed card"
         assert "aligned days" not in visible
+        assert "tenure-review-undecided" not in _page(client)
+        assert _UNDECIDED_SUMMARY not in _page(client)
 
-    def test_an_entry_that_misses_two_items_lists_each_once_in_the_one_line(
+    def test_the_card_that_also_misses_the_backtest_lists_that_item_once_and_not_the_redundancy(
+        self, client, isolated_db
+    ):
+        record = _undecided_world()
+        sid = pb.undecided_id(pb.UNDECIDED_BACKTEST_GAP)
+        stored = pb.entry_of(record, sid)
+        assert stored["missing_items"] == ["redundancy", "backtest"], "fixture sanity"
+        assert pb.is_too_few_days(stored, NEEDED), "the card is counted in k"
+        card = pb.entry_node(_panel(client), sid)
+        backtest_reason = stored["evidence"]["backtest"]["reason"]
+        assert card.find("tenure-review-missing").text() == f"missing: backtest ({backtest_reason})"
+
+    def test_that_card_s_backtest_and_redundancy_cells_read_unavailable_with_no_reason(
         self, client, isolated_db
     ):
         record = _undecided_world()
         sid = pb.undecided_id(pb.UNDECIDED_BACKTEST_GAP)
         stored = pb.entry_of(record, sid)
         card = pb.entry_node(_panel(client), sid)
-        backtest_reason = stored["evidence"]["backtest"]["reason"]
-        assert card.find("tenure-review-missing").text() == (
-            f"{_NOT_DECIDED_LINE}; backtest ({backtest_reason})"
-        )
+        backtest = card.find("tenure-review-evidence-backtest")
+        assert _summary_of(backtest).text() == "Backtest unavailable"
+        assert stored["evidence"]["backtest"]["reason"] not in backtest.text()
+        assert _summary_of(_redundancy_cell(card)).text() == "Redundancy unavailable"
 
-    def test_the_backtest_cell_of_that_entry_reads_unavailable_with_no_reason(
+    def test_every_card_of_the_run_follows_the_rule_for_its_missing_line(self, client, isolated_db):
+        record = _undecided_world()
+        panel = _expect_cards(client, record)
+        assert len(panel.find_all("tenure-review-entry")) == 11
+        assert sum(1 for e in record["entries"] if pb.is_too_few_days(e, NEEDED)) == 10
+
+
+class TestTheStoredPeerListSitsOnceInsideTheRedundancyCellsDisclosure:
+    """S-6.2, S-6.3, S-6.17: the stored reason shows word for word, once, only inside the
+    Redundancy cell's closed disclosure, and the card carries no disclosure of its own for it."""
+
+    def test_the_cell_holds_the_stored_list_once_behind_its_closed_disclosure(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        cell = _redundancy_cell(card)
+        reason = stored["evidence"]["redundancy"]["reason"]
+        details = next(n for n in cell.walk() if n.tag == "details")
+        assert "open" not in details.attrs, "the cell opens on load"
+        assert cell.text().count(reason) == 1, "the stored list is not in the cell exactly once"
+        assert reason not in _summary_of(cell).text()
+        assert reason not in pb.visible_text(card), "the stored list shows while closed"
+        assert card.text().count(reason) == 1, "the stored list shows more than once on the card"
+
+    def test_every_card_with_an_undecided_list_keeps_it_in_its_own_cell_only(
+        self, client, isolated_db
+    ):
+        record = _undecided_world()
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            item = stored["evidence"]["redundancy"]
+            if not _reason_sits_in_the_cell(item):
+                continue
+            card = pb.entry_node(panel, stored["symphony_id"])
+            assert _cell_reason_problems(item, _redundancy_cell(card)) == [], stored["display_name"]
+            assert card.text().count(item["reason"]) == 1, stored["display_name"]
+            checked += 1
+        assert checked == 10
+
+    def test_the_cell_without_a_shown_pair_reads_unavailable_and_holds_the_list_once(
         self, client, isolated_db
     ):
         record = _undecided_world()
         sid = pb.undecided_id(pb.UNDECIDED_BACKTEST_GAP)
         stored = pb.entry_of(record, sid)
-        cell = pb.entry_node(_panel(client), sid).find("tenure-review-evidence-backtest")
-        assert _summary_of(cell).text() == "Backtest unavailable"
-        assert stored["evidence"]["backtest"]["reason"] not in cell.text()
+        assert stored["evidence"]["redundancy"]["pair"] is None, "fixture sanity"
+        cell = _redundancy_cell(pb.entry_node(_panel(client), sid))
+        assert _summary_of(cell).text() == "Redundancy unavailable"
+        assert [n.text() for n in _not_used_lines(cell)] == ["not used in the verdict"]
+        assert cell.text().count(stored["evidence"]["redundancy"]["reason"]) == 1
 
-    def test_every_card_of_the_run_follows_the_rule_and_carries_one_disclosure_each(
-        self, client, isolated_db
-    ):
-        record = _undecided_world()
+    def test_the_card_carries_no_separate_disclosure_for_the_list(self, client, isolated_db):
+        _undecided_world()
         panel = _panel(client)
-        undecided = checked = 0
-        for stored in record["entries"]:
-            card = pb.entry_node(panel, stored["symphony_id"])
-            redundancy = stored["evidence"]["redundancy"]
-            is_undecided = redundancy["status"] != "available" and redundancy.get(
-                "reason", ""
-            ).startswith(_UNDECIDED_PREFIX)
-            disclosures = card.find_all(_UNDECIDED_TESTID)
-            assert len(disclosures) == (1 if is_undecided else 0), stored["display_name"]
-            if is_undecided:
-                undecided += 1
-                assert "open" not in disclosures[0].attrs
-                missing = card.find("tenure-review-missing").text()
-                assert missing.startswith(_NOT_DECIDED_LINE), stored["display_name"]
-            checked += 1
-        assert checked == 11 and undecided == 10, (checked, undecided)
+        assert panel.find_all(_UNDECIDED_TESTID) == []
+        assert _UNDECIDED_SUMMARY not in panel.text()
+        summaries = [n.text() for n in panel.walk() if n.tag == "summary"]
+        assert _UNDECIDED_SUMMARY not in summaries
 
 
 class TestTheRedundancyCellOfAnItemTheLineNamesCarriesNoReason:
@@ -6711,16 +6929,18 @@ class TestTheRedundancyCellOfAnItemTheLineNamesCarriesNoReason:
         lines = _not_used_lines(_redundancy_cell(card))
         assert [n.text() for n in lines] == ["not used in the verdict"]
 
-    def test_the_cell_holds_none_of_the_stored_reason_and_none_of_the_other_peers(
+    def test_the_other_peers_are_named_only_inside_the_one_stored_list_of_the_cell(
         self, client, isolated_db
     ):
         record, stored, card = _keep_card(client)
-        cell = _redundancy_cell(card).text()
+        cell = _redundancy_cell(card)
+        reason = stored["evidence"]["redundancy"]["reason"]
         sibling = stored["evidence"]["redundancy"]["pair"]["sibling_name"]
-        assert "comparison decides nothing" not in cell
+        assert cell.text().count(reason) == 1
+        without_list = cell.text().replace(reason, " ")
         for name, _days in pb.undecided_peers(stored):
             if name != sibling:
-                assert name not in cell, name
+                assert name not in without_list, f"{name} is named outside the stored list"
 
     def test_the_shown_pair_still_names_its_sibling_with_its_figures(self, client, isolated_db):
         record, stored, card = _keep_card(client)
@@ -6740,40 +6960,49 @@ class TestTheRedundancyCellOfAnItemTheLineNamesCarriesNoReason:
         assert stored["evidence"]["redundancy"]["pair"] is None, "fixture sanity"
         assert _summary_of(cell).text() == "Redundancy unavailable"
         assert [n.text() for n in _not_used_lines(cell)] == ["not used in the verdict"]
+        reason = stored["evidence"]["redundancy"]["reason"]
+        assert cell.text().count(reason) == 1
         for name, _days in pb.undecided_peers(stored):
-            assert name not in cell.text(), name
+            assert name not in cell.text().replace(reason, " "), name
+            assert name not in pb.visible_text(cell), name
 
 
-class TestTheLineReadsItsTwoFormsFromTheStoredCounts:
+def _assert_fleet_line(panel: pb.Node, record: dict, needed: int = NEEDED) -> None:
+    """The fleet line is exactly the one the oracle counts, or absent when no card is too short."""
+    k, n = pb.fleet_counts(record, needed)
+    assert [x.text() for x in _fleet_lines(panel)] == ([_fleet_text(k, n, needed)] if k else [])
+
+
+class TestTheCardAndTheFleetLineReadTheFormTheStoredCountsCallFor:
     @pytest.mark.parametrize(
         ("kind", "first_entry_form"),
         [
-            ("single_peer", _NOT_DECIDED_LINE),
-            ("hostile_name", _NOT_DECIDED_LINE),
-            ("uncertainty_undefined", _NO_RESULT_LINE),
-            ("structural_undefined", _NO_RESULT_LINE),
-            ("hostile_name_with_count", _NO_RESULT_LINE),
+            ("single_peer", "too_few"),
+            ("hostile_name", "too_few"),
+            ("uncertainty_undefined", "no_result"),
+            ("structural_undefined", "no_result"),
+            ("hostile_name_with_count", "no_result"),
         ],
     )
     def test_each_edge_record_reads_the_form_its_stored_peers_call_for(
         self, client, isolated_db, kind, first_entry_form
     ):
-        record = pb.undecided_edge_record(kind)
-        pb.seed_roster_state(record)
-        pb.store_run(record)
-        panel = _panel(client)
-        for position, stored in enumerate(record["entries"]):
-            reason = stored["evidence"]["redundancy"]["reason"]
-            expected = "missing: redundancy (" + pb.expected_redundancy_phrase(reason, NEEDED) + ")"
-            if position == 0:
-                assert expected == first_entry_form, "the oracle and the case disagree"
-            card = pb.entry_node(panel, stored["symphony_id"])
-            assert card.find("tenure-review-missing").text().startswith(expected), (
-                kind,
-                stored["display_name"],
-            )
+        record = _store(pb.undecided_edge_record(kind))
+        reason = record["entries"][0]["evidence"]["redundancy"]["reason"]
+        assert pb.redundancy_form(reason, NEEDED) == first_entry_form, (
+            "the oracle and the case disagree"
+        )
+        panel = _expect_cards(client, record)
+        _assert_fleet_line(panel, record)
+        # a no-result card says so in its own line; a too-few-days card is the fleet line's
+        for stored in record["entries"]:
+            line = pb.entry_node(panel, stored["symphony_id"]).find("tenure-review-missing")
+            has_entry = line is not None and "redundancy (" in line.text()
+            form = pb.redundancy_form(stored["evidence"]["redundancy"].get("reason"), NEEDED)
+            if "redundancy" in stored["missing_items"]:
+                assert has_entry == (form != "too_few"), (kind, stored["display_name"])
 
-    def test_a_hostile_peer_name_shows_only_inside_the_disclosure_and_is_escaped(
+    def test_a_hostile_peer_name_shows_only_inside_the_cells_disclosure_and_is_escaped(
         self, client, isolated_db
     ):
         record = pb.undecided_edge_record("hostile_name")
@@ -6781,45 +7010,66 @@ class TestTheLineReadsItsTwoFormsFromTheStoredCounts:
         for stored in record["entries"]:
             item = stored["evidence"]["redundancy"]
             item["reason"] = item["reason"].replace(pb.HOSTILE_NAME_NO_COUNT, marked)
-        pb.seed_roster_state(record)
-        pb.store_run(record)
+        _store(record)
         body = _page(client)
         assert '<img src=x onerror="alert(1)">' not in body, "a stored name reached the page raw"
-        card = pb.entry_node(pb.panel_of(body), pb.undecided_edge_id("hostile_name", 0))
+        panel = pb.panel_of(body)
+        card = pb.entry_node(panel, pb.undecided_edge_id("hostile_name", 0))
         assert "Harbor" not in pb.visible_text(card)
-        assert "Harbor" in card.find(_UNDECIDED_TESTID).text()
-        assert card.find("tenure-review-missing").text().startswith(_NOT_DECIDED_LINE)
+        assert "Harbor" in _redundancy_cell(card).text()
+        assert pb.is_too_few_days(
+            pb.entry_of(record, pb.undecided_edge_id("hostile_name", 0)), NEEDED
+        )
+        line = card.find("tenure-review-missing")
+        assert line is None or "redundancy (" not in line.text()
 
     @pytest.mark.parametrize("peer_count", [1, 2, 3])
-    def test_a_stored_reason_that_names_a_peer_at_the_needed_days_alone_reads_the_second_form(
+    def test_a_stored_reason_that_names_a_peer_at_the_needed_days_alone_reads_the_no_result_form(
         self, client, isolated_db, peer_count
     ):
         record = pb.undecided_edge_record("single_peer")
         victim = pb.entry_of(record, pb.undecided_edge_id("single_peer", 0))
         peers = [f"Peer {i} ({NEEDED} aligned days)" for i in range(peer_count)]
-        victim["evidence"]["redundancy"]["reason"] = _UNDECIDED_PREFIX + ", ".join(peers)
-        pb.seed_roster_state(record)
-        pb.store_run(record)
-        card = pb.entry_node(_panel(client), victim["symphony_id"])
+        _set_reason(victim, _UNDECIDED_PREFIX + ", ".join(peers))
+        _store(record)
+        panel = _expect_cards(client, record)
+        card = pb.entry_node(panel, victim["symphony_id"])
+        assert not pb.is_too_few_days(victim, NEEDED), "fixture sanity"
         assert card.find("tenure-review-missing").text().startswith(_NO_RESULT_LINE)
+        _assert_fleet_line(panel, record)
 
-    def test_one_peer_one_day_below_the_needed_days_still_reads_the_first_form(
+    def test_one_peer_one_day_below_the_needed_days_is_still_too_few_days(
         self, client, isolated_db
     ):
         record = pb.undecided_edge_record("single_peer")
         victim = pb.entry_of(record, pb.undecided_edge_id("single_peer", 0))
-        victim["evidence"]["redundancy"]["reason"] = (
-            f"{_UNDECIDED_PREFIX}Peer ({NEEDED - 1} aligned days)"
-        )
-        pb.seed_roster_state(record)
-        pb.store_run(record)
-        card = pb.entry_node(_panel(client), victim["symphony_id"])
-        assert card.find("tenure-review-missing").text().startswith(_NOT_DECIDED_LINE)
+        _set_reason(victim, f"{_UNDECIDED_PREFIX}Peer ({NEEDED - 1} aligned days)")
+        _store(record)
+        panel = _expect_cards(client, record)
+        assert pb.is_too_few_days(victim, NEEDED), "fixture sanity"
+        _assert_fleet_line(panel, record)
+        card = pb.entry_node(panel, victim["symphony_id"])
+        line = card.find("tenure-review-missing")
+        assert line is None or "redundancy (" not in line.text()
+
+    @pytest.mark.parametrize("suffix", ["uncertainty gate undefined", "structural gate undefined"])
+    def test_a_listed_peer_with_a_gate_suffix_makes_the_card_a_no_result_card(
+        self, client, isolated_db, suffix
+    ):
+        record = pb.undecided_edge_record("single_peer")
+        victim = pb.entry_of(record, pb.undecided_edge_id("single_peer", 0))
+        _set_reason(victim, f"{_UNDECIDED_PREFIX}Peer ({NEEDED - 1} aligned days, {suffix})")
+        _store(record)
+        panel = _expect_cards(client, record)
+        assert not pb.is_too_few_days(victim, NEEDED), "fixture sanity"
+        card = pb.entry_node(panel, victim["symphony_id"])
+        assert card.find("tenure-review-missing").text().startswith(_NO_RESULT_LINE)
+        _assert_fleet_line(panel, record)
 
 
-class TestTheResolverFailingFallsBackToTheSecondFormWithNoNumber:
+class TestTheResolverFailingLeavesNoFleetLineAndEveryCardInTheNoResultForm:
     @pytest.mark.parametrize("failure", ["raises", "never reachable"])
-    def test_the_line_reads_the_no_result_form_and_prints_no_number(
+    def test_no_line_shows_and_each_undecided_card_reads_the_no_result_form_with_no_number(
         self, client, isolated_db, monkeypatch, failure
     ):
         record = pb.undecided_record()  # built before the patch: the review itself reads it
@@ -6833,10 +7083,16 @@ class TestTheResolverFailingFallsBackToTheSecondFormWithNoNumber:
             raising if failure == "raises" else (lambda: sys.maxsize),
         )
         _, _, card = _keep_card(client, record)
+        panel = _panel(client)
+        assert _fleet_lines(panel) == [] and _FLEET_START not in panel.text()
         line = card.find("tenure-review-missing").text()
         assert line == _NO_RESULT_LINE, line
         assert not re.search(r"\d", line), line
         assert str(sys.maxsize) not in _page(client)
+        for stored in record["entries"]:
+            if "redundancy" in stored["missing_items"]:
+                text = pb.entry_node(panel, stored["symphony_id"]).find("tenure-review-missing")
+                assert text.text().startswith(_NO_RESULT_LINE), stored["display_name"]
 
     def test_the_slot_reads_the_value_the_review_uses_and_none_when_it_cannot(self, monkeypatch):
         got = app_module._page_copy_values(["redundancy_needs_days"])
@@ -7189,21 +7445,225 @@ class TestTheMissingLineWhenTheStoredListIsAbsentOrWrong:
         assert card.find(_UNDECIDED_TESTID) is None
 
 
-class TestTheDisclosureFollowsARunThatIsStoredAgain:
-    def test_after_a_second_stored_run_every_card_follows_the_rule_and_every_disclosure_is_closed(
+class TestTheLineAndTheCellsFollowARunThatIsStoredAgain:
+    def test_after_a_second_stored_run_the_line_counts_the_new_run_and_every_cell_is_closed(
         self, client, isolated_db
     ):
         first = pb.undecided_record(pb.RUN_ID_FIRST)
         pb.seed_roster_state(first)
         pb.store_run(first)
         second = pb.undecided_record(pb.RUN_ID_SECOND, trigger="manual")
+        for stored in second["entries"][3:]:
+            if "redundancy" in stored["missing_items"]:
+                _set_reason(stored, "this symphony has no composite")
         pb.store_run(second)
-        panel = _panel(client)
+        k, n = pb.fleet_counts(second, NEEDED)
+        assert (k, n) == (3, 11), "fixture sanity: the new run differs from the first"
+        panel = _expect_cards(client, second)
+        assert [x.text() for x in _fleet_lines(panel)] == [_fleet_text(3, 11)]
         assert len(panel.find_all("tenure-review-entry")) == 11
-        disclosures = panel.find_all(_UNDECIDED_TESTID)
-        assert len(disclosures) == 10
-        assert all("open" not in d.attrs for d in disclosures)
-        for stored in second["entries"]:
-            if stored["missing_items"]:
-                card = pb.entry_node(panel, stored["symphony_id"])
-                assert card.find("tenure-review-missing").text().startswith(_NOT_DECIDED_LINE)
+        for cell in panel.find_all("tenure-review-evidence-redundancy"):
+            details = next(n for n in cell.walk() if n.tag == "details")
+            assert "open" not in details.attrs
+
+
+# ===========================================================================
+# The summary of an available Marginal contribution, Backtest or Composite score cell headlines the
+# item's own figure: the symphony's total return difference, the backtest's total return gap and the
+# composite with its scale and population, the word "normalized" once. Every other figure of the cell
+# stays inside its disclosure with its wording and value as stored, each figure shown once.
+# ===========================================================================
+
+
+def _figure_lines(block: pb.Node, name: str) -> list[pb.Node]:
+    """The elements of a cell that print one stored figure (its words, a colon, its value)."""
+    label = name.replace("_", " ") + ":"
+    return [n for n in pb.leaf_nodes_containing(block, label) if n.text().startswith(label)]
+
+
+def _inside(node: pb.Node, other: pb.Node) -> bool:
+    return node is other or node.is_inside(other)
+
+
+def _figure_shown(line: pb.Node, name: str, figure: dict) -> bool:
+    """The line prints the stored value as the panel prints it; a figure the record could not
+    compute has no value to print."""
+    value = figure.get("value")
+    return True if value is None else _shows(line, _printed_figure(name, value))
+
+
+def _available_cards(record: dict, item_name: str) -> list[dict]:
+    return [e for e in record["entries"] if e["evidence"][item_name]["status"] == "available"]
+
+
+class TestTheMarginalSummaryHeadlinesTheSymphonysOwnFigure:
+    def test_the_summary_headlines_the_total_return_difference_and_not_the_portfolios_figure(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        item = stored["evidence"]["marginal"]
+        assert item["status"] == "available", "fixture sanity"
+        cell = card.find("tenure-review-evidence-marginal")
+        summary = _summary_of(cell)
+        headline = _figure_lines(summary, "total_return_difference")
+        assert len(headline) == 1, summary.text()
+        assert _shows(headline[0], item["figures"]["total_return_difference"]["value"])
+        assert "with total return" not in summary.text(), "the portfolio's figure is the headline"
+
+    def test_the_portfolios_figure_and_every_other_figure_sit_in_the_disclosure_once(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        item = stored["evidence"]["marginal"]
+        cell = card.find("tenure-review-evidence-marginal")
+        summary = _summary_of(cell)
+        for name, figure in item["figures"].items():
+            lines = _figure_lines(cell, name)
+            assert len(lines) == 1, f"{name} shows {len(lines)} times in the cell"
+            assert _figure_shown(lines[0], name, figure), name
+            assert (name == "total_return_difference") == _inside(lines[0], summary), name
+
+    def test_a_difference_that_is_not_computable_is_the_headline_in_the_form_the_cell_prints(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_record()
+        keep = pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_KEEP))
+        reason = "no day of the symphony's own return lay in the window"
+        keep["evidence"]["marginal"]["figures"]["total_return_difference"] = {
+            "value": None,
+            "unit": "percentage points",
+            "reason": reason,
+        }
+        _, _, card = _keep_card(client, record)
+        summary = _summary_of(card.find("tenure-review-evidence-marginal"))
+        headline = _figure_lines(summary, "total_return_difference")
+        assert [n.text() for n in headline] == [
+            f"total return difference: not computable, {reason}"
+        ]
+        assert "with total return" not in summary.text(), "another figure took its place"
+
+    def test_a_difference_the_record_does_not_hold_reads_not_recorded_in_the_headline(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_record()
+        keep = pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_KEEP))
+        del keep["evidence"]["marginal"]["figures"]["total_return_difference"]
+        _, _, card = _keep_card(client, record)
+        summary = _summary_of(card.find("tenure-review-evidence-marginal"))
+        assert [n.text() for n in _figure_lines(summary, "total_return_difference")] == [
+            "total return difference: not recorded"
+        ]
+        assert "with total return" not in summary.text()
+
+
+class TestTheBacktestSummaryHeadlinesTheBacktestsOwnFigure:
+    def test_the_summary_headlines_the_total_return_gap_and_not_the_realized_return(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        item = stored["evidence"]["backtest"]
+        assert item["status"] == "available", "fixture sanity"
+        summary = _summary_of(card.find("tenure-review-evidence-backtest"))
+        headline = _figure_lines(summary, "total_return_gap")
+        assert len(headline) == 1, summary.text()
+        assert _shows(headline[0], item["figures"]["total_return_gap"]["value"])
+        assert "realized total return" not in summary.text()
+
+    def test_the_realized_return_and_every_other_figure_sit_in_the_disclosure_once(
+        self, client, isolated_db
+    ):
+        record, stored, card = _keep_card(client)
+        item = stored["evidence"]["backtest"]
+        cell = card.find("tenure-review-evidence-backtest")
+        summary = _summary_of(cell)
+        for name, figure in item["figures"].items():
+            lines = _figure_lines(cell, name)
+            assert len(lines) == 1, f"{name} shows {len(lines)} times in the cell"
+            assert _figure_shown(lines[0], name, figure), name
+            assert (name == "total_return_gap") == _inside(lines[0], summary), name
+
+    def test_a_gap_the_record_does_not_hold_reads_not_recorded_in_the_headline(
+        self, client, isolated_db
+    ):
+        record = pb.undecided_record()
+        keep = pb.entry_of(record, pb.undecided_id(pb.UNDECIDED_KEEP))
+        del keep["evidence"]["backtest"]["figures"]["total_return_gap"]
+        _, _, card = _keep_card(client, record)
+        summary = _summary_of(card.find("tenure-review-evidence-backtest"))
+        assert [n.text() for n in _figure_lines(summary, "total_return_gap")] == [
+            "total return gap: not recorded"
+        ]
+        assert "realized total return" not in summary.text()
+
+
+class TestTheCompositeSummarySaysNormalizedOnce:
+    def test_the_summary_holds_the_value_the_scale_and_the_population_and_normalized_once(
+        self, client, isolated_db
+    ):
+        record = _undecided_world()
+        panel = _panel(client)
+        checked = 0
+        for stored in _available_cards(record, "composite"):
+            item = stored["evidence"]["composite"]
+            summary = _summary_of(
+                pb.entry_node(panel, stored["symphony_id"]).find("tenure-review-evidence-composite")
+            )
+            text = summary.text()
+            population = item["population_size"]
+            where = stored["display_name"]
+            assert _shows(summary, item["figures"]["composite"]["value"]), where
+            assert "0 to 1" in text, where
+            assert f"{population} {'symphony' if population == 1 else 'symphonies'}" in text, where
+            assert text.lower().count("normalized") == 1, f"{where}: {text!r}"
+            checked += 1
+        assert checked >= 5
+
+    def test_the_cell_prints_the_composite_once(self, client, isolated_db):
+        record = _undecided_world()
+        panel = _panel(client)
+        for stored in _available_cards(record, "composite"):
+            cell = pb.entry_node(panel, stored["symphony_id"]).find(
+                "tenure-review-evidence-composite"
+            )
+            assert len(_figure_lines(cell, "composite")) == 1, stored["display_name"]
+
+
+class TestEveryFigureTheThreeCellsShowedStillShowsOnce:
+    @pytest.mark.parametrize("which", ["undecided", "full", "small"])
+    def test_each_stored_figure_of_each_available_cell_shows_once_with_its_value(
+        self, client, isolated_db, which
+    ):
+        record = _undecided_world() if which == "undecided" else _store_record(which)
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            card = pb.entry_node(panel, stored["symphony_id"])
+            for name in ("marginal", "backtest", "composite"):
+                item = stored["evidence"][name]
+                if item["status"] != "available":
+                    continue
+                cell = card.find(f"tenure-review-evidence-{name}")
+                for fig_name, figure in item["figures"].items():
+                    lines = _figure_lines(cell, fig_name)
+                    where = f"{which} / {stored['display_name']} / {name} / {fig_name}"
+                    assert len(lines) == 1, where
+                    assert _figure_shown(lines[0], fig_name, figure), where
+                    checked += 1
+        assert checked >= 12
+
+    @pytest.mark.parametrize("name", ["performance", "long_vix"])
+    def test_the_other_available_cells_keep_their_first_figure_as_the_headline(
+        self, client, isolated_db, name
+    ):
+        record = _undecided_world()
+        panel = _panel(client)
+        checked = 0
+        for stored in _available_cards(record, name):
+            item = stored["evidence"][name]
+            cell = pb.entry_node(panel, stored["symphony_id"]).find(
+                f"tenure-review-evidence-{name}"
+            )
+            first = next(iter(item["figures"]))
+            assert first.replace("_", " ") in _summary_of(cell).text(), stored["display_name"]
+            checked += 1
+        assert checked >= 1

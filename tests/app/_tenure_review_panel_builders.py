@@ -859,6 +859,72 @@ def expected_redundancy_phrase(reason: str, needed: int | None) -> str:
     return NOT_DECIDED_PHRASE.format(n=needed) if decided_short else NO_RESULT_PHRASE
 
 
+def redundancy_form(reason, needed: int | None) -> str:
+    """How a stored redundancy reason reads on a card, written from the plan's rule and independent
+    of the page code:
+
+    * ``as_stored``: the reason is not the undecided-peer list (it begins otherwise, or is not text);
+    * ``too_few``: the list, with N readable, at least one stated count, every count below N and no
+      peer carrying a gate suffix: the fleet line says it, the card's missing line does not;
+    * ``no_result``: any other undecided-peer list: the card's missing line says no comparison
+      reached a result, with no number.
+    """
+    if not isinstance(reason, str) or not reason.startswith(tr._UNDECIDED_PREFIX):
+        return "as_stored"
+    found = _COUNT_AND_SUFFIX.findall(reason)
+    short = (
+        needed is not None
+        and bool(found)
+        and all(int(days) < needed and not suffix for days, suffix in found)
+    )
+    return "too_few" if short else "no_result"
+
+
+def is_too_few_days(stored: dict, needed: int | None) -> bool:
+    """A card is too-few-days when redundancy is in its stored missing list and its redundancy
+    reason reads ``too_few`` (the fleet line counts it, its missing line drops the entry)."""
+    missing = stored.get("missing_items")
+    if not isinstance(missing, list) or "redundancy" not in missing:
+        return False
+    item = stored.get("evidence", {}).get("redundancy")
+    reason = item.get("reason") if isinstance(item, dict) else None
+    return redundancy_form(reason, needed) == "too_few"
+
+
+def listed_missing_entries(stored: dict, needed: int | None) -> list[str]:
+    """The entries a card's missing line carries, in the stored order: each item the stored list
+    names as ``name words (reason)``, apart from a too-few-days redundancy item. A redundancy item
+    in the undecided-peer form reads the no-result phrase; a not applicable item says so first."""
+    entries = []
+    for name in stored["missing_items"]:
+        item = stored["evidence"][name]
+        if name == "redundancy":
+            form = redundancy_form(item.get("reason"), needed)
+            if form == "too_few":
+                continue
+            shown = NO_RESULT_PHRASE if form == "no_result" else item["reason"]
+        else:
+            shown = item["reason"]
+        if item["status"] == "not_applicable":
+            shown = f"not applicable: {shown}"
+        entries.append(f"{name.replace('_', ' ')} ({shown})")
+    return entries
+
+
+def expected_missing_line(stored: dict, needed: int | None) -> str | None:
+    """The whole missing line of a card, or None when the card shows none (nothing is stored as
+    missing, or the only missing item is a too-few-days redundancy)."""
+    entries = listed_missing_entries(stored, needed)
+    return "missing: " + "; ".join(entries) if entries else None
+
+
+def fleet_counts(record: dict, needed: int | None) -> tuple[int, int]:
+    """(k, n) of the line under the tenure run line: the cards that are too-few-days, and every
+    tenure card of the stored review."""
+    entries = record["entries"]
+    return sum(1 for e in entries if is_too_few_days(e, needed)), len(entries)
+
+
 def structural_gate_days() -> int:
     """The fewest aligned days the structural gate needs, from the oracle written from the
     recommender's stated fraction and minimum, never from the module under test."""

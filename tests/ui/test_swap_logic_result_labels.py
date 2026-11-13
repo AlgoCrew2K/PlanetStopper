@@ -97,6 +97,84 @@ def test_the_baseline_and_variant_labels_of_every_result_card_name_their_glossar
     assert [line for line in copy_fixture.glossary(case["host"]) if line["key"] == case["key"]]
 
 
+def _logic_results_with_guidance(monkeypatch, guidance, *, drop: bool = False) -> list:
+    """The cards the Logic Changes script writes over the real route's body with every card's apply
+    guidance replaced (the one named edit), or the key removed when ``drop``."""
+    case = LOGIC
+    response = answers.logic_response(monkeypatch)
+    spec = answer(response)
+    cards = list(spec["json"].get("survivors_detail") or []) + list(
+        spec["json"].get("rejected_detail") or []
+    )
+    assert cards, "premise: the real route returned a card"
+    for card in cards:
+        if drop:
+            card.pop("apply_guidance", None)
+        else:
+            card["apply_guidance"] = guidance
+    run = run_page(
+        render_page("/ai-advisor"),
+        "await H.boot();\n"
+        f"{{ {case['setup']} }}\n"
+        f"{case['click']}\n"
+        "await H.advance(100);\n"
+        f"return H.$('{case['results']}').innerHTML;",
+        routes=[route(case["url"], spec, method="POST")],
+        pathname="/ai-advisor",
+    )
+    return soup(run.result).select(".sym-card")
+
+
+def _apply_text(card) -> str | None:
+    node = card.select_one('[data-testid="apply-guidance"]')
+    return " ".join(node.get_text(" ").split()) if node is not None else None
+
+
+@pytest.mark.parametrize("name", list(CASES))
+def test_a_result_card_whose_guidance_begins_to_apply_says_it_once(name, monkeypatch):
+    """S-3.15: the engine's own guidance begins "To apply:"; the card must not put a second label
+    before it (the Logic Changes card did; the Asset Swaps card strips it, and stays so). Rejects a
+    bold label printed ahead of text that already carries it."""
+    response = _response(name, monkeypatch)
+    cards = list(response.get_json().get("survivors_detail") or []) + list(
+        response.get_json().get("rejected_detail") or []
+    )
+    guidance = cards[0]["apply_guidance"]
+    assert guidance.startswith("To apply:"), "premise: the engine writes its own label"
+    shown = _results_html(CASES[name], response)
+    nodes = soup(shown).select('[data-testid="apply-guidance"], .apply-guidance')
+    assert nodes, "premise: the card prints its guidance"
+    rest = guidance[len("To apply:") :].strip()
+    for node in nodes:
+        text = " ".join(node.get_text(" ").split())
+        assert text.count("To apply:") == 1, text
+        assert text == f"To apply: {' '.join(rest.split())}", text
+
+
+@pytest.mark.parametrize(
+    "guidance",
+    ["open Composer and widen the lookback", "Open Composer; to apply: widen it by hand"],
+    ids=["plain guidance", "a later to apply inside the text"],
+)
+def test_guidance_that_does_not_begin_to_apply_gets_the_label_once_before_it(monkeypatch, guidance):
+    """S-3.16: a guidance without its own label is printed after one "To apply:"."""
+    cards = _logic_results_with_guidance(monkeypatch, guidance)
+    assert cards
+    for card in cards:
+        text = _apply_text(card)
+        assert text == f"To apply: {guidance}", text
+
+
+@pytest.mark.parametrize("guidance", ["", None])
+def test_empty_or_absent_guidance_prints_no_apply_line(monkeypatch, guidance):
+    """S-3.16: no apply line at all when there is nothing to apply (as at the reference)."""
+    cards = _logic_results_with_guidance(monkeypatch, guidance, drop=guidance is None)
+    assert cards
+    for card in cards:
+        assert _apply_text(card) is None
+        assert "To apply" not in card.get_text(" ")
+
+
 @pytest.mark.parametrize("name", list(CASES))
 def test_the_figure_rows_of_a_result_card_keep_their_labels_and_order(name, monkeypatch):
     case = CASES[name]

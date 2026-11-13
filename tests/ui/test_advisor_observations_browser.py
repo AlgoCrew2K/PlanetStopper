@@ -156,6 +156,95 @@ def test_the_retirement_row_is_the_last_line_and_its_open_tab_link_is_its_last_c
     assert all(r["last"].strip() == "History" for r in rows[:-1]), rows
 
 
+_RATIONALE_WIDTH_JS = """() => {
+  const el = document.querySelector('[data-testid="prism-rationale"]');
+  const ruler = el.cloneNode(false);
+  ruler.removeAttribute('data-testid');
+  ruler.textContent = '0';
+  ruler.style.cssText = 'position:absolute;visibility:hidden;width:110ch;max-width:none;';
+  el.parentElement.appendChild(ruler);
+  const cap = ruler.getBoundingClientRect().width;
+  ruler.remove();
+  const box = el.getBoundingClientRect();
+  const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
+  return { width: box.width, cap, lines: Math.round(box.height / lineHeight),
+           characters: el.textContent.trim().length };
+}"""
+
+
+@pytest.mark.parametrize("width", [1920, 2560])
+def test_a_long_prism_rationale_is_no_wider_than_110_characters_of_its_own_font(
+    advisor_probe, width
+):
+    """S-2.25 (G-46): the rationale reads in a column of at most 110 characters, not across the
+    whole panel (the reference ran 258 characters a line at 1920). The stored text is the producer's
+    own rationale repeated past 1000 characters, the one named edit."""
+    from tests._advisor_overview_prism import prism_raw_response
+
+    raw = prism_raw_response()
+    sentence = raw["sentiment_rationale"].strip()
+    raw["sentiment_rationale"] = " ".join([sentence] * (1100 // max(len(sentence), 1) + 2))
+    assert len(raw["sentiment_rationale"]) > 1000, "premise: a rationale past 1000 characters"
+    database.insert_advisor_observation(
+        advisor_role="MARKET_PRISM",
+        subject_type="portfolio",
+        subject_id="global",
+        verdict=raw["overall_sentiment"],
+        raw_response=raw,
+    )
+    advisor_probe.page.set_viewport_size(al.viewport(width))
+    open_advisor(advisor_probe)
+    advisor_probe.page.wait_for_selector('[data-testid="prism-rationale"]', state="visible")
+    advisor_probe.page.evaluate("() => document.fonts.ready.then(() => true)")
+    read = advisor_probe.page.evaluate(_RATIONALE_WIDTH_JS)
+    assert read["characters"] > 1000, read
+    assert read["width"] <= read["cap"] + 1, (
+        f"the rationale is {read['width']:.0f} px, cap {read['cap']:.0f}"
+    )
+    assert read["lines"] >= 8, f"the capped rationale wraps to several lines: {read}"
+    assert advisor_probe.page_errors == [], advisor_probe.page_errors
+
+
+# Where the arrow of the Open tab link ends and where its text starts, read as the page paints them:
+# the link's own left edge plus the advance of the arrow glyph in the link's font is where the arrow
+# ends (it is the first thing in the link, left aligned), and the first text node's box is where the
+# words start.
+_ARROW_GAP_JS = """(selector) => {
+  const link = document.querySelector(selector);
+  const before = getComputedStyle(link, '::before');
+  const text = [...link.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+  const range = document.createRange();
+  range.selectNodeContents(text);
+  const words = range.getClientRects()[0];
+  const probe = document.createElement('span');
+  probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:' + before.font;
+  probe.textContent = '\\u2192';
+  document.body.appendChild(probe);
+  const arrowWidth = probe.getBoundingClientRect().width;
+  probe.remove();
+  const box = link.getBoundingClientRect();
+  const start = box.left + link.clientLeft + parseFloat(getComputedStyle(link).paddingLeft)
+                + parseFloat(before.marginLeft || 0);
+  return { content: before.content, gap: words.left - (start + arrowWidth),
+           words: link.textContent.trim() };
+}"""
+
+
+@pytest.mark.parametrize("width", [1920, 1440])
+def test_the_open_tab_arrow_ends_four_to_eight_px_before_its_words(advisor_probe, width):
+    """S-2.26 (G-53): the arrow is set apart from "Open tab" by a normal gap. Rejects the flush
+    arrow of the reference (its box is exactly the glyph's advance) and one pushed far from the
+    words."""
+    _seed_lines()
+    _open_lines(advisor_probe, width)
+    read = advisor_probe.page.evaluate(
+        _ARROW_GAP_JS, '.obs-producer[data-role="RETIREMENT"] [data-testid="retirement-pointer"]'
+    )
+    assert "Open tab" in read["words"], read
+    assert 4 - 0.5 <= read["gap"] <= 8 + 0.5, f"the arrow ends {read['gap']:.1f} px before the text"
+    assert advisor_probe.page_errors == [], advisor_probe.page_errors
+
+
 @pytest.mark.parametrize("width", [1920, 1440])
 def test_the_lines_columns_sit_close_enough_to_read_across(advisor_probe, width):
     _seed_lines()
@@ -170,6 +259,75 @@ def test_the_lines_columns_sit_close_enough_to_read_across(advisor_probe, width)
     }
     result = al.measure(advisor_probe.page, al.COLUMN_GAPS_JS, spec)
     assert result["violations"] == [], result["violations"]
+
+
+# The content edges of the observations section, the opened history's table and how many lines each
+# symphony name of that table takes.
+_HISTORY_FIT_JS = """() => {
+  const section = document.querySelector('[data-testid="advisor-observations-section"]');
+  const cs = getComputedStyle(section);
+  const r = section.getBoundingClientRect();
+  const content = {
+    left: r.left + section.clientLeft + parseFloat(cs.paddingLeft),
+    right: r.right - (section.offsetWidth - section.clientWidth - section.clientLeft)
+           - parseFloat(cs.paddingRight),
+  };
+  const table = section.querySelector('details[open] table.obs-table');
+  const t = table.getBoundingClientRect();
+  const linesOf = (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return new Set([...range.getClientRects()].filter((x) => x.width > 0)
+      .map((x) => Math.round(x.top))).size;
+  };
+  const names = [...table.querySelectorAll('td.obs-symphony')].map(linesOf);
+  return { content, table: { left: t.left, right: t.right }, names };
+}"""
+
+
+def _offsets_of_the_lines(probe) -> list[dict]:
+    return probe.page.evaluate(
+        """() => [...document.querySelectorAll('.obs-producer')].map((row) => {
+          const left = row.getBoundingClientRect().left;
+          const at = (sel) => {
+            const el = row.querySelector(sel);
+            return el && el.getClientRects().length ? el.getBoundingClientRect().left - left : null;
+          };
+          return { role: row.getAttribute('data-role'), label: at('.obs-producer-label'),
+                   verdict: at('.obs-producer-verdict'), time: at('.obs-producer-time'),
+                   last: at('.obs-history-toggle, [data-testid="retirement-pointer"]') };
+        })"""
+    )
+
+
+@pytest.mark.parametrize("width", [1920, 1440])
+def test_an_open_history_spans_the_observations_section_and_no_line_moves(advisor_probe, width):
+    """S-1.22 (G-42): the opened history's table has the section's content edges, no symphony name
+    in it takes three lines at 1920, and every line (the opened one and the Retirement row
+    included) starts each field where it did with the history closed. Rejects a history squeezed
+    into the line grid's columns (the reference table sat at 52..932 inside a 28..1892 panel)."""
+    _seed_lines()
+    _open_lines(advisor_probe, width)
+    closed = _offsets_of_the_lines(advisor_probe)
+    advisor_probe.page.locator(_HISTORY.format(role=_OC)).locator("summary").first.click()
+    advisor_probe.page.wait_for_timeout(200)
+    read = advisor_probe.page.evaluate(_HISTORY_FIT_JS)
+    assert read["names"], "premise: the open history lists observations with a symphony"
+    assert abs(read["table"]["left"] - read["content"]["left"]) <= al.TOLERANCE_PX, read
+    assert abs(read["table"]["right"] - read["content"]["right"]) <= al.TOLERANCE_PX, read
+    if width >= 1920:
+        assert max(read["names"]) <= 2, f"a symphony name takes {max(read['names'])} lines"
+    opened = _offsets_of_the_lines(advisor_probe)
+    assert len(opened) == len(closed) == 4
+    for before, after in zip(closed, opened, strict=True):
+        for field in ("label", "verdict", "time", "last"):
+            if before[field] is None or after[field] is None:
+                assert before[field] is after[field] is None, (before["role"], field)
+                continue
+            assert abs(before[field] - after[field]) <= al.TOLERANCE_PX, (
+                f"{before['role']} {field} moved from {before[field]:.1f} to {after[field]:.1f}"
+            )
+    assert advisor_probe.page_errors == [], advisor_probe.page_errors
 
 
 @pytest.mark.parametrize("width", [1920, 1440])

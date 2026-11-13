@@ -924,6 +924,11 @@ _RETIREMENT_TAB_HELPER_FN_NAMES = [
     _RETIREMENT_BASIS_FILTER_FN_NAME,
 ]
 
+# The page-copy resolver that supplies the aligned days a redundancy comparison needs to every AI
+# Advisor load. It is reached through a resolver table (a name handed over by reference, not a call
+# the transitive walk follows), so it is an entry point of its own.
+_REDUNDANCY_NEEDS_DAYS_RESOLVER_FN_NAME = "_copy_redundancy_needs_days"
+
 _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_TICK_WORKER_FN_NAME,
     _RETIREMENT_REUSE_HELPER_FN_NAME,
@@ -939,6 +944,7 @@ _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_API_ROUTE_FN_NAME,
     *_TENURE_RUN_PATH_FN_NAMES,
     *_TENURE_RENDER_HELPER_FN_NAMES,
+    _REDUNDANCY_NEEDS_DAYS_RESOLVER_FN_NAME,
 ]
 
 
@@ -1958,6 +1964,32 @@ class TestGroupEScanFollowsAModuleLevelNameBoundToSomethingForbidden:
         )
 
         assert _exec_seam_hits(tree, _TENURE_REVIEW_JOB_FN_NAME) == []
+
+
+class TestThePageCopyResolverIsAnEntryPointAndIsReachedByReference:
+    """The resolver of the aligned days a redundancy comparison needs runs on every AI Advisor load
+    through the page-copy resolver table, which names it without calling it, so no route's walk
+    includes it. It is listed as an entry point, and the table that reaches it is read here so the
+    listing cannot go stale."""
+
+    def test_the_resolver_is_a_listed_entry_point(self):
+        assert _REDUNDANCY_NEEDS_DAYS_RESOLVER_FN_NAME in _CYCLE_2C_ENTRY_POINT_FN_NAMES
+
+    def test_the_page_copy_table_hands_it_over_by_reference(self):
+        tree = _parse_app_py()
+        table_owner = _find_function_def(tree, "_page_copy_values")
+        assert table_owner is not None, "app.py has no _page_copy_values"
+        handed_over = {node.id for node in ast.walk(table_owner) if isinstance(node, ast.Name)}
+        assert _REDUNDANCY_NEEDS_DAYS_RESOLVER_FN_NAME in handed_over, (
+            "the resolver is no longer reached through the page-copy table: the listing is stale"
+        )
+
+    def test_a_trade_call_planted_in_the_resolver_is_reported(self):
+        tree = _tree_with_planted_call(
+            _REDUNDANCY_NEEDS_DAYS_RESOLVER_FN_NAME, _PLANTED_CALLS["attribute call"]
+        )
+        hits = _exec_seam_hits(tree, _REDUNDANCY_NEEDS_DAYS_RESOLVER_FN_NAME)
+        assert any(_SAVE_SYMPHONY_ATTR in hit for hit in hits), hits
 
 
 class TestEveryTemplateHelperIsAnEntryPointOfTheScan:

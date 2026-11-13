@@ -22,6 +22,11 @@ Contract pinned (the plan's AC-1 and AC-2 for TT-14, TT-31 and TT-32, and AC-4 f
   heading, figures, verdict) starts at one offset from its card's left edge on every card.
 * Nothing a card prints leaves the card at 1000, 390 and 320 px, and the page does not scroll
   sideways.
+* From 1001 px up (AC-10, every width of the plan's Table W), every label and value of both
+  columns lies inside the card's inner edges, with the figures of the edge formats (a negative, a
+  zero, the longest value, a dash) included, and a Variant column that does not fit beside the
+  Baseline column sits under it at the same left edge; a second Evaluate that replaces earlier
+  cards holds the same.
 * The Baseline and Variant labels carry their Glossary line as their title, after the script
   writes them.
 """
@@ -172,6 +177,45 @@ def _figure_spec(name: str) -> dict:
     return {"name": name, **entry["figure_columns"]}
 
 
+# Every label and value of a result card lies inside the card's inner edges (inside its border),
+# at every width; where the Variant column does not sit beside the Baseline column it sits under it
+# at the same left edge. A box counts when it has a width: a hidden label cannot leak.
+_CONTAINMENT_JS = """(selector) => {
+  const root = document.querySelector(selector);
+  const out = { cards: 0, leaks: [], misplaced: [], sideBySide: 0, stacked: 0 };
+  for (const card of root.querySelectorAll('.sym-card')) {
+    const grid = card.querySelector('.stats-grid');
+    if (!grid) continue;
+    out.cards += 1;
+    const box = card.getBoundingClientRect();
+    const left = box.left + card.clientLeft;
+    const right = box.right - (card.offsetWidth - card.clientWidth - card.clientLeft);
+    const named = (el) => (el.className || el.tagName) + ' ' + (el.textContent || '').trim();
+    for (const el of card.querySelectorAll('.stat-label, .stat-value, .stats-col-label')) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && (r.left < left - 1 || r.right > right + 1)) {
+        out.leaks.push(named(el) + ' ' + Math.round(r.left) + '..' + Math.round(r.right)
+                       + ' outside ' + Math.round(left) + '..' + Math.round(right));
+      }
+    }
+    const g = grid.getBoundingClientRect();
+    if (g.left < left - 1 || g.right > right + 1) {
+      out.leaks.push('stats-grid ' + Math.round(g.left) + '..' + Math.round(g.right)
+                     + ' outside ' + Math.round(left) + '..' + Math.round(right));
+    }
+    const [a, b] = [...grid.children].map((c) => c.getBoundingClientRect());
+    if (b.top >= a.bottom - 1) {
+      out.stacked += 1;
+      if (Math.abs(b.left - a.left) > 2) out.misplaced.push('Variant under Baseline at ' + Math.round(b.left) + ', not ' + Math.round(a.left));
+    } else {
+      out.sideBySide += 1;
+      if (b.left < a.right - 1) out.misplaced.push('Variant overlaps Baseline');
+    }
+  }
+  return out;
+}"""
+
+
 # ---------------------------------------------------------------------------
 # S-1.19: the Baseline and Variant columns
 # ---------------------------------------------------------------------------
@@ -224,6 +268,166 @@ def test_a_figure_row_keeps_one_label_and_one_value_in_that_order(
     per_card = 3 if name == "swap" else 4
     assert len(rows) == 2 * per_card * CARD_COUNT
     assert all(r["order"] and r["oneLine"] and r["value"] for r in rows), rows
+
+
+# ---------------------------------------------------------------------------
+# AC-10 (S-10.2): nothing a result card prints is clipped, at any width
+# ---------------------------------------------------------------------------
+
+
+def _assert_contained(read: dict, count: int) -> None:
+    assert read["cards"] == count, f"{read['cards']} result cards, not {count}"
+    assert read["leaks"] == [], "\n".join(read["leaks"])
+    assert read["misplaced"] == [], "\n".join(read["misplaced"])
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+@pytest.mark.parametrize("name", list(KINDS))
+def test_every_label_and_value_of_a_result_card_lies_inside_the_card_at_every_width(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    name,
+    width,  # noqa: F811
+):
+    """S-10.2 (G-38): the reference's two content-width columns overflow a narrow card (the Logic
+    Changes variant column is cut by the card edge at 1920); a column that does not fit beside the
+    other sits under it. Rejects a layout that keeps both beside each other whatever the card
+    width, and one that clips by hiding the overflow instead of fitting."""
+    _prepare(tmp_path, monkeypatch)
+    with _evaluated(firefox, advisor_server, monkeypatch, name, width) as probe:
+        read = probe.page.evaluate(_CONTAINMENT_JS, KINDS[name]["results"])
+    _assert_contained(read, CARD_COUNT)
+
+
+# Figures at the edge of their formats: a negative, a zero, the longest value a script can print (an
+# unrounded sixteen-digit float) and a missing figure (a dash). Named edits to the one real body.
+_EDGE_BASELINE = {
+    "sharpe_ratio": 1.2738249853431045,
+    "sortino_ratio": 0,
+    "max_drawdown": None,
+    "annual_return": -0.12345678901234568,
+}
+_EDGE_VARIANT = {
+    "sharpe_ratio": -12.345678901234567,
+    "sortino_ratio": 123456.78901234567,
+    "max_drawdown": -0.9999999999999999,
+    "annual_return": None,
+}
+
+
+@pytest.mark.parametrize("width", [1001, 1120, 1920])
+@pytest.mark.parametrize("name", list(KINDS))
+def test_figures_at_the_edge_of_their_formats_stay_inside_their_card(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    name,
+    width,  # noqa: F811
+):
+    """S-10.6: the longest figure, a negative, a zero and a dash at the narrowest desktop widths
+    (and at 1920, where a card is narrowest against its content)."""
+    _prepare(tmp_path, monkeypatch)
+    kind = KINDS[name]
+    response = (
+        answers.swap_response(monkeypatch)
+        if name == "swap"
+        else answers.logic_response(monkeypatch)
+    )
+    body = _body_with_cards(response, CARD_COUNT)
+    for card in body["survivors_detail"] + body["rejected_detail"]:
+        card["baseline_stats"] = {**(card.get("baseline_stats") or {}), **_EDGE_BASELINE}
+        card["variant_stats"] = {**(card.get("variant_stats") or {}), **_EDGE_VARIANT}
+    payload = json.dumps(body)
+    with open_probe(
+        firefox, advisor_server, width=width, height=al.NARROW_VIEWPORT_HEIGHT.get(width, 1000)
+    ) as probe:
+        page = probe.page
+        page.route(
+            kind["url"],
+            lambda route: route.fulfill(status=200, content_type="application/json", body=payload),
+        )
+        open_page(probe, "/ai-advisor")
+        page.click(f'[data-tab="{kind["tab"]}"]:not([data-testid^="tab-panel"])')
+        page.wait_for_selector(f'[data-testid="tab-panel-{kind["tab"]}"]', state="visible")
+        for selector, text in kind["fill"]:
+            if text is None:
+                page.evaluate(
+                    "(s) => { const el = document.querySelector(s);"
+                    " if (el.options.length < 2) el.add(new Option('sym-x', 'sym-x'));"
+                    " el.selectedIndex = 1; el.dispatchEvent(new Event('change', {bubbles: true})); }",
+                    selector,
+                )
+            else:
+                page.fill(selector, text)
+        page.click(kind["button"])
+        page.wait_for_selector(f"{kind['results']} .stats-grid", state="visible", timeout=15_000)
+        page.evaluate("() => document.fonts.ready.then(() => true)")
+        page.wait_for_timeout(300)
+        read = page.evaluate(_CONTAINMENT_JS, kind["results"])
+        shown = page.eval_on_selector_all(
+            f"{kind['results']} .stat-value", "(els) => els.map((e) => e.textContent.trim())"
+        )
+        assert probe.page_errors == [], probe.page_errors
+    assert "—" in shown, f"premise: a missing figure prints a dash: {shown}"
+    _assert_contained(read, CARD_COUNT)
+
+
+@pytest.mark.parametrize("width", [1001, 1120, 1920])
+def test_new_logic_change_results_replace_the_old_cards_and_each_new_card_is_contained(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    width,  # noqa: F811
+):
+    """S-10.11: Evaluate pressed while earlier cards show; the new body replaces them and every new
+    card meets S-10.2. Rejects a result written once whose layout is not applied to a rewrite."""
+    _prepare(tmp_path, monkeypatch)
+    response = answers.logic_response(monkeypatch)
+    first = json.dumps(_body_with_cards(response, CARD_COUNT))
+    second_count = 3
+    second = json.dumps(_body_with_cards(response, second_count))
+    kind = LOGIC
+    with open_probe(
+        firefox, advisor_server, width=width, height=al.NARROW_VIEWPORT_HEIGHT.get(width, 1000)
+    ) as probe:
+        page = probe.page
+        page.route(
+            kind["url"],
+            lambda route: route.fulfill(status=200, content_type="application/json", body=first),
+        )
+        open_page(probe, "/ai-advisor")
+        page.click(f'[data-tab="{kind["tab"]}"]:not([data-testid^="tab-panel"])')
+        page.wait_for_selector(f'[data-testid="tab-panel-{kind["tab"]}"]', state="visible")
+        page.evaluate(
+            "(s) => { const el = document.querySelector(s);"
+            " if (el.options.length < 2) el.add(new Option('sym-x', 'sym-x'));"
+            " el.selectedIndex = 1; el.dispatchEvent(new Event('change', {bubbles: true})); }",
+            kind["fill"][0][0],
+        )
+        page.fill(kind["fill"][1][0], kind["fill"][1][1])
+        page.click(kind["button"])
+        page.wait_for_selector(f"{kind['results']} .stats-grid", state="visible", timeout=15_000)
+        assert page.locator(f"{kind['results']} .sym-card").count() == CARD_COUNT
+        page.unroute(kind["url"])
+        page.route(
+            kind["url"],
+            lambda route: route.fulfill(status=200, content_type="application/json", body=second),
+        )
+        page.click(kind["button"])
+        page.wait_for_function(
+            "([sel, n]) => document.querySelectorAll(sel + ' .sym-card').length === n",
+            arg=[kind["results"], second_count],
+            timeout=15_000,
+        )
+        page.evaluate("() => document.fonts.ready.then(() => true)")
+        page.wait_for_timeout(300)
+        read = page.evaluate(_CONTAINMENT_JS, kind["results"])
+        assert probe.page_errors == [], probe.page_errors
+    _assert_contained(read, second_count)
 
 
 # ---------------------------------------------------------------------------

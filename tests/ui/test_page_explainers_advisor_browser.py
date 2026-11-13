@@ -18,8 +18,9 @@ Contract pinned (the plan's AC-1, AC-2, AC-6, AC-7 and AC-8 for the Advisor page
 * The Retirement tab's two subsections stack at every width, each taking the panel's full content
   width, whatever their heights; its five run tiles start at one height with equal gaps and the
   Blocked breakdown is a line of its own below them; the tenure run line and a tenure card's head
-  and decision row sit with even gaps; the undecided-peers disclosure opens and closes by click,
-  Enter and Space and is closed after a reload.
+  and decision row sit with even gaps; the Redundancy cell's disclosure, which holds the stored
+  undecided-peers list, opens and closes by click, Enter and Space and is closed after a reload; a
+  composite headline is one line at 1920 and 2560.
 * At 390 and 320 the tab strip shows a cue at each edge past which a tab lies out of view and at no
   other edge; every tab is reached by scrolling the strip and chosen by a tap (a mouse click at the
   tab's centre: Firefox has no touch emulation here, so the gesture itself is the live phone check),
@@ -557,31 +558,34 @@ def test_a_tenure_cards_head_and_lifecycle_items_sit_within_48_px_of_each_other(
     assert lifecycle["violations"] == [], lifecycle["violations"]
 
 
-_UNDECIDED = '[data-testid="tenure-review-undecided"]'
+_REDUNDANCY_DISCLOSURE = '[data-testid="tenure-review-evidence-redundancy"] > details'
 
 
-def test_the_undecided_disclosure_is_closed_on_load_and_opens_and_closes_by_click_enter_and_space(
+def test_the_redundancy_cell_is_closed_on_load_and_opens_and_closes_by_click_enter_and_space(
     firefox,
     advisor_server,
     tmp_path,
     monkeypatch,  # noqa: F811
 ):
-    """S-6.3 in a browser: closed on load, shows the stored reason when open, and the keys work."""
+    """S-6.3 in a browser: the stored peer list sits inside the Redundancy cell's own disclosure,
+    closed on load, shown once when open, and the keys work."""
     _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
     keep = pb.undecided_record()["entries"][pb.UNDECIDED_KEEP]
     reason = keep["evidence"]["redundancy"]["reason"]
     with _open(firefox, advisor_server, (1440, 900), "retirement") as opened:
         card = f'[data-testid="tenure-review-entry"][data-symphony-id="{keep["symphony_id"]}"]'
-        details = opened.page.locator(f"{card} {_UNDECIDED}")
+        details = opened.page.locator(f"{card} {_REDUNDANCY_DISCLOSURE}")
         summary = details.locator(":scope > summary")
-        assert summary.inner_text().strip() == "Comparisons that decided nothing"
+        assert " ".join(summary.inner_text().split()) == "Redundancy unavailable"
         assert details.evaluate("(d) => d.open") is False, "it is open on load"
-        closed_text = opened.page.locator(card).inner_text()
+        assert opened.page.locator('[data-testid="tenure-review-undecided"]').count() == 0
+        closed_text = " ".join(opened.page.locator(card).inner_text().split())
         for name, _days in pb.undecided_peers(keep):
             assert name not in closed_text, f"{name} shows while the disclosure is closed"
         summary.click()
         assert details.evaluate("(d) => d.open") is True
-        assert " ".join(details.inner_text().split()).endswith(" ".join(reason.split()))
+        opened_text = " ".join(details.inner_text().split())
+        assert opened_text.count(" ".join(reason.split())) == 1, "the stored list shows once"
         summary.click()
         assert details.evaluate("(d) => d.open") is False
         for key in ("Enter", "Space"):
@@ -592,7 +596,7 @@ def test_the_undecided_disclosure_is_closed_on_load_and_opens_and_closes_by_clic
             assert details.evaluate("(d) => d.open") is False, f"{key} did not close it"
 
 
-def test_the_undecided_disclosure_is_closed_again_after_a_reload(
+def test_the_redundancy_cell_is_closed_again_after_a_reload(
     firefox,
     advisor_server,
     tmp_path,
@@ -600,13 +604,15 @@ def test_the_undecided_disclosure_is_closed_again_after_a_reload(
 ):
     _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
     with _open(firefox, advisor_server, (1440, 900), "retirement") as opened:
-        first = opened.page.locator(_UNDECIDED).first
+        first = opened.page.locator(_REDUNDANCY_DISCLOSURE).first
         first.locator(":scope > summary").click()
         assert first.evaluate("(d) => d.open") is True
         opened.page.reload()
-        opened.page.wait_for_selector(_UNDECIDED, state="attached")
+        opened.page.wait_for_selector(_REDUNDANCY_DISCLOSURE, state="attached")
         opened.page.click('[role="tab"][data-tab="retirement"]')
-        states = opened.page.eval_on_selector_all(_UNDECIDED, "(ds) => ds.map((d) => d.open)")
+        states = opened.page.eval_on_selector_all(
+            _REDUNDANCY_DISCLOSURE, "(ds) => ds.map((d) => d.open)"
+        )
         assert states and not any(states), f"a disclosure is open after a reload: {states}"
 
 
@@ -642,6 +648,37 @@ def test_a_peer_name_is_not_visible_on_the_closed_tenure_cards(
         assert checked >= 10, (
             "the cards listed too few undecided peers for the check to mean anything"
         )
+
+
+_FIGURE_LINES_JS = """(selector) => [...document.querySelectorAll(selector)].map((el) => {
+  // The figure line a summary holds is one line when every client rect of its text starts at one top.
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const tops = new Set([...range.getClientRects()].filter((r) => r.width > 0)
+    .map((r) => Math.round(r.top)));
+  return { text: el.textContent.trim().replace(/\\s+/g, ' '), lines: tops.size };
+})"""
+
+
+@pytest.mark.parametrize("width", [1920, 2560])
+def test_the_composite_summary_s_figure_line_is_one_line_on_every_card(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    width,  # noqa: F811
+):
+    """S-6.33 in a browser: with the scale and the population on it, the composite headline of
+    every eligible card fits one line. Rejects the reference's doubled wording that wraps."""
+    _prepare(tmp_path, monkeypatch, world="empty", seed=_retirement_with_the_undecided_review)
+    with _open(firefox, advisor_server, (width, 1000), "retirement") as opened:
+        lines = opened.evaluate(
+            _FIGURE_LINES_JS,
+            '[data-testid="tenure-review-evidence-composite"] summary .tenure-review-evidence-figure',
+        )
+    eligible = [e for e in pb.undecided_record()["entries"] if e["eligible"]]
+    assert len(lines) == len(eligible) >= 5, [x["text"] for x in lines]
+    assert all(x["lines"] == 1 for x in lines), [x for x in lines if x["lines"] != 1]
 
 
 def test_the_run_tiles_and_the_evidence_headings_carry_their_glossary_line_as_their_title(
