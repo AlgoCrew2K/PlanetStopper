@@ -339,6 +339,47 @@ def test_the_captured_stacked_logic_cards_stack_every_card_so_the_shared_track_r
     _assert_stacked_blocks_share_tracks(read)
 
 
+@pytest.mark.parametrize("hidden", [False, True], ids=["tab shown", "tab hidden"])
+@pytest.mark.parametrize(("start", "end"), [(1440, 1920), (1920, 1440)])
+def test_a_page_resized_after_the_result_is_written_re_reads_which_blocks_stack(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    start,
+    end,
+    hidden,  # noqa: F811
+):
+    """PM ruling R2-2, the page changing width after Evaluate (a window resized, a phone turned),
+    on the tab the operator is looking at and on one they come back to. Rejects blocks marked once
+    when the result is written: a card that now stacks without sharing tracks, a card that now fits
+    side by side but is still kept under its Baseline, and a tab hidden at the resize that is
+    measured as if it were laid out."""
+    _prepare(tmp_path, monkeypatch)
+    with _evaluated(firefox, advisor_server, monkeypatch, "logic", start) as probe:
+        page = probe.page
+        if hidden:
+            page.click('[data-tab="overview"]:not([data-testid^="tab-panel"])')
+            page.wait_for_selector('[data-testid="tab-panel-logic-changes"]', state="hidden")
+        page.set_viewport_size(al.viewport(end))
+        page.wait_for_timeout(400)
+        if hidden:
+            page.click('[data-tab="logic-changes"]:not([data-testid^="tab-panel"])')
+            page.wait_for_selector('[data-testid="tab-panel-logic-changes"]', state="visible")
+            page.wait_for_timeout(300)
+        read = page.evaluate(_SHARED_TRACKS_JS, LOGIC["results"])
+        columns = al.measure(page, al.FIGURE_COLUMNS_JS, _figure_spec("logic"))
+    assert read["cards"] == CARD_COUNT
+    if end == 1920:
+        assert read["stacked"] == CARD_COUNT, f"{read['stacked']} of {read['cards']} cards stack"
+    else:
+        assert read["sideBySide"] == CARD_COUNT, (
+            f"{read['sideBySide']} of {read['cards']} cards sit side by side"
+        )
+    _assert_stacked_blocks_share_tracks(read)
+    assert not columns["violations"], "\n".join(columns["violations"])
+
+
 def test_logic_change_blocks_still_sit_side_by_side_at_1440_with_their_own_tracks(
     firefox,
     advisor_server,
