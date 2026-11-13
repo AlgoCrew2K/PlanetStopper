@@ -72,6 +72,8 @@ function mkFake(id, extra) {
     removeEventListener() {}, setAttribute() {}, focus() {}, appendChild() {},
     getAttribute(name) { return (this.attrs || {})[name]; },
     querySelector() { return null; },
+    // The real DOM answers whether a node is inside another: nothing here holds the focus.
+    contains() { return false; },
   }, extra || {});
 }
 function allHtml() { return (modalEl ? modalEl.innerHTML : '') + appended.join(''); }
@@ -124,6 +126,7 @@ const document = {
     return frag;
   },
   body: { appendChild(el) { if (el.__isModal) { modalEl = el; } } },
+  activeElement: null,
   getElementById: byId,
   querySelectorAll(sel) { return sel === '.sym-settings-locked-var-btn' ? lockButtons() : []; },
   querySelector() { return null; },
