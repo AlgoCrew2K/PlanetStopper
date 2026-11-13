@@ -339,6 +339,45 @@ def test_the_captured_stacked_logic_cards_stack_every_card_so_the_shared_track_r
     _assert_stacked_blocks_share_tracks(read)
 
 
+@pytest.mark.parametrize("width", [1001, 1120])
+def test_asset_swap_blocks_stack_and_share_tracks_when_their_figures_are_too_wide_to_sit_side_by_side(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    width,  # noqa: F811
+):
+    """PM ruling R2-2 on the Asset Swaps tab. Its real figures never stack at a Table W width, so
+    the six figures are set to 1e20 (a named edit; the script prints 26 characters for each) to make
+    the blocks stack. Rejects marking stacked blocks only on the Logic Changes tab's renderer."""
+
+    def wide_figures(card: dict) -> None:
+        card["baseline_stats"] = {
+            **(card.get("baseline_stats") or {}),
+            "sharpe_ratio": 1e20,
+            "sortino_ratio": 1e20,
+            "max_drawdown": 1e20,
+        }
+        card["variant_stats"] = {
+            **(card.get("variant_stats") or {}),
+            "sharpe_ratio": -1e20,
+            "sortino_ratio": 1e20,
+            "max_drawdown": 1e20,
+        }
+
+    _prepare(tmp_path, monkeypatch)
+    with _evaluated(
+        firefox, advisor_server, monkeypatch, "swap", width, edit=wide_figures
+    ) as probe:
+        read = probe.page.evaluate(_SHARED_TRACKS_JS, SWAP["results"])
+        contained = probe.page.evaluate(_CONTAINMENT_JS, SWAP["results"])
+    assert read["stacked"] == CARD_COUNT, (
+        f"premise: {read['stacked']} of {read['cards']} cards stack"
+    )
+    _assert_stacked_blocks_share_tracks(read)
+    _assert_contained(contained, CARD_COUNT)
+
+
 @pytest.mark.parametrize("hidden", [False, True], ids=["tab shown", "tab hidden"])
 @pytest.mark.parametrize(("start", "end"), [(1440, 1920), (1920, 1440)])
 def test_a_page_resized_after_the_result_is_written_re_reads_which_blocks_stack(
