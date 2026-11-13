@@ -581,6 +581,32 @@ def test_a_symphony_name_wider_than_the_cap_wraps_in_a_column_no_wider_than_28re
             assert slack <= al.TOLERANCE_PX, f"{name} is {slack:.1f} px wider than its text"
 
 
+def test_a_symphony_key_with_no_break_in_it_still_leaves_the_symphony_column_at_the_cap(
+    advisor_probe,
+):
+    """PM ruling R2-1: the cap holds for text that cannot wrap. A stored key of 100 characters with
+    no space is as wide as its words allow, not as wide as the column wants; rejects a column whose
+    minimum width is its longest unbroken word, so the key pushes every other column right."""
+    _seed_lines()
+    store(
+        "guardrail_clear",
+        symphony_id="quietharbourrotation" * 5,
+        start=FIRST_MOMENT + timedelta(minutes=120),
+    )
+    _open_every_history(advisor_probe, 1920)
+    read = _fit_of_the_histories(advisor_probe)
+    cap = _SYMPHONY_CAP_REM * read["rem"]
+    widths = [
+        c["width"] for i in read["instances"] for c in i["columns"] if c["name"] == "Symphony"
+    ]
+    assert widths and max(widths) >= cap - al.TOLERANCE_PX, (
+        f"premise: the key is wider than the cap in some history: {widths}"
+    )
+    assert max(widths) <= cap + 12 + al.TOLERANCE_PX, (
+        f"Symphony is {max(widths):.1f} px wide: {widths}"
+    )
+
+
 @pytest.mark.parametrize("width", al.WIDTHS)
 def test_opening_every_history_moves_no_line_field_and_never_scrolls_the_page_sideways(
     advisor_probe, width
