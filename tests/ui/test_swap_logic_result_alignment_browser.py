@@ -301,6 +301,45 @@ def test_every_label_and_value_of_a_result_card_lies_inside_the_card_at_every_wi
     _assert_contained(read, CARD_COUNT)
 
 
+@pytest.mark.parametrize("width", [1001, 1920])
+@pytest.mark.parametrize("name", list(KINDS))
+def test_a_tab_with_no_result_shows_no_card_and_overflows_its_panel_nowhere(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    name,
+    width,  # noqa: F811
+):
+    """S-10.9: before any Evaluate the results area holds no card, and the tab's panel holds
+    everything it shows inside its own content width (the empty state sits inside its panel)."""
+    _prepare(tmp_path, monkeypatch)
+    kind = KINDS[name]
+    with open_probe(
+        firefox, advisor_server, width=width, height=al.NARROW_VIEWPORT_HEIGHT.get(width, 1000)
+    ) as probe:
+        page = probe.page
+        open_page(probe, "/ai-advisor")
+        page.click(f'[data-tab="{kind["tab"]}"]:not([data-testid^="tab-panel"])')
+        page.wait_for_selector(f'[data-testid="tab-panel-{kind["tab"]}"]', state="visible")
+        read = page.evaluate(
+            """([panelSel, resultsSel]) => {
+              const panel = document.querySelector(panelSel);
+              const box = panel.getBoundingClientRect();
+              const results = document.querySelector(resultsSel);
+              const r = results.getBoundingClientRect();
+              return { cards: results.querySelectorAll('.sym-card').length,
+                       sideways: panel.scrollWidth - panel.clientWidth,
+                       resultsInside: r.width === 0 || (r.left >= box.left - 1 && r.right <= box.right + 1) };
+            }""",
+            [f'[data-testid="tab-panel-{kind["tab"]}"]', kind["results"]],
+        )
+        assert probe.page_errors == [], probe.page_errors
+    assert read["cards"] == 0, read
+    assert read["sideways"] <= 1, read
+    assert read["resultsInside"], read
+
+
 # Figures at the edge of their formats: a negative, a zero, the longest value a script can print (an
 # unrounded sixteen-digit float) and a missing figure (a dash). Named edits to the one real body.
 _EDGE_BASELINE = {
