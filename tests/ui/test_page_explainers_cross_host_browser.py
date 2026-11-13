@@ -64,7 +64,7 @@ PAIRS = harness.WORLD_HOST_PAIRS
 PAIR_IDS = [f"{w}-{h.strip('/') or 'dashboard'}" for w, h in PAIRS]
 HONESTY = re.compile(r"basis|window|as-?of|caveat|exclu|stamp|note|label", re.I)
 LEAK = re.compile(r"\b(NaN|undefined|Infinity|null|None)\b|-inf\b")
-ABSENT_WITH_SECTION = {"B07", "B10", "X05"}
+ABSENT_WITH_SECTION = {"B07", "B10"}
 
 EXPLAINERS_JS = r"""
 () => [...document.querySelectorAll('[data-explainer]')].map((el) => {
@@ -203,7 +203,17 @@ def reading(firefox, server, seeded, world, host, width, *, theme=None):  # noqa
 
 # Hosts whose descriptions this plan has already changed in production: their rows are read from the
 # plan's Copy table A (a removed row reads None), every other host from the reference rows.
-PLAN_HOSTS = {"Advisor", "Overview", "Retirement"}
+PLAN_HOSTS = {
+    "Advisor",
+    "Overview",
+    "Retirement",
+    "Correlations",
+    "Asset Swaps",
+    "Logic Changes",
+    "Chat",
+    "Strategy Builder",
+    "Frontrunner Builder",
+}
 
 
 def _plan_row(key: str) -> dict | None:

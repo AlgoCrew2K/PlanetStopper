@@ -41,7 +41,6 @@ from tests.ui import _alignment as al
 from tests.ui import _page_copy as copy_fixture
 from tests.ui import _page_explainers as harness
 from tests.ui import _page_explainers_advisor as adv
-from tests.ui import _page_explainers_production_shapes as prod
 from tests.ui._shell_support import (  # noqa: F401  (fixtures: overrides, empty directory, browser)
     _empty_post_mortem_directory,
     _stub_database_load_state_for_advisor_routes,
@@ -69,10 +68,7 @@ VERY_NARROW = (320, 812)
 DESKTOPS = [(1440, 900), (1240, 900)]
 EDGE_TOLERANCE = 0.5
 
-A_KEYS_OF_TAB = {tab: [k for k in adv.OWNED_A_KEYS if adv.TAB_OF_A_KEY[k] == tab] for tab in TABS}
-A_KEYS_OF_TAB["overview"] = list(adv.OVERVIEW_A_KEYS)
-A_KEYS_OF_TAB["retirement"] = list(adv.RETIREMENT_A_KEYS)
-TERM_KEYS = [k for k in adv.OWNED_A_KEYS if adv.b_rows_for(k)]
+A_KEYS_OF_TAB = {tab: [k for k in adv.PLAN_A_KEYS if adv.TAB_OF_A_KEY[k] == tab] for tab in TABS}
 
 _TEXT_JS = """(selector) => [...document.querySelectorAll(selector)].map((el) => ({
   // Whatever a closed <details> holds besides its summary is not visible, whatever boxes the
@@ -237,42 +233,7 @@ def test_every_description_of_a_tab_is_visible_with_its_exact_text(
         assert not problems, "\n".join(problems)
 
 
-@pytest.mark.parametrize("key", TERM_KEYS)
-def test_a_disclosure_keeps_its_terms_hidden_until_opened_and_shows_each_after(
-    firefox,
-    advisor_server,
-    tmp_path,
-    monkeypatch,
-    key,  # noqa: F811
-):
-    _prepare(tmp_path, monkeypatch, seed=_seed_everything)
-    values = adv.full_world_values()
-    tab = adv.TAB_OF_A_KEY[key] or "overview"
-    rows = adv.b_rows_for(key)
-    with _open(firefox, advisor_server, (1440, 900), tab) as opened:
-        summary = f'details[data-terms="{key}"] > summary'
-        shown = opened.evaluate(_TEXT_JS, summary)
-        assert len(shown) == 1 and shown[0]["shown"], f"{key}: the summary is not visible"
-        assert adv.norm(shown[0]["text"]) == adv.DISCLOSURE_SUMMARY
-        closed = opened.evaluate(_TEXT_JS, f'details[data-terms="{key}"] > p[data-term]')
-        assert len(closed) == len(rows) and not any(c["shown"] for c in closed), (
-            f"{key}: a term shows before the disclosure is opened"
-        )
-        opened.page.click(summary)
-        opened.page.wait_for_timeout(100)
-        read = opened.evaluate(_TEXT_JS, f'details[data-terms="{key}"] > p[data-term]')
-        for record, item in zip(rows, read, strict=True):
-            assert item["shown"], f"{record['key']}: not visible after opening"
-            assert adv.norm(item["text"]) == adv.norm(
-                adv.expected_row(record["key"], "B", **values)
-            ), record["key"]
-        opened.page.click(summary)
-        opened.page.wait_for_timeout(100)
-        again = opened.evaluate(_TEXT_JS, f'details[data-terms="{key}"] > p[data-term]')
-        assert not any(c["shown"] for c in again), f"{key}: the terms stay after closing"
-
-
-def test_choosing_each_tab_twice_leaves_each_description_on_the_page_once(
+def test_choosing_each_tab_twice_leaves_each_description_and_glossary_line_on_the_page_once(
     firefox,
     advisor_server,
     tmp_path,
@@ -283,20 +244,19 @@ def test_choosing_each_tab_twice_leaves_each_description_on_the_page_once(
         for _ in range(2):
             for tab in TABS:
                 _show_tab(opened, tab)
-        for key in adv.OWNED_A_KEYS:
+        for key in adv.PLAN_A_KEYS:
             count = len(opened.evaluate(_TEXT_JS, f'[data-explainer="{key}"]'))
             assert count == 1, (
                 f"{key} is on the page {count} times after the tabs were chosen twice"
             )
-        for line in copy_fixture.glossary("Overview"):
+        for host, tab in adv.TAB_OF_GLOSSARY_HOST.items():
             count = len(
-                opened.evaluate(_TEXT_JS, f'#tab-panel-overview [data-term="{line["key"]}"]')
+                opened.evaluate(
+                    _TEXT_JS, f'#tab-panel-{tab} details[data-terms="glossary"] > p[data-term]'
+                )
             )
-            assert count == 1, f"{line['key']} is on the Overview {count} times"
-        for key in adv.OVERVIEW_A_KEYS:
-            count = len(opened.evaluate(_TEXT_JS, f'[data-explainer="{key}"]'))
-            assert count == 1, (
-                f"{key} is on the page {count} times after the tabs were chosen twice"
+            assert count == len(copy_fixture.glossary(host)), (
+                f"the {host} Glossary holds {count} lines after the tabs were chosen twice"
             )
 
 
@@ -727,86 +687,203 @@ def test_the_run_tiles_and_the_evidence_headings_carry_their_glossary_line_as_th
         assert not problems, "; ".join(problems)
 
 
-def _card_rows(layout: dict) -> list[list[dict]]:
-    rows: list[list[dict]] = []
-    for card in sorted(layout["cards"], key=lambda c: (round(c["card"]["top"]), c["card"]["left"])):
-        if rows and abs(rows[-1][0]["card"]["top"] - card["card"]["top"]) <= 2:
-            rows[-1].append(card)
-        else:
-            rows.append([card])
-    return rows
+# ---------------------------------------------------------------------------
+# The Strategy Builder and Frontrunner Builder cards (the plan's AC-1: TT-13, TT-26)
+# ---------------------------------------------------------------------------
+
+SB_CARDS = "strategy-builder"
+FR_CARDS = "frontrunner-builder"
+# Five pending proposals: four frontrunner copies (a different figure width each) and one
+# from-scratch retrofit, whose table has no Incumbent column. Three stored survivors, one with a
+# live baseline column.
+FR_PROPOSAL_COUNT = 5
 
 
-@pytest.mark.parametrize("count", [1, 4])
-@pytest.mark.parametrize("size", DESKTOPS)
-def test_each_row_of_proposal_cards_spans_the_tab_panels_content_width(
+def _seed_five_proposals():
+    adv.seed_frontrunner_proposals_varied(FR_PROPOSAL_COUNT - 1, retrofit=1)
+
+
+def _seed_three_survivors():
+    adv.seed_strategy_builder_cards(3)
+
+
+# tab -> (seed, registry entry of its cards, how many cards the seed renders)
+CARD_WORLDS = {
+    SB_CARDS: (_seed_three_survivors, "survivor_cards", 3),
+    FR_CARDS: (_seed_five_proposals, "pending_proposal_cards", FR_PROPOSAL_COUNT),
+}
+
+_TABLE_COLUMNS_JS = """(selector) => {
+  const box = (el) => {
+    let b = null;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!n.nodeValue.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      for (const g of range.getClientRects()) {
+        if (g.width <= 1 || g.height <= 1) continue;
+        b = b ? { left: Math.min(b.left, g.left), right: Math.max(b.right, g.right) }
+              : { left: g.left, right: g.right };
+      }
+    }
+    return b;
+  };
+  const groups = {};
+  for (const table of document.querySelectorAll(selector)) {
+    if (table.getClientRects().length === 0) continue;
+    const card = table.closest('.proposal-card');
+    const cardLeft = card.getBoundingClientRect().left;
+    const heads = [...table.querySelectorAll('thead th')];
+    const names = heads.map((h) => h.textContent.replace(/\\s+/g, ' ').trim());
+    const key = names.join('|');
+    const group = groups[key] = groups[key] || { tables: 0, offsets: names.map(() => []) };
+    group.tables += 1;
+    heads.forEach((h, i) => {
+      const b = box(h);
+      if (b) group.offsets[i].push(i === 0 ? b.left - cardLeft : b.right - cardLeft);
+    });
+  }
+  return groups;
+}"""
+
+_CARD_WIDTHS_JS = """(selector) => [...document.querySelectorAll(selector)]
+  .filter((el) => el.getClientRects().length > 0)
+  .map((el) => el.getBoundingClientRect().width)"""
+
+_SIDEWAYS_JS = """() => ({ page: document.documentElement.scrollWidth,
+                          client: document.documentElement.clientWidth })"""
+
+
+def _prepare_cards(tmp_path, monkeypatch, tab):
+    seed, _, _ = CARD_WORLDS[tab]
+    _prepare(tmp_path, monkeypatch, world="empty", seed=seed)
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+@pytest.mark.parametrize("tab", [SB_CARDS, FR_CARDS])
+def test_each_figures_table_has_one_header_row_and_its_figure_columns_end_at_one_right_edge(
     firefox,
     advisor_server,
     tmp_path,
     monkeypatch,
-    size,
-    count,  # noqa: F811
+    tab,
+    width,  # noqa: F811
 ):
-    """No cap on a card's width and no justify trick: the cards of a row meet both content edges."""
-    _prepare(
-        tmp_path, monkeypatch, world="empty", seed=lambda: adv.seed_frontrunner_proposals(count)
-    )
-    with _open(firefox, advisor_server, size, "frontrunner-builder") as opened:
-        layout = opened.evaluate(prod.FR_LAYOUT_JS)
-    assert len(layout["cards"]) == count
-    content = layout["content"]
+    """S-1.9 for each card's table: one header row above the body rows, the Metric column starting
+    at one x and each figure column, its header included, ending at one x. Rejects left-aligned
+    figures and headers (the reference's, which end where their text happens to), and a Node count
+    change figure that spans the figure columns without ending at the last of them."""
+    _prepare_cards(tmp_path, monkeypatch, tab)
+    _, entry_name, count = CARD_WORLDS[tab]
+    entry = al.TABLE_GROUPS["stats_tables"]
+    group = f'[data-testid="tab-panel-{tab}"] {entry["group"]}'
+    with _open(firefox, advisor_server, (width, al.VIEWPORT_HEIGHT), tab) as opened:
+        found = al.measure(
+            opened.page, al.COLUMN_EDGES_JS, al.spec_of(entry, name=entry_name, group=group)
+        )
+    assert found["found"] == count, f"{found['found']} figure tables, not {count}"
+    assert all(i["header_rows"] == 1 for i in found["instances"]), "a table lost its header row"
+    assert not found["violations"], "\n".join(found["violations"])
+
+
+@pytest.mark.parametrize("width", [1001, 1440, 1920, 2560])
+@pytest.mark.parametrize("tab", [SB_CARDS, FR_CARDS])
+def test_a_column_of_the_figure_tables_starts_at_one_x_on_every_card_of_a_tab(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    tab,
+    width,  # noqa: F811
+):
+    """S-1.9: of the cards sharing a column set, each column (the Metric text by its left edge, a
+    figure column by its right edge, headers included) sits at one offset from its card's left edge
+    on every card. Rejects auto-sized columns that move with the width of the figures they hold."""
+    _prepare_cards(tmp_path, monkeypatch, tab)
+    with _open(firefox, advisor_server, (width, al.VIEWPORT_HEIGHT), tab) as opened:
+        groups = opened.evaluate(
+            _TABLE_COLUMNS_JS, f'[data-testid="tab-panel-{tab}"] [data-testid="stats-table"]'
+        )
+    shared = {k: g for k, g in groups.items() if g["tables"] >= 2}
+    assert shared, f"premise: two cards of the {tab} tab share a column set ({list(groups)})"
     problems = []
-    for row in _card_rows(layout):
-        left = min(c["card"]["left"] for c in row)
-        right = max(c["card"]["right"] for c in row)
-        if abs(left - content["left"]) > 1 or abs(right - content["right"]) > 1:
-            problems.append(
-                f"a row of {len(row)} card(s) spans {left:.0f}..{right:.0f}, the panel's "
-                f"content spans {content['left']:.0f}..{content['right']:.0f}"
-            )
+    for key, group in shared.items():
+        for name, offsets in zip(key.split("|"), group["offsets"], strict=True):
+            spread = max(offsets) - min(offsets)
+            if spread > al.TOLERANCE_PX:
+                problems.append(f'[{key}] column "{name}": {spread:.1f} px apart across the cards')
     assert not problems, "\n".join(problems)
 
 
-@pytest.mark.parametrize("size", DESKTOPS)
-def test_a_card_wide_enough_lays_its_figures_left_and_its_identity_and_actions_right(
+@pytest.mark.parametrize("width", al.WIDTHS)
+@pytest.mark.parametrize("tab", [SB_CARDS, FR_CARDS])
+def test_each_field_of_a_card_starts_at_one_offset_from_its_cards_left_edge_on_every_card(
     firefox,
     advisor_server,
     tmp_path,
     monkeypatch,
-    size,  # noqa: F811
+    tab,
+    width,  # noqa: F811
 ):
-    """Inside a card of 44 rem and up two columns; below that one, whatever the page width.
+    """S-1.9 and S-1.20 (TT-26): title, chips, figures table, notes and actions start at one offset
+    from the card's left edge on every card. The reference's last row of a wrapped Frontrunner grid
+    is stretched across the panel and lays its notes and actions out beside the figures, so five
+    cards (four in a row at 1920) put them elsewhere."""
+    _prepare_cards(tmp_path, monkeypatch, tab)
+    _, entry_name, count = CARD_WORLDS[tab]
+    entry = al.TABLE_GROUPS[entry_name]
+    with _open(firefox, advisor_server, (width, al.VIEWPORT_HEIGHT), tab) as opened:
+        found = al.measure(opened.page, al.FIELD_OFFSETS_JS, al.spec_of(entry, name=entry_name))
+    assert found["found"] == count, f"{found['found']} cards, not {count}"
+    assert not found["violations"], "\n".join(found["violations"])
 
-    Four cards: three share the first row (narrow, one column) and the last stretches across the
-    next (wide, two columns), so one page shows both sides of the rule.
-    """
-    _prepare(tmp_path, monkeypatch, world="empty", seed=lambda: adv.seed_frontrunner_proposals(4))
-    with _open(firefox, advisor_server, size, "frontrunner-builder") as opened:
-        layout = opened.evaluate(prod.FR_LAYOUT_JS)
-    threshold = 44 * layout["rootSize"]
-    # A container query reads the card's content box; the card's own padding and border are
-    # well under 40 px a side, so these bands leave the in-between widths unjudged.
-    wide = [c for c in layout["cards"] if c["card"]["width"] >= threshold + 80]
-    narrow = [c for c in layout["cards"] if c["card"]["width"] < threshold]
-    assert wide and narrow, (
-        f"the last-row card must stretch across its row (a width cap keeps it narrow) and the "
-        f"first row's stay narrow; card widths are "
-        f"{[round(c['card']['width']) for c in layout['cards']]} against {threshold:.0f} px"
-    )
-    problems = []
-    for card in wide:
-        table, approve, summary = card["table"], card["approve"], card["summary"]
-        if not table["right"] <= approve["left"] + 1:
-            problems.append("a wide card puts Approve under its figures, not beside them")
-        if not table["right"] <= summary["left"] + 1:
-            problems.append("a wide card puts the overlay line under its figures")
-        if not table["left"] < approve["left"]:
-            problems.append("a wide card puts its figures right of its actions")
-    for card in narrow:
-        table, approve = card["table"], card["approve"]
-        if not approve["top"] >= table["bottom"] - 1:
-            problems.append("a narrow card does not stack its actions under its figures")
-    assert not problems, "\n".join(dict.fromkeys(problems))
+
+@pytest.mark.parametrize("width", [1001, 1120, 1440, 1920, 2560])
+@pytest.mark.parametrize("tab", [SB_CARDS, FR_CARDS])
+def test_the_cards_of_a_tab_sit_in_equal_width_tracks_and_none_is_stretched(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    tab,
+    width,  # noqa: F811
+):
+    """TT-26: the equal-track card grid. A card alone in its row keeps the track's width (the
+    reference stretched it across the panel), and no card is wider than the panel's track."""
+    _prepare_cards(tmp_path, monkeypatch, tab)
+    _, entry_name, count = CARD_WORLDS[tab]
+    entry = al.TABLE_GROUPS[entry_name]
+    with _open(firefox, advisor_server, (width, al.VIEWPORT_HEIGHT), tab) as opened:
+        widths = opened.evaluate(_CARD_WIDTHS_JS, entry["rows"])
+    assert len(widths) == count, f"{len(widths)} cards, not {count}"
+    assert max(widths) - min(widths) <= al.TOLERANCE_PX, f"card widths differ: {widths}"
+
+
+@pytest.mark.parametrize("width", al.NARROW)
+@pytest.mark.parametrize("tab", [SB_CARDS, FR_CARDS])
+def test_below_1001_px_the_cards_stack_and_their_tab_does_not_scroll_sideways(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    tab,
+    width,  # noqa: F811
+):
+    """Guard for AC-8: the narrow widths keep one card per row inside the panel."""
+    _prepare_cards(tmp_path, monkeypatch, tab)
+    _, entry_name, count = CARD_WORLDS[tab]
+    entry = al.TABLE_GROUPS[entry_name]
+    with _open(firefox, advisor_server, (width, al.NARROW_VIEWPORT_HEIGHT[width]), tab) as opened:
+        widths = opened.evaluate(_CARD_WIDTHS_JS, entry["rows"])
+        tops = opened.evaluate(
+            "(s) => [...document.querySelectorAll(s)].map((e) => Math.round(e.getBoundingClientRect().top))",
+            entry["rows"],
+        )
+        sideways = opened.evaluate(_SIDEWAYS_JS)
+    assert len(widths) == count
+    assert len(set(tops)) == count, f"cards share a row at {width} px: tops {tops}"
+    assert sideways["page"] == sideways["client"], "the page scrolls sideways"
 
 
 # ---------------------------------------------------------------------------

@@ -556,3 +556,119 @@ def test_the_stacked_form_groups_are_every_table_entry_with_its_selector():
     expected = {n for n, e in al.TABLE_GROUPS.items() if e["kind"] == "table"}
     assert names == expected and names, "no table entry is recorded for the stacked form"
     assert all(g["group"] for g in groups), "a table entry with no selector cannot be recorded"
+
+
+# ---------------------------------------------------------------------------
+# COLUMN_EDGES_JS: a cell that spans columns
+# ---------------------------------------------------------------------------
+
+SPAN_TABLE = """<table id="t"><thead><tr><th>Metric</th><th class="num">Incumbent</th>
+<th class="num">Candidate</th></tr></thead><tbody>
+<tr><td>Calmar</td><td class="num">0.360</td><td class="num">1.360</td></tr>
+<tr><td>Node count change</td><td colspan="2" class="num">{figure}</td></tr>
+</tbody></table>"""
+SPAN_SPEC = {"name": "t", "group": "#t", "numeric": ["Incumbent", "Candidate"]}
+
+
+def test_a_figure_spanning_the_figure_columns_is_compared_with_the_last_of_them(firefox):  # noqa: F811
+    found = _edges(firefox, SPAN_TABLE.format(figure="-6 vs the incumbent"), spec=SPAN_SPEC)
+    assert found["violations"] == [], found
+
+
+def test_a_spanning_figure_that_ends_short_of_the_last_column_is_reported(firefox):  # noqa: F811
+    body = SPAN_TABLE.format(figure='<span style="margin-right:30px">-6</span>')
+    found = _edges(firefox, body, spec=SPAN_SPEC)
+    assert any('column "Candidate": right edges differ' in v for v in found["violations"]), found
+
+
+def test_a_row_that_spans_fewer_columns_than_the_header_names_is_still_reported(firefox):  # noqa: F811
+    body = SPAN_TABLE.replace('colspan="2"', 'colspan="1"').format(figure="-6")
+    found = _edges(firefox, body, spec=SPAN_SPEC)
+    assert any("has 2 cells under 3 headers" in v for v in found["violations"]), found
+
+
+# ---------------------------------------------------------------------------
+# FIGURE_COLUMNS_JS
+# ---------------------------------------------------------------------------
+
+FIGURE_SPEC = {
+    "name": "cards",
+    "cards": ".card",
+    "column_label": ".col",
+    "row": ".row",
+    "label": ".l",
+    "value": ".v",
+}
+FIGURE_ROW = '<div class="row"><span class="l">{label}</span><span class="v">{value}</span></div>'
+
+
+def _figure_card(rows_a: str, rows_b: str) -> str:
+    return (
+        '<div class="card"><div class="cols"><div><div class="col">Baseline</div>'
+        f'{rows_a}</div><div><div class="col">Variant</div>{rows_b}</div></div></div>'
+    )
+
+
+def _figure_rows(*values: str) -> str:
+    labels = ("Sharpe", "Sortino", "Max DD")
+    return "".join(FIGURE_ROW.format(label=lab, value=v) for lab, v in zip(labels, values))
+
+
+PACKED_FIGURES = (
+    ".card {width:400px} .cols {display:grid;grid-template-columns:1fr 1fr;gap:24px}"
+    " .row {display:grid;grid-template-columns:auto auto;justify-content:start;column-gap:24px}"
+    " .v {justify-self:end}"
+)
+
+
+def test_figure_rows_packed_with_values_ending_at_one_edge_have_no_violation(firefox):  # noqa: F811
+    css = (
+        ".card {width:400px} .cols {display:grid;grid-template-columns:1fr 1fr;gap:24px}"
+        " .col-body {display:grid;grid-template-columns:auto auto;justify-content:start;"
+        "column-gap:24px} .row {display:contents} .v {text-align:right}"
+    )
+    # Packed by a shared two-track grid on the column: labels share a left edge, values a right edge.
+    packed = (
+        '<div class="card"><div class="cols">'
+        '<div><div class="col">Baseline</div><div class="col-body">'
+        + _figure_rows("1.27", "2.43", "26.16%")
+        + '</div></div><div><div class="col">Variant</div><div class="col-body">'
+        + _figure_rows("-0.41", "12.84", "7%")
+        + "</div></div></div></div>"
+    )
+    found = _run(firefox, al.FIGURE_COLUMNS_JS, FIGURE_SPEC, packed, css)
+    assert found["found"] == 1 and found["violations"] == [], found
+    assert [c["column"] for c in found["columns"]] == ["Baseline", "Variant"]
+
+
+def test_a_value_pushed_to_the_far_end_of_its_row_is_reported_as_a_gap(firefox):  # noqa: F811
+    body = _figure_card(_figure_rows("1.27", "2.43", "26.16%"), _figure_rows("-0.41", "12", "7%"))
+    css = (
+        ".card {width:400px} .cols {display:grid;grid-template-columns:1fr 1fr;gap:24px}"
+        " .row {display:flex;justify-content:space-between}"
+    )
+    found = _run(firefox, al.FIGURE_COLUMNS_JS, FIGURE_SPEC, body, css)
+    assert any("apart, more than 48" in v for v in found["violations"]), found
+
+
+def test_labels_that_start_at_different_x_and_values_that_end_at_different_x_are_reported(firefox):  # noqa: F811
+    css = (
+        ".card {width:400px} .cols {display:grid;grid-template-columns:1fr 1fr;gap:24px}"
+        " .row {display:flex;gap:8px}"
+    )
+    body = _figure_card(_figure_rows("1.27", "2.43", "26.16%"), _figure_rows("-0.41", "12", "7%"))
+    found = _run(firefox, al.FIGURE_COLUMNS_JS, FIGURE_SPEC, body, css)
+    # Values follow their labels, so their right edges differ by their widths.
+    assert any("values end" in v for v in found["violations"]), found
+    shifted = body.replace(
+        '<span class="l">Sortino</span>',
+        '<span class="l" style="margin-left:9px">Sortino</span>',
+        1,
+    )
+    found = _run(firefox, al.FIGURE_COLUMNS_JS, FIGURE_SPEC, shifted, css)
+    assert any("labels start" in v for v in found["violations"]), found
+
+
+def test_a_column_label_with_no_figure_row_is_reported(firefox):  # noqa: F811
+    found = _run(firefox, al.FIGURE_COLUMNS_JS, FIGURE_SPEC, _figure_card("", ""), PACKED_FIGURES)
+    assert any("holds no figure row" in v for v in found["violations"]), found

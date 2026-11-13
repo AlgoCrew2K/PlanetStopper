@@ -82,6 +82,19 @@ RULED_REMOVALS = (
     "data:data-terms=R02",
     "data:data-terms=R22",
     "class:retirement-pair--never-run",
+    # The other tabs: their term disclosures became lines of each tab's Glossary, the two notes
+    # the plan removes (the Strategy Builder run note and the Frontrunner pending-approval line)
+    # went with their descriptions, and the flex wrap that stretched a last row of Frontrunner
+    # cards is gone with its modifier class.
+    "data:data-terms=C01",
+    "data:data-terms=W01",
+    "data:data-terms=L01",
+    "data:data-terms=B03",
+    "data:data-terms=B07",
+    "data:data-terms=X05",
+    "data:data-explainer=B03",
+    "data:data-explainer=X05",
+    "class:proposal-cards--fill",
 )
 
 # A token one file loses with the element or function it came from while another file keeps it:
@@ -194,7 +207,25 @@ def template_rows(table: str) -> list[dict]:
 # removed, is not read here as a disclosure of its section.
 OVERVIEW_GLOSSARY_KEYS = {line["key"] for line in copy.glossary("Overview")}
 RETIREMENT_GLOSSARY_KEYS = {line["key"] for line in copy.glossary("Retirement")}
-REMOVED_OVERVIEW_DISCLOSURES = {"A01", "O01", "O03", "O08", "O15", "O27", "R02", "R22"}
+OTHER_TAB_GLOSSARY_KEYS = {
+    line["key"] for host in adv.OTHER_TAB_GLOSSARY_HOSTS for line in copy.glossary(host)
+}
+REMOVED_OVERVIEW_DISCLOSURES = {
+    "A01",
+    "O01",
+    "O03",
+    "O08",
+    "O15",
+    "O27",
+    "R02",
+    "R22",
+    "C01",
+    "W01",
+    "L01",
+    "B03",
+    "B07",
+    "X05",
+}
 
 DEFINITION_ROWS = [
     r
@@ -203,6 +234,7 @@ DEFINITION_ROWS = [
     and page_of(r["host"])
     and r["key"] not in OVERVIEW_GLOSSARY_KEYS
     and r["key"] not in RETIREMENT_GLOSSARY_KEYS
+    and r["key"] not in OTHER_TAB_GLOSSARY_KEYS
     and r.get("placement_target") not in REMOVED_OVERVIEW_DISCLOSURES
 ]
 
@@ -267,6 +299,22 @@ def test_every_moved_retirement_line_is_defined_once_inside_the_glossary(tmp_pat
     assert not problems, "; ".join(problems)
 
 
+@pytest.mark.parametrize("host", adv.OTHER_TAB_GLOSSARY_HOSTS)
+def test_every_moved_line_of_the_other_tabs_is_defined_once_inside_its_glossary(
+    host, tmp_path, monkeypatch
+):
+    page = adv.soup(render_hosts("full", tmp_path, monkeypatch)["/ai-advisor"])
+    tab = adv.TAB_OF_GLOSSARY_HOST[host]
+    problems = []
+    for line in copy.glossary(host):
+        nodes = page.select(f'#tab-panel-{tab} [data-term="{line["key"]}"]')
+        if len(nodes) != 1:
+            problems.append(f"{line['key']} is defined {len(nodes)} times on the {host} tab")
+        elif nodes[0].find_parent("details", attrs={"data-terms": "glossary"}) is None:
+            problems.append(f"{line['key']} is outside the {host} Glossary")
+    assert not problems, "; ".join(problems)
+
+
 # ---------------------------------------------------------------------------
 # S-2.13: a title that defined a term at the reference stays, and the meaning is also visible
 # ---------------------------------------------------------------------------
@@ -310,8 +358,10 @@ def test_a_title_the_reference_carried_stays_and_the_meaning_is_also_a_visible_l
 # S-2.15 and S-1.15: no section, no disclosure
 # ---------------------------------------------------------------------------
 
+# X05 is removed by the plan; the terms of B07 and B10 are lines of the Strategy Builder Glossary,
+# which a page with no such section still holds.
 ABSENT_WITH_SECTION = {
-    "/ai-advisor": ("B07", "B10", "X05"),
+    "/ai-advisor": ("B07", "B10"),
 }
 
 
@@ -349,9 +399,6 @@ def test_with_no_proposals_no_observations_the_sections_description_and_disclosu
             problems.append(f"description {a_key} is shown with no section")
         if page.select(f'[data-terms="{a_key}"]'):
             problems.append(f"disclosure {a_key} is shown with no section")
-        for record in adv.b_rows_for(a_key):
-            if page.select(f'[data-term="{record["key"]}"]'):
-                problems.append(f"term {record['key']} is shown with no section")
     assert not problems, "\n".join(problems)
 
 

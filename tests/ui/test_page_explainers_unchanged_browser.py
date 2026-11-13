@@ -131,7 +131,7 @@ _CLOCK_SHAPE = re.compile(r"\d{2}:\d{2}:\d{2}")
 # Term disclosures the plan removes from a host, as (host, tag, text) -> how many: the Overview's
 # five (its tab line, O03, O08, O15 and O27) became lines of its one Glossary. A later cycle adds
 # its host's. At most this many may be missing, so a sixth lost disclosure is still reported.
-REMOVED_DISCLOSURES = {("/ai-advisor", "summary", "What the terms mean"): 7}
+REMOVED_DISCLOSURES = {("/ai-advisor", "summary", "What the terms mean"): 13}
 
 # The summary of a tenure evidence cell of an item the missing line names reads its heading and its
 # status only: the reason moved to the line. The reference's summary carried "<heading> unavailable:

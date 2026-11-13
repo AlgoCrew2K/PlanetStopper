@@ -179,10 +179,18 @@ groups.forEach((group, index) => {
   const edges = t.names.map(() => []);
   const record = (row, label) => {
     const cells = cellsOf(row);
-    if (t.names.length && cells.length !== t.names.length && !spec.ragged) {
+    const used = cells.reduce((n, cell) => n + (cell.colSpan || 1), 0);
+    if (t.names.length && used !== t.names.length && !spec.ragged) {
       v.push(label + ' has ' + cells.length + ' cells under ' + t.names.length + ' headers');
     }
-    cells.forEach((cell, c) => {
+    let at = 0;
+    cells.forEach((cell) => {
+      // A cell that spans columns answers for the last of them when that column is numeric (its
+      // text ends at the table's right side), and for the first otherwise.
+      const span = cell.colSpan || 1;
+      const last = at + span - 1;
+      const c = span > 1 && numeric.has(t.names[last]) ? last : at;
+      at += span;
       if (c >= edges.length) return;
       const box = contentBox(cell);
       if (box) edges[c].push({ label, box });
@@ -290,6 +298,60 @@ for (const field of spec.fields) {
       + fix(spread) + ' px (row ' + lo.row + ' at ' + fix(lo.offset) + ', row ' + hi.row + ' at ' + fix(hi.offset) + ')');
   }
 }
+return out;
+"""
+)
+
+# ---------------------------------------------------------------------------
+# FIGURE_COLUMNS_JS: the label and value rows under each column label of a result card
+# ---------------------------------------------------------------------------
+
+FIGURE_COLUMNS_JS = _script(
+    r"""
+const tol = spec.tolerance || TOL;
+const maxGap = spec.max_gap === undefined ? 48 : spec.max_gap;
+const cards = [...document.querySelectorAll(spec.cards)].filter(shown);
+const out = { name: spec.name, found: cards.length, columns: [], violations: [] };
+const boxOf = (row, selector) => {
+  const el = [...row.querySelectorAll(selector)].find(shown);
+  return el ? contentBox(el) : null;
+};
+cards.forEach((card, ci) => {
+  const heads = [...card.querySelectorAll(spec.column_label)].filter(shown);
+  // A row laid out with display: contents has no box of its own: it is shown when its label is.
+  const rows = [...card.querySelectorAll(spec.row)]
+    .filter((r) => [...r.querySelectorAll(spec.label)].some(shown));
+  // A row belongs to the last column label before it in document order.
+  const cols = heads.map((h) => ({ name: words(h), rows: [] }));
+  rows.forEach((row) => {
+    let owner = -1;
+    heads.forEach((h, i) => {
+      if (h.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) owner = i;
+    });
+    if (owner >= 0) cols[owner].rows.push(row);
+  });
+  cols.forEach((col) => {
+    const where = 'card ' + (ci + 1) + ', column "' + col.name + '"';
+    const labels = col.rows.map((r) => boxOf(r, spec.label)).filter(Boolean);
+    const values = col.rows.map((r) => boxOf(r, spec.value)).filter(Boolean);
+    if (!labels.length || !values.length) {
+      out.violations.push(where + ' holds no figure row');
+      return;
+    }
+    const spread = (xs) => Math.max(...xs) - Math.min(...xs);
+    const labelSpread = spread(labels.map((b) => b.left));
+    const valueSpread = spread(values.map((b) => b.right));
+    const gap = Math.min(...values.map((b) => b.left)) - Math.max(...labels.map((b) => b.right));
+    out.columns.push({ card: ci + 1, column: col.name, rows: col.rows.length,
+                       label_spread: fix(labelSpread), value_spread: fix(valueSpread), gap: fix(gap) });
+    if (labelSpread > tol) out.violations.push(where + ': labels start ' + fix(labelSpread) + ' px apart');
+    if (valueSpread > tol) out.violations.push(where + ': values end ' + fix(valueSpread) + ' px apart');
+    if (gap > maxGap) {
+      out.violations.push(where + ': the widest label and the nearest value are ' + fix(gap)
+                          + ' px apart, more than ' + maxGap);
+    }
+  });
+});
 return out;
 """
 )
@@ -769,12 +831,28 @@ TABLE_GROUPS: dict[str, dict] = {
         "status": "ref",
         "owner": "C3",
     },
+    # The figures of a result card are written by the page script after Evaluate: ``figure_columns``
+    # names what ``FIGURE_COLUMNS_JS`` reads (a Baseline and a Variant column, each a label and a
+    # value per row); ``fields`` are the card's own fields (TT-31, TT-32), at one offset on every card.
     "swap_result_figures": {
         "host": "/ai-advisor",
         "open": {"tab": "asset-swaps", "action": "evaluate_swap"},
         "kind": _FIELDS,
-        "group": None,
-        "fields": [{"name": "label"}, {"name": "value", "numeric": True}],
+        "group": "#swap-results-area",
+        "rows": "#swap-results-area .sym-card",
+        "fields": [
+            {"name": "objective", "selector": ".swap-card-objective"},
+            {"name": "heading", "selector": ".swap-card-heading"},
+            {"name": "figures", "selector": ".stats-grid"},
+            {"name": "verdict", "selector": ".gate-verdict-row"},
+        ],
+        "figure_columns": {
+            "cards": "#swap-results-area .sym-card",
+            "column_label": ".stats-col-label",
+            "row": ".stat-row",
+            "label": ".stat-label",
+            "value": ".stat-value",
+        },
         "status": "action",
         "owner": "C4",
     },
@@ -782,16 +860,32 @@ TABLE_GROUPS: dict[str, dict] = {
         "host": "/ai-advisor",
         "open": {"tab": "logic-changes", "action": "evaluate_logic_change"},
         "kind": _FIELDS,
-        "group": None,
-        "fields": [{"name": "label"}, {"name": "value", "numeric": True}],
+        "group": "#logic-results-area",
+        "rows": "#logic-results-area .sym-card",
+        "fields": [
+            {"name": "objective", "selector": ".proposal-card-objective"},
+            {"name": "heading", "selector": ".proposal-card-heading", "optional": True},
+            {"name": "figures", "selector": ".stats-grid"},
+            {"name": "verdict", "selector": ".gate-verdict-row"},
+        ],
+        "figure_columns": {
+            "cards": "#logic-results-area .sym-card",
+            "column_label": ".stats-col-label",
+            "row": ".stat-row",
+            "label": ".stat-label",
+            "value": ".stat-value",
+        },
         "status": "action",
         "owner": "C4",
     },
+    # A card's figures table: Metric first (text), then one or two figure columns, headers included
+    # in the right-edge rule. A node count change row spans the figure columns.
     "stats_tables": {
         "host": "/ai-advisor",
         "open": {"tab": "frontrunner-builder"},
         "kind": _TABLE,
         "group": '[data-testid="stats-table"]',
+        "numeric": ["Incumbent", "Candidate", "Live Baseline"],
         "status": "ref",
         "seed": "frontrunner_proposals",
         "owner": "C4",
@@ -802,7 +896,12 @@ TABLE_GROUPS: dict[str, dict] = {
         "kind": _FIELDS,
         "group": '[data-testid="survivor-cards"]',
         "rows": '[data-testid="survivor-cards"] > .proposal-card',
-        "fields": [{"name": "figures table", "selector": '[data-testid="stats-table"]'}],
+        "fields": [
+            {"name": "title", "selector": ".card-name"},
+            {"name": "chips", "selector": ".advisory-only-badge"},
+            {"name": "figures table", "selector": '[data-testid="stats-table"]'},
+            {"name": "notes", "selector": ".caveats-block"},
+        ],
         "status": "ref",
         "seed": "strategy_builder",
         "owner": "C4",
@@ -813,7 +912,12 @@ TABLE_GROUPS: dict[str, dict] = {
         "kind": _FIELDS,
         "group": '[data-testid="frontrunner-proposal-cards"]',
         "rows": '[data-testid="frontrunner-proposal-cards"] > .proposal-card',
-        "fields": [{"name": "figures table", "selector": '[data-testid="stats-table"]'}],
+        "fields": [
+            {"name": "title", "selector": ".card-name"},
+            {"name": "figures table", "selector": '[data-testid="stats-table"]'},
+            {"name": "notes", "selector": ".fr-card-flow"},
+            {"name": "actions", "selector": ".proposal-actions"},
+        ],
         "status": "ref",
         "seed": "frontrunner_proposals",
         "owner": "C4",

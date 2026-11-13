@@ -62,14 +62,58 @@ TAB_OF_A_KEY = {
 # The Retirement tab's cycle moves R01, R02 and R22 the same way: shortened, with their slots read
 # from this plan's Values table and their terms in the Retirement Glossary.
 RETIREMENT_A_KEYS = ("R01", "R02", "R22")
-RE_PINNED_A_KEYS = ("A01", "O01", "O03", "O08", "O15", "O27", *RETIREMENT_A_KEYS)
+# The other tabs' cycle moves the rest: Correlations, Asset Swaps, Logic Changes, Chat, Strategy
+# Builder and Frontrunner Builder descriptions are this plan's text (none carries a slot), B03 and
+# X05 are removed, and every term sits in its tab's Glossary.
+OTHER_TAB_A_KEYS = ("C01", "W01", "L01", "T02", "B00", "B07", "B10", "X01", "X03")
 OVERVIEW_A_KEYS = ("O03", "O08", "O15", "O27")
-REMOVED_A_KEYS = ("A01", "O01")
+REMOVED_A_KEYS = ("A01", "O01", "B03", "X05")
+RE_PINNED_A_KEYS = (
+    "A01",
+    "O01",
+    *OVERVIEW_A_KEYS,
+    *RETIREMENT_A_KEYS,
+    *OTHER_TAB_A_KEYS,
+    "B03",
+    "X05",
+)
+# No description is left on the reference's text: every key of TAB_OF_A_KEY is re-pinned.
 OWNED_A_KEYS = tuple(k for k in TAB_OF_A_KEY if k not in RE_PINNED_A_KEYS)
+# Every description the page shows now, in the plan's text.
+PLAN_A_KEYS = (*OVERVIEW_A_KEYS, *RETIREMENT_A_KEYS, *OTHER_TAB_A_KEYS)
 
 # The hosts whose terms now sit in a Glossary (this plan's Table G): their reference term rows are
-# read from the Glossary, not from the disclosures the reference had. A later cycle adds its host.
-GLOSSARY_HOSTS_DONE = ("Overview", "Retirement")
+# read from the Glossary, not from the disclosures the reference had. Every Advisor tab is here.
+GLOSSARY_HOSTS_DONE = (
+    "Overview",
+    "Correlations",
+    "Retirement",
+    "Asset Swaps",
+    "Logic Changes",
+    "Chat",
+    "Strategy Builder",
+    "Frontrunner Builder",
+)
+# The tab each Advisor Glossary host sits on.
+TAB_OF_GLOSSARY_HOST = {
+    "Overview": "overview",
+    "Correlations": "correlations",
+    "Retirement": "retirement",
+    "Asset Swaps": "asset-swaps",
+    "Logic Changes": "logic-changes",
+    "Chat": "chat",
+    "Strategy Builder": "strategy-builder",
+    "Frontrunner Builder": "frontrunner-builder",
+}
+# The hosts the other-tabs cycle moved.
+OTHER_TAB_GLOSSARY_HOSTS = (
+    "Correlations",
+    "Asset Swaps",
+    "Logic Changes",
+    "Chat",
+    "Strategy Builder",
+    "Frontrunner Builder",
+)
 
 # The heading each description sits directly under (None: a tab or panel line with no heading).
 HEADING_OF_A_KEY = {
@@ -81,11 +125,7 @@ HEADING_OF_A_KEY = {
     "R22": "Symphony tenure review",
     "B07": "Strategy proposals",
     "B10": "Backtest failures",
-    "X05": "Pending approval",
 }
-
-# Rows whose text is the ref text of a kept element; the model slot they hold is derived below.
-KEPT_A_KEYS = ("B03", "X03")
 
 # The tab dot titles at the reference, which must stay (S-1.23).
 TAB_DOT_TITLES = {
@@ -175,7 +215,7 @@ def slot_names(record: dict) -> list[str]:
 
 def expected_row(key: str, table: str = "A", **values: str | None) -> str:
     """The text a row must show, its slots filled from ``values`` (a missing slot is a failure)."""
-    if table == "A" and key in RETIREMENT_A_KEYS:
+    if table == "A" and key in PLAN_A_KEYS:
         record, text = copy_fixture.a_row(key), copy_fixture.a_text(key)
     else:
         record, text = copy_fixture.row(key, table), copy_fixture.text(key, table)
@@ -194,25 +234,6 @@ def expected_row_at_reference(key: str, values: dict[str, str]) -> str:
         assert row["phrase"] in text, f"{key}: the reference phrase for {slot} is gone"
         text = text.replace(row["phrase"], copy_fixture.fill(row["phrase"], **{slot: values[slot]}))
     return text
-
-
-def kept_model_note(key: str, model: str | None) -> str:
-    """The kept Strategy Builder note (B03) with its model slot in the state the page is in.
-
-    ``copy.json`` holds the note as captured with no model (it reads "model unavailable"); MU5 gives
-    the unresolved wording and the note otherwise stays. ``model`` None is the unresolved state.
-    """
-    assert key == "B03"
-    mu5 = copy_fixture.row("MU5", "C")
-    ref_text = copy_fixture.text("B03", "A")
-    head_old = mu5["old_text"].split(" (the rest")[0]
-    head_unavailable = head_old.replace("{model}", "model unavailable")
-    assert head_unavailable in ref_text, "the captured note no longer opens as MU5's old text says"
-    if model is None:
-        head_new = mu5["new_unresolved"].split(" (the rest")[0]
-    else:
-        head_new = head_old.replace("{model}", model)
-    return ref_text.replace(head_unavailable, head_new)
 
 
 def explainer_nodes(page, key: str) -> list:
@@ -340,6 +361,83 @@ def seed_frontrunner_proposals(count: int, *, incumbent: str = _FR_INCUMBENT_HAS
     ]
 
 
+# Named edits of the survivor record above, so the figures a card prints differ in value and in
+# printed width (a negative figure, a four-digit-wide ratio, and a live baseline column), which a
+# right-edge rule has to be able to fail on. The record's keys are the producer's.
+_SB_VARIANTS = (
+    {},
+    {
+        "sharpe": -0.412,
+        "cagr": -0.0305,
+        "max_drawdown": -0.2731,
+        "metrics": {"sortino_ratio": 12.84},
+    },
+    {
+        "sharpe": 2.7,
+        "cagr": 0.1862,
+        "max_drawdown": -0.0731,
+        "live_baseline": {"sharpe": 0.8, "max_drawdown": -0.19, "cagr": 0.064},
+    },
+)
+
+
+def seed_strategy_builder_cards(count: int = 3) -> None:
+    """``count`` stored survivors (cycling the named edits above) through the writer."""
+    for index in range(count):
+        edit = copy.deepcopy(_SB_VARIANTS[index % len(_SB_VARIANTS)])
+        metrics = {**copy.deepcopy(_SB_RAW["metrics"]), **edit.pop("metrics", {})}
+        raw = {
+            **copy.deepcopy(_SB_RAW),
+            **edit,
+            "metrics": metrics,
+            "candidate_id": f"card-{index}",
+        }
+        database.insert_advisor_observation(
+            advisor_role="STRATEGY_BUILDER",
+            subject_type="symphony",
+            subject_id=f"sb-card-{index}",
+            verdict="ADOPT_CANDIDATE",
+            raw_response=raw,
+            symphony_id="",
+        )
+
+
+# Named edits of the shell's stored proposal metrics: a different figure of each width, a node
+# count that grew, one that did not move, one that fell by a three-digit step, and one retrofit
+# proposal whose metrics carry no incumbent column.
+_FR_VARIANTS = (
+    {},
+    {"candidate_cagr": -0.031, "candidate_calmar": 12.345, "node_count_delta": 12},
+    {"incumbent_max_drawdown": -0.3412, "node_count_delta": 0},
+    {"candidate_max_drawdown": -0.0043, "node_count_delta": -113},
+)
+
+
+def seed_frontrunner_proposals_varied(count: int, *, retrofit: int = 0) -> list[int]:
+    """``count`` pending proposals with figures of different widths, then ``retrofit`` from-scratch
+    ones (a different column set), all through the writer."""
+    tree = json.loads(_REAL_INCUMBENT_TREE.read_text(encoding="utf-8"))
+    ids = [
+        database.insert_frontrunner_proposal(
+            symphony_id=_FR_INCUMBENT_HASH,
+            proposal_source="frontrunner_builder",
+            candidate_tree=copy.deepcopy(tree),
+            metrics_json={**_FR_METRICS, **_FR_VARIANTS[index % len(_FR_VARIANTS)]},
+        )
+        for index in range(count)
+    ]
+    ids += [
+        database.insert_frontrunner_proposal(
+            symphony_id="strategy-builder-retrofit-incumbent",
+            proposal_source="strategy_builder_retrofit",
+            candidate_tree=copy.deepcopy(tree),
+            metrics_json={"calmar": 1.1 + index, "cagr": 0.1, "max_drawdown": -0.1},
+        )
+        for index in range(retrofit)
+    ]
+    return ids
+
+
 def long_tenure_record(entries: int = 11) -> dict:
     """The captured full review record extended to ``entries`` entries (copies under new ids)."""
     record = pb.full_record()
@@ -409,14 +507,12 @@ def full_world_values() -> dict[str, str]:
     }
 
 
-def expected_a(key: str, values: dict[str, str], *, model: str | None = None) -> str:
-    if key in OVERVIEW_A_KEYS:
-        # This plan's text: the Overview rows carry no slot.
+def expected_a(key: str, values: dict[str, str]) -> str:
+    if key in (*OVERVIEW_A_KEYS, *OTHER_TAB_A_KEYS):
+        # This plan's text: these rows carry no slot.
         text = copy_fixture.a_text(key)
         assert text is not None, f"{key} reads no description"
         return text
-    if key == "B03":
-        return kept_model_note("B03", model)
     return expected_row(key, "A", **values)
 
 

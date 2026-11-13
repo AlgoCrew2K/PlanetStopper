@@ -127,30 +127,24 @@ _full_world_values = adv.full_world_values
 _expected_a = adv.expected_a
 
 
-A_KEYS_WITH_TERMS = [k for k in adv.OWNED_A_KEYS if adv.b_rows_for(k)]
-
-
-def test_every_owned_row_is_in_the_fixture_and_every_term_row_has_a_description():
-    owned_b = [
-        r
-        for r in copy_fixture.rows("B")
-        if r["host"] in adv.TAB_OF_B_HOST and r.get("placement_target") not in adv.RE_PINNED_A_KEYS
-    ]
-    assert owned_b, "the fixture holds no Advisor term rows"
-    for record in owned_b:
-        assert record["placement_target"] in adv.OWNED_A_KEYS, (
-            f"{record['key']} is placed under {record['placement_target']}, which no Advisor row owns"
-        )
-    for key in adv.OWNED_A_KEYS:
-        copy_fixture.row(key, "A")
+def test_every_advisor_description_is_this_plans_and_no_row_is_left_on_the_reference_text():
+    """The Advisor's descriptions are all read from Copy table A of the plan; no key is left on the
+    reference's text, so a test over the reference rows would silently cover nothing."""
+    assert adv.OWNED_A_KEYS == (), adv.OWNED_A_KEYS
+    for key in adv.OTHER_TAB_A_KEYS:
+        assert copy_fixture.a_text(key), f"{key}: the plan gives it no description"
+        assert copy_fixture.a_row(key)["slots"] == [], f"{key}: carries a slot"
+    for key in adv.REMOVED_A_KEYS:
+        assert copy_fixture.a_text(key) is None, f"{key}: the plan removes it"
 
 
 # ---------------------------------------------------------------------------
-# AC-1: descriptions (S-1.7 .. S-1.14, S-1.19, S-1.23)
+# The other tabs' descriptions (S-3.1, S-3.3, S-3.6, S-3.7 for Correlations, Asset Swaps, Logic
+# Changes, Chat, Strategy Builder and Frontrunner Builder)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("key", adv.OWNED_A_KEYS)
+@pytest.mark.parametrize("key", adv.OTHER_TAB_A_KEYS)
 def test_a_description_shows_its_exact_text_once_in_its_panel(advisor, key):
     shown = advisor.open("full", key=True, seed=_seed_everything)
     values = _full_world_values()
@@ -171,7 +165,7 @@ def test_a_description_shows_its_exact_text_once_in_its_panel(advisor, key):
 
 def test_the_tab_description_is_visible_text_and_never_only_an_attribute(advisor):
     shown = advisor.open("full", key=True, seed=_seed_everything)
-    for key in adv.OWNED_A_KEYS:
+    for key in adv.OTHER_TAB_A_KEYS:
         node = adv.explainer_nodes(shown.page, key)[0]
         assert adv.norm(node.get_text(" ")), f"{key} carries no text in the element"
         for attribute in ("title", "aria-label"):
@@ -191,7 +185,7 @@ def test_a_tab_whose_dot_carries_a_title_keeps_the_title_and_names_its_meaning_i
         "logic-changes": ("L01",),
         "chat": ("T02",),
         "strategy-builder": ("B00",),
-        "frontrunner-builder": ("X01", "X05"),
+        "frontrunner-builder": ("X01", "X03"),
     }
     banners = {
         "asset-swaps": "advise-only-banner",
@@ -212,7 +206,7 @@ def test_a_tab_whose_dot_carries_a_title_keeps_the_title_and_names_its_meaning_i
 
 def test_a_page_with_nothing_stored_describes_only_the_sections_it_renders(advisor):
     shown = advisor.open("empty", key=False)
-    present = {k for k in adv.OWNED_A_KEYS if adv.explainer_nodes(shown.page, k)}
+    present = {k for k in adv.OTHER_TAB_A_KEYS if adv.explainer_nodes(shown.page, k)}
     assert "C01" in present, "C01: a rendered section lost its description"
     for key in adv.RETIREMENT_A_KEYS:
         assert adv.explainer_nodes(shown.page, key), (
@@ -220,15 +214,9 @@ def test_a_page_with_nothing_stored_describes_only_the_sections_it_renders(advis
         )
     for key in ("W01", "L01", "B00", "T02", "X01"):
         assert key in present, f"{key} is a tab line and always shows"
-    for key in ("B07", "B10", "X05"):
+    for key in ("B07", "B10"):
         assert key not in present, f"{key} describes a section that does not render"
-        assert not adv.disclosure_nodes(shown.page, key), (
-            f"{key}: a disclosure outlives its section"
-        )
-    for row in adv.b_rows_for("X05") + adv.b_rows_for("B07") + adv.b_rows_for("B10"):
-        assert not shown.page.select(f'[data-term="{row["key"]}"]'), (
-            f"{row['key']} is defined for a section that is not on the page"
-        )
+    # Their terms live in the tab's Glossary, which a page with no such section still holds.
 
 
 def test_without_a_key_the_tab_lines_stay_and_the_try_panels_carry_no_orphaned_description(
@@ -251,37 +239,90 @@ def test_without_a_key_the_tab_lines_stay_and_the_try_panels_carry_no_orphaned_d
 
 
 # ---------------------------------------------------------------------------
-# AC-2: term definitions (S-2.6 .. S-2.11)
+# AC-4: the other tabs' Glossaries (S-4.1, S-4.2, S-4.3, S-4.5, S-4.7, S-4.11)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("key", A_KEYS_WITH_TERMS)
-def test_a_disclosure_follows_its_description_closed_with_one_line_per_term(advisor, key):
+def _panel_glossary(shown: Opened, host: str):
+    panel = adv.panel_of(shown.page, adv.TAB_OF_GLOSSARY_HOST[host])
+    found = panel.select('details[data-terms="glossary"]')
+    assert len(found) == 1, f"{host}: {len(found)} Glossaries in the panel, not one"
+    return panel, found[0]
+
+
+@pytest.mark.parametrize("host", adv.OTHER_TAB_GLOSSARY_HOSTS)
+def test_a_tab_ends_with_one_closed_glossary_holding_table_gs_lines_in_order(advisor, host):
+    """S-4.1 and S-4.2: one disclosure, closed, summary Glossary, the last element of the tab
+    panel, one paragraph per Table G line in order with exactly the line's text."""
     shown = advisor.open("full", key=True, seed=_seed_everything)
-    values = _full_world_values()
-    rows = adv.b_rows_for(key)
-    nodes = adv.disclosure_nodes(shown.page, key)
-    assert len(nodes) == 1, f"{key}: {len(nodes)} disclosures"
-    details = nodes[0]
-    assert "hp-more" in details.get("class", []), f"{key}: the disclosure is not the shared hp-more"
-    assert not details.has_attr("open"), f"{key}: the disclosure is open on load"
-    summary = details.find("summary", recursive=False)
-    assert summary is not None and adv.norm(summary.get_text(" ")) == adv.DISCLOSURE_SUMMARY
-    explainer = adv.explainer_nodes(shown.page, key)[0]
-    assert adv.next_element(explainer) is details, (
-        f"{key}: the disclosure is not directly after its description"
+    panel, glossary = _panel_glossary(shown, host)
+    assert "hp-more" in glossary.get("class", []) and not glossary.has_attr("open")
+    assert glossary.get("data-glossary-host") == host and glossary.get("data-testid") == "glossary"
+    summary = glossary.find("summary", recursive=False)
+    assert summary is not None and adv.norm(summary.get_text(" ")) == "Glossary"
+    assert [c for c in panel.find_all(recursive=False)][-1] is glossary, (
+        f"the Glossary is not the last element of the {host} panel"
     )
-    lines = [c for c in details.find_all(recursive=False) if c.name != "summary"]
-    assert [c.name for c in lines] == ["p"] * len(rows), (
-        f"{key}: the disclosure holds {[c.name for c in lines]}, not one p per term row"
-    )
-    assert [c.get("data-term") for c in lines] == [r["key"] for r in rows], (
-        f"{key}: the term rows are not in table order"
-    )
-    for line, record in zip(lines, rows, strict=True):
-        assert adv.norm(line.get_text(" ")) == adv.norm(
-            adv.expected_row(record["key"], "B", **values)
-        ), record["key"]
+    lines = [c for c in glossary.find_all(recursive=False) if c.name != "summary"]
+    expected = copy_fixture.glossary(host)
+    assert [c.name for c in lines] == ["p"] * len(expected)
+    assert [c.get("data-term") for c in lines] == [x["key"] for x in expected]
+    for node, line in zip(lines, expected, strict=True):
+        assert line["slots"] == [], f"{line['key']}: a slot the page has no value for"
+        assert adv.norm(node.get_text(" ")) == adv.norm(line["text"]), line["key"]
+
+
+@pytest.mark.parametrize("host", adv.OTHER_TAB_GLOSSARY_HOSTS)
+def test_every_line_of_a_tab_glossary_is_unchanged_from_the_reference_row(advisor, host):
+    """S-4.5 and S-4.7: no line of these six tabs is a Table G2 line, so each equals the reference
+    row it moved from, word for word."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    _, glossary = _panel_glossary(shown, host)
+    for line in copy_fixture.glossary(host):
+        assert line["source"] == "ref", f"{line['key']}: premise, no G2 line on this tab"
+        node = glossary.select_one(f'p[data-term="{line["key"]}"]')
+        assert node is not None, line["key"]
+        assert adv.norm(node.get_text(" ")) == adv.norm(copy_fixture.text(line["key"], "B")), line[
+            "key"
+        ]
+
+
+@pytest.mark.parametrize("world", ["empty", "full"])
+@pytest.mark.parametrize("host", adv.OTHER_TAB_GLOSSARY_HOSTS)
+def test_a_tab_glossary_holds_every_line_whatever_sections_render(advisor, host, world):
+    """S-4.11: with no run, no survivors, no proposals and no key, each Glossary still holds every
+    line of its tab (the Strategy Builder's B07t and B12 describe a card that is not there)."""
+    shown = advisor.open(world, key=False)
+    _, glossary = _panel_glossary(shown, host)
+    keys = [c.get("data-term") for c in glossary.find_all("p", recursive=False)]
+    assert keys == [x["key"] for x in copy_fixture.glossary(host)]
+
+
+@pytest.mark.parametrize("host", adv.OTHER_TAB_GLOSSARY_HOSTS)
+def test_a_tab_carries_no_what_the_terms_mean_disclosure_and_defines_each_term_once(advisor, host):
+    """S-4.3: no such summary, no data-terms but the Glossary, each line defined once in its tab."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    panel, _ = _panel_glossary(shown, host)
+    summaries = [adv.norm(s.get_text(" ")) for s in panel.select("summary")]
+    assert adv.DISCLOSURE_SUMMARY not in summaries, summaries
+    others = [
+        d["data-terms"] for d in panel.select("[data-terms]") if d["data-terms"] != "glossary"
+    ]
+    assert others == [], others
+    for line in copy_fixture.glossary(host):
+        found = panel.select(f'[data-term="{line["key"]}"]')
+        assert len(found) == 1, f"{line['key']} is defined {len(found)} times in the {host} tab"
+
+
+def test_no_advisor_tab_is_left_holding_a_what_the_terms_mean_disclosure(advisor):
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    assert not shown.page.select('details[data-terms]:not([data-terms="glossary"])')
+    assert adv.DISCLOSURE_SUMMARY not in [
+        adv.norm(s.get_text(" ")) for s in shown.page.select("summary")
+    ]
+    assert len(shown.page.select('details[data-terms="glossary"]')) == len(
+        adv.GLOSSARY_HOSTS_DONE
+    ), "one Glossary per Advisor tab"
 
 
 def test_every_term_is_defined_once_on_the_page(advisor):
@@ -359,12 +400,20 @@ def test_the_market_prism_badge_reads_its_resolved_and_unresolved_forms(advisor,
 
 
 @pytest.mark.parametrize("resolved", [True, False])
-def test_the_strategy_builder_run_note_reads_the_kept_note_with_the_models_state(advisor, resolved):
+def test_no_run_note_shows_under_propose_new_strategies_whatever_the_models_state(
+    advisor, resolved
+):
+    """S-3.6 and CX-10: the note B03 is removed with its model sentence; the model line (MU4) and
+    B00 say what it said."""
     shown = advisor.open("full", key=True, models=resolved, seed=_seed_everything)
-    node = adv.explainer_nodes(shown.page, "B03")[0]
-    assert adv.norm(node.get_text(" ")) == adv.norm(
-        adv.kept_model_note("B03", SUGGESTION_MODEL if resolved else None)
+    controls = shown.page.select_one('[data-testid="strategy-builder-controls"]')
+    assert controls is not None, "premise: with a key the Strategy Builder shows its controls"
+    assert not controls.select(".run-controls-note, [data-explainer]"), (
+        "a note still sits in the run controls"
     )
+    assert adv.explainer_nodes(shown.page, "B03") == []
+    assert "The advisor generates candidate strategies" not in shown.text()
+    assert "Only the single strongest candidate that clears the bar" not in shown.text()
 
 
 def test_each_model_knob_is_read_once_so_a_badge_and_its_known_flag_come_from_one_choice(advisor):
@@ -784,7 +833,8 @@ class TestSecurity:
         assert any(m.group(1) == "explainer" for m in matches), (
             "the template carries no description"
         )
-        assert any(m.group(1) == "terms" for m in matches), "the template carries no disclosure"
+        # Every term line is a Glossary line (the macro writes the one data-terms).
+        assert any(m.group(1) == "term" for m in matches), "the template carries no term line"
         for match in matches:
             window = source[match.start() : match.start() + 600]
             assert "| safe" not in window and "|safe" not in window, match.group(0)
@@ -792,7 +842,7 @@ class TestSecurity:
     def test_a_description_carries_no_script_or_event_handler(self, advisor):
         shown = advisor.open("full", key=True, seed=_seed_everything)
         nodes = shown.page.select("[data-explainer], details.hp-more")
-        assert len(nodes) >= len(adv.OWNED_A_KEYS), "the page carries no descriptions to scan"
+        assert len(nodes) >= len(adv.PLAN_A_KEYS), "the page carries no descriptions to scan"
         for node in nodes:
             assert not node.find("script")
             for el in [node, *node.find_all(True)]:
@@ -1360,3 +1410,178 @@ def test_every_evidence_heading_of_a_tenure_card_names_its_glossary_line(advisor
             )
             assert heading is not None, name
             assert heading.get("data-glossary") == key, (name, heading.get("data-glossary"))
+
+
+# ---------------------------------------------------------------------------
+# Correlations, Asset Swaps, Logic Changes, Chat, Strategy Builder and Frontrunner Builder:
+# what the plan removes or rewords, the unavailable states, and the Glossary keys on labels
+# (the plan's AC-3 and AC-4 for the six tabs)
+# ---------------------------------------------------------------------------
+
+# The unavailable bodies as the reference page printed them (templates/ai_advisor.html at
+# c0760e70): the plan keeps them (S-3.7).
+UNAVAILABLE_BODIES = {
+    "no-api-key-state": (
+        "Composer API key not configured. Set COMPOSER_KEY_ID and COMPOSER_SECRET to enable "
+        "swap proposals."
+    ),
+    "no-api-key-state-logic": (
+        "Composer API key not configured. Set COMPOSER_KEY_ID and COMPOSER_SECRET to enable "
+        "logic-change proposals."
+    ),
+    "no-api-key-state-sb": (
+        "Composer API key not configured. Set COMPOSER_KEY_ID and COMPOSER_SECRET environment "
+        "variables to enable strategy-builder proposals."
+    ),
+}
+# The Strategy Builder banner sentence CX-9 drops (it is Glossary B02), as the reference printed it.
+OLD_SB_BANNER_SENTENCE = (
+    "A multiple-testing correction (FDR/Yekutieli) is applied across ALL backtested candidates "
+    "— raising the number of candidates raises the bar each must clear."
+)
+OLD_FR_EMPTY_BODY = "Run a build above, or check back after the weekly scheduled run."
+OLD_BANNER_TEXT_FR = "Review each candidate's deltas below before approving."
+
+
+def test_every_old_text_the_other_tabs_dropped_is_in_no_section_body(advisor):
+    """S-3.3 for the six tabs: the reference text of each shortened or removed row, and each old
+    sentence its new text drops, appears in no section body (hidden panels included)."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    body = _without_glossaries(shown.page)
+    problems = []
+    for key in (*adv.OTHER_TAB_A_KEYS, "B03", "X05"):
+        old = adv.norm(copy_fixture.text(key, "A"))
+        new = copy_fixture.a_text(key)
+        kept = set(_sentences(new)) if new else set()
+        if old in body:
+            problems.append(f"{key}: the whole old text is on the page")
+        for sentence in _sentences(old):
+            if sentence not in kept and sentence in body:
+                problems.append(f"{key}: the old sentence {sentence!r} is on the page")
+    for literal in (OLD_SB_BANNER_SENTENCE, OLD_FR_EMPTY_BODY):
+        if literal in body:
+            problems.append(f"the old text {literal!r} is on the page")
+    assert not problems, "\n".join(problems)
+
+
+@pytest.mark.parametrize("world", ["full", "empty"])
+def test_the_removed_descriptions_are_not_on_the_page_in_any_state(advisor, world):
+    shown = advisor.open(
+        world, key=world == "full", seed=_seed_everything if world == "full" else None
+    )
+    for removed in ("B03", "X05"):
+        assert adv.explainer_nodes(shown.page, removed) == [], f"{removed} shows in {world}"
+    assert not shown.page.select('[data-terms="B03"], [data-terms="X05"]')
+
+
+def test_the_strategy_builder_banner_reads_exactly_the_shortened_text_and_stays_a_note(advisor):
+    """S-3.6 and CX-9: the multiple-testing sentence is gone, the other three stay word for word."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    banner = shown.page.select_one('[data-testid="strategy-builder-risk-banner"]')
+    assert banner is not None and banner.get("role") == "note"
+    assert adv.norm(banner.get_text(" ")) == copy_fixture.x_row("CX-9")["new_text"]
+    assert not banner.select("button, input, a"), "the banner is not dismissible"
+    assert banner.select_one("strong") is not None, "the bold lead stays"
+
+
+def test_the_strategy_builder_still_shows_its_model_line_and_b00_under_it(advisor):
+    shown = advisor.open("full", key=True, models=True, seed=_seed_everything)
+    panel = adv.panel_of(shown.page, "strategy-builder")
+    line = panel.select_one(".cap-tab-attribution")
+    assert line is not None and adv.norm(line.get_text(" ")) == adv.norm(
+        copy_fixture.fill(copy_fixture.row("MU4", "C")["new_resolved"], model=SUGGESTION_MODEL)
+    )
+    assert adv.next_element(line) is adv.explainer_nodes(shown.page, "B00")[0]
+
+
+def test_the_frontrunner_empty_state_body_reads_the_reworded_text(advisor):
+    shown = advisor.open("empty", key=True)
+    state = shown.page.select_one('[data-testid="frontrunner-builder-empty-state"]')
+    assert state is not None, "premise: no pending proposals renders the empty state"
+    body = state.select_one(".empty-state-body")
+    assert adv.norm(body.get_text(" ")) == copy_fixture.x_row("CX-11")["new_text"]
+    assert copy_fixture.x_row("CX-11")["new_text"] == "Proposals appear here after a build."
+    title = state.select_one(".empty-state-title")
+    assert adv.norm(title.get_text(" ")) == "No pending frontrunner proposals."
+
+
+@pytest.mark.parametrize(("testid", "body"), list(UNAVAILABLE_BODIES.items()))
+def test_without_a_key_each_unavailable_state_reads_as_at_the_reference_and_the_tab_lines_show(
+    advisor, testid, body
+):
+    """S-3.7: W01, L01 and B00 still show; the unavailable state is the reference's."""
+    shown = advisor.open("full", key=False, seed=_seed_everything)
+    for key in ("W01", "L01", "B00"):
+        node = adv.explainer_nodes(shown.page, key)
+        assert len(node) == 1 and adv.norm(node[0].get_text(" ")) == adv.norm(
+            copy_fixture.a_text(key)
+        ), key
+    state = shown.page.select_one(f'[data-testid="{testid}"] .no-api-key-body')
+    assert state is not None, f"no {testid} on a page with no key"
+    assert adv.norm(state.get_text(" ")) == body
+
+
+def test_the_chat_default_body_reads_t02_and_names_both_buttons_that_open_a_discussion(advisor):
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    node = shown.page.select_one('.chat-default-state [data-explainer="T02"]')
+    assert node is not None
+    text = adv.norm(node.get_text(" "))
+    assert text == copy_fixture.a_text("T02")
+    assert "Discuss this proposal" in text and "Chat about this" in text
+
+
+# --- the Glossary keys on labels (TG3-15), in the server render
+
+_FR_LABEL_LINES = {"Calmar": "X11", "CAGR": "X11", "Max DD": "X11", "Node count change": "X12"}
+
+
+def _key_of_cell(cell) -> str | None:
+    holder = cell if cell.has_attr("data-glossary") else cell.select_one("[data-glossary]")
+    return holder.get("data-glossary") if holder is not None else None
+
+
+def test_the_frontrunner_change_labels_name_their_glossary_lines(advisor):
+    shown = advisor.open("full", key=True, seed=lambda: adv.seed_frontrunner_proposals_varied(2))
+    cards = shown.page.select('[data-testid="frontrunner-proposal-card"]')
+    assert len(cards) == 2, "premise: both proposals render a card"
+    seen = set()
+    for card in cards:
+        for row in card.select('[data-testid="stats-table"] tbody tr'):
+            cell = row.find(["td", "th"])
+            label = adv.norm(cell.get_text(" "))
+            if label in _FR_LABEL_LINES:
+                seen.add(label)
+                assert _key_of_cell(cell) == _FR_LABEL_LINES[label], (
+                    f"{label!r} names {_key_of_cell(cell)!r}, not {_FR_LABEL_LINES[label]}"
+                )
+    assert seen == set(_FR_LABEL_LINES), f"labels never found: {set(_FR_LABEL_LINES) - seen}"
+    glossary = adv.panel_of(shown.page, "frontrunner-builder").select_one(
+        'details[data-terms="glossary"]'
+    )
+    for key in set(_FR_LABEL_LINES.values()):
+        assert glossary.select_one(f'p[data-term="{key}"]') is not None, key
+
+
+def test_the_live_baseline_header_names_its_glossary_line(advisor):
+    shown = advisor.open("full", key=True, seed=lambda: adv.seed_strategy_builder_cards(3))
+    headers = shown.page.select('[data-testid="baseline-col-header"]')
+    assert headers, "premise: a survivor with a live baseline renders the column"
+    assert {h.get("data-glossary") for h in headers} == {"B07t"}
+    glossary = adv.panel_of(shown.page, "strategy-builder").select_one(
+        'details[data-terms="glossary"]'
+    )
+    assert glossary.select_one('p[data-term="B07t"]') is not None
+
+
+# --- the Frontrunner cards sit in the equal-track grid (TT-26)
+
+
+def test_the_frontrunner_cards_sit_in_the_equal_track_grid_and_no_fill_rule_is_left(advisor):
+    shown = advisor.open("full", key=True, seed=lambda: adv.seed_frontrunner_proposals(5))
+    grid = shown.page.select_one('[data-testid="frontrunner-proposal-cards"]')
+    assert grid is not None and "proposal-cards" in grid.get("class", [])
+    assert "proposal-cards--fill" not in grid.get("class", []), (
+        "the flex wrap that stretches a last row"
+    )
+    source = TEMPLATE.read_text(encoding="utf-8")
+    assert "proposal-cards--fill" not in source, "a rule or class of the fill modifier is left"

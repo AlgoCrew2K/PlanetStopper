@@ -690,10 +690,13 @@ def test_the_explain_only_notice_and_panel_are_unchanged(advisor_page_html):
         in " ".join(html.split())
     )
     assert 'data-testid="chat-panel"' in html
-    # The chat body is the page-copy definition T02: it still names both buttons that open a
-    # discussion from a card.
+    # The chat body is the page-copy description T02: it still names both buttons that open a
+    # discussion from a card, in the plan's one sentence.
+    from tests.ui import _page_copy as copy_fixture
+
     assert 'data-explainer="T02"' in html
-    assert "Use Discuss this proposal or Chat about this" in " ".join(html.split())
+    assert copy_fixture.a_text("T02") in " ".join(html.split())
+    assert "the Discuss this proposal and Chat about this buttons" in " ".join(html.split())
 
 
 def test_without_a_key_the_examples_still_render_and_chat_says_it_is_unavailable(

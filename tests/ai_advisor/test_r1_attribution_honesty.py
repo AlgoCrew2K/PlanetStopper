@@ -292,7 +292,9 @@ from tests.model_config.test_fixture_schemas import schema_check  # noqa: E402
 
 _UNAVAILABLE = "model unavailable"
 _CAPTURED_PAGE = load_fixture("models/page_captured.json")
-_SUGGESTION_BADGES = ("asset_swaps", "logic_changes", "strategy_builder", "run_note")
+# The Strategy Builder run note (which named the model a second time) is removed by the plan; the
+# model line of each tab is the one place a model name is printed.
+_SUGGESTION_BADGES = ("asset_swaps", "logic_changes", "strategy_builder")
 _SYNTHESIS_BADGES = ("chat", "prism")
 _SECONDS_PER_DAY = 24 * 60 * 60
 _THREAD_JOIN_SECONDS = 15.0
@@ -375,7 +377,6 @@ def _badges(html: str) -> dict[str, str]:
         assert match, f"{testid} carries no cap-tab-attribution line"
         badges[key] = match.group(1)
     badges["prism"] = _element_after(html, 'data-testid="prism-model-badge"', "</span>")
-    badges["run_note"] = _element_after(html, 'class="run-controls-note"', "</p>")
     return badges
 
 
@@ -410,7 +411,6 @@ _UNRESOLVED_ROW = {
     "logic_changes": "MU2",
     "chat": "MU3",
     "strategy_builder": "MU4",
-    "run_note": "MU5",
     "prism": "MU1",
 }
 

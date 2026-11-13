@@ -908,12 +908,15 @@ class TestBannersSayTrueThings:
             assert node.tag not in {"button", "input", "a"}, "no control inside the banner"
             marks = " ".join([*node.classes, node.attrs.get("data-testid", "")]).lower()
             assert "dismiss" not in marks and "close" not in marks
+        # The plan drops the multiple-testing sentence (it is a Glossary line) and keeps the other
+        # three: the bold lead, the sound-but-unprovable sentence and the from-scratch sentence.
         for sentence in (
-            "multiple-testing correction (FDR/Yekutieli)",
+            "highest overfitting risk",
             "sound-but-unprovable",
             "selection-bias exposure",
         ):
             assert sentence in banner.text, f"banner lost its {sentence!r} sentence"
+        assert "multiple-testing correction" not in banner.text, "the dropped sentence is back"
 
     def test_logic_changes_banner_text_is_unchanged(self, advisor_page_html):
         panel = parse_html(advisor_page_html).find(testid="tab-panel-logic-changes")
