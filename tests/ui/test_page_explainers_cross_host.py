@@ -133,6 +133,11 @@ RULED_FILE_REMOVALS = frozenset(
         ("static/ai_advisor.js", "testid:retirement-pair"),
         ("static/ai_advisor.js", "testid:retirement-recommender-section"),
         ("static/ai_advisor.js", "testid:tenure-review-section"),
+        # The closed-disclosure look of a Glossary comes from the shared macro; History keeps the
+        # class on its own reason-descriptions disclosure.
+        ("templates/index.html", "class:hp-more"),
+        ("templates/performance.html", "class:hp-more"),
+        ("templates/settings.html", "class:hp-more"),
     }
 )
 
@@ -508,6 +513,8 @@ def test_every_section_of_the_other_hosts_shows_its_new_description_in_the_empty
         host = page_of(record["host_place"])
         if host not in ("/", "/performance", "/history", "/settings"):
             continue
+        if copy.host_of(record) == "settings modal":
+            continue  # the modal's descriptions are written by static/settings-modal.js on `/`
         if record["kind"] in ("removed", "moved") or record["slots"]:
             continue
         found = adv.soup(pages[host]).select(f'[data-explainer="{record["key"]}"]')
@@ -526,7 +533,11 @@ def test_the_two_removed_dashboard_lines_are_on_no_page(world, tmp_path, monkeyp
         assert copy.a_row(key)["kind"] in ("removed", "moved")
         assert not page.select(f'[data-explainer="{key}"]'), f"{key} is still on the dashboard"
         old = adv.norm(copy.text(key, "A"))
-        assert old not in visible_text(pages["/"]), f"the old text of {key} is still on the page"
+        # A Glossary line may carry the old words (D20t holds D20's sentences word for word).
+        for glossary in page.select('details[data-terms="glossary"]'):
+            glossary.decompose()
+        body = visible_text(str(page))
+        assert old not in body, f"the old text of {key} is still on the page outside a Glossary"
 
 
 # ---------------------------------------------------------------------------
@@ -678,9 +689,12 @@ def test_every_template_built_new_label_shows_on_some_host_in_the_full_world(tmp
         and not slotted(r)
         and "new_resolved" not in r
         and not _plan_moved(r)
+        # Y02's reference wording is shortened by CX-8, which the History tests pin.
+        and r["key"] != "Y02"
         and not all(part in everything for part in new_alternatives(r))
     ]
     assert not missing, f"new texts of reworded rows absent from every host: {missing}"
+    assert copy.x_row("CX-8")["new_text"] in everything
 
 
 @pytest.mark.parametrize("world", ["empty", "full"])

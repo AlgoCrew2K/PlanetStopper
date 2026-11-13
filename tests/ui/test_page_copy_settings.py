@@ -295,11 +295,16 @@ def test_the_credentials_section_says_nothing_of_saving_beyond_its_three_rows(se
     assert not ANY_SAVE_WORD.search(section), ANY_SAVE_WORD.search(section).group(0)
 
 
-def test_the_credentials_description_says_the_dashboard_does_not_save_them(settings_page):
-    element = settings_page.select_one('[data-explainer="S11"]')
-    assert element is not None, "the Credentials description element is missing"
-    text = _text(element)
-    assert "does not save credentials" in text and ".env" in text and "host" in text
+def test_the_credentials_section_says_the_dashboard_cannot_save_them_in_its_warning(settings_page):
+    """The plan shortens S11 to what the section holds; the not-saved fact is said once, by the
+    credentials warning (S12r), which names the .env file on the host."""
+    description = settings_page.select_one('[data-explainer="S11"]')
+    assert description is not None, "the Credentials description element is missing"
+    warning = settings_page.select_one("#sec-credentials .cred-warn")
+    assert warning is not None, "the Credentials warning is missing"
+    text = _text(warning)
+    assert "cannot save" in text and ".env" in text and "host" in text
+    assert "does not save credentials" not in _text(description), "said twice"
 
 
 @pytest.fixture
@@ -393,10 +398,10 @@ def test_the_script_writes_no_disclosure_and_the_one_glossary_survives_the_roste
     assert len(glossaries) == 1, f"{len(glossaries)} Glossaries after one load"
     got = [p.get("data-term") for p in glossaries[0].find_all("p", recursive=False)]
     assert got == [x["key"] for x in SETTINGS_GLOSSARY]
-    assert (
-        content.select_one("main.settings-content, .settings-content").find_all(recursive=False)[-1]
-        is glossaries[0]
-    ), "the roster load moved the Glossary off the end of the content"
+    # READ_CONTENT is the content element's innerHTML, so its top-level children are the content's.
+    assert content.find_all(recursive=False)[-1] is glossaries[0], (
+        "the roster load moved the Glossary off the end of the content"
+    )
 
 
 def test_the_no_longer_held_row_keeps_its_title_and_the_meaning_is_also_in_a_line(

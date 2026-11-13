@@ -210,7 +210,11 @@ class TestDescriptions:
     ):
         soup = render(world)
         assert not soup.select(f'[data-explainer="{key}"]'), f"{key} is still on the page"
-        assert copy.text(key, "A") not in _page_words(soup), f"the old text of {key} is on the page"
+        # A Glossary line may carry the old words (D20t holds D20's sentences word for word), so
+        # the page is read outside every Glossary.
+        assert copy.text(key, "A") not in _without_glossaries(soup), (
+            f"the old text of {key} is on the page"
+        )
 
     @pytest.mark.parametrize("key", ["dash.hero", "dash.rows", "D21", "D28", "D40", "D41", "D47"])
     def test_a_shortened_description_drops_the_sentences_its_new_text_does_not_keep(
