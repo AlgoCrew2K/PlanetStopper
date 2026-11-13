@@ -293,6 +293,50 @@ return out;
 )
 
 # ---------------------------------------------------------------------------
+# COLUMN_FIT_JS: how wide each column is against the text it holds
+# ---------------------------------------------------------------------------
+
+COLUMN_FIT_JS = _script(
+    _COLUMN_CORE_JS
+    + r"""
+const out = { name: spec.name, found: 0, rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+              instances: [] };
+const linesOf = (el) => {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  return new Set([...range.getClientRects()].filter((g) => g.width > 0).map((g) => Math.round(g.top))).size;
+};
+const groups = [...document.querySelectorAll(spec.group)].filter(shown);
+out.found = groups.length;
+groups.forEach((group, index) => {
+  const t = readTable(group);
+  const rows = [...t.head.slice(0, 1), ...t.body];
+  const g = group.getBoundingClientRect();
+  const columns = t.names.map((name, c) => {
+    // width: the column's own width (every cell of a column has it); extent: from the cell's left
+    // edge to the end of the widest text in it; pad: the cell's right padding, the one gap a column
+    // keeps after its text; wrapped: some cell's text takes more than one line.
+    const col = { name, width: 0, extent: 0, pad: 0, wrapped: false, cells: 0 };
+    rows.forEach((row) => {
+      const cell = cellsOf(row)[c];
+      if (!cell) return;
+      const r = cell.getBoundingClientRect();
+      col.width = Math.max(col.width, r.width);
+      col.pad = parseFloat(getComputedStyle(cell).paddingRight) || 0;
+      const box = contentBox(cell);
+      if (box) col.extent = Math.max(col.extent, box.right - r.left);
+      if (linesOf(cell) > 1) col.wrapped = true;
+      col.cells += 1;
+    });
+    return col;
+  });
+  out.instances.push({ index, table: { left: g.left, right: g.right, width: g.width }, columns });
+});
+return out;
+"""
+)
+
+# ---------------------------------------------------------------------------
 # FIELD_OFFSETS_JS: each named field at one offset on every row or card
 # ---------------------------------------------------------------------------
 

@@ -132,15 +132,20 @@ def _prepare(tmp_path, monkeypatch):
 
 
 @contextmanager
-def _evaluated(firefox, server, monkeypatch, name: str, width: int):  # noqa: F811
-    """The tab after Evaluate, over the real route's body written by the real script."""
+def _evaluated(firefox, server, monkeypatch, name: str, width: int, edit=None):  # noqa: F811
+    """The tab after Evaluate, over the real route's body written by the real script. ``edit``, when
+    given, is a named change to the body's cards (the figures of the edge formats)."""
     kind = KINDS[name]
     response = (
         answers.swap_response(monkeypatch)
         if name == "swap"
         else answers.logic_response(monkeypatch)
     )
-    body = json.dumps(_body_with_cards(response, CARD_COUNT))
+    body = _body_with_cards(response, CARD_COUNT)
+    if edit is not None:
+        for card in body["survivors_detail"] + body["rejected_detail"]:
+            edit(card)
+    body = json.dumps(body)
     with open_probe(
         firefox, server, width=width, height=al.NARROW_VIEWPORT_HEIGHT.get(width, 1000)
     ) as probe:
@@ -242,6 +247,141 @@ def test_each_columns_labels_start_at_one_x_and_values_end_at_one_x_within_48_px
         f"{len(found['columns'])} Baseline and Variant columns, not {2 * CARD_COUNT}"
     )
     assert not found["violations"], "\n".join(found["violations"])
+
+
+# Where a card's Variant column sits under its Baseline column the two blocks share one label track
+# and one value track (PM ruling R2-2): every label of the card starts at one x and every value ends
+# at one x, across both blocks. Side by side, each block keeps its own tracks. The measure reports,
+# per card, how the blocks sit and the spread of the label starts and the value ends across both.
+_SHARED_TRACKS_JS = """(selector) => {
+  const root = document.querySelector(selector);
+  const out = { cards: 0, stacked: 0, sideBySide: 0, readings: [] };
+  const shown = (el) => el.getClientRects().length > 0;
+  // The edges of the printed text, not of the element's box: a value left in a wider track has a
+  // box that ends at the track edge and text that does not.
+  const textEdges = (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const rects = [...range.getClientRects()].filter((x) => x.width > 0);
+    return { left: Math.min(...rects.map((x) => x.left)), right: Math.max(...rects.map((x) => x.right)) };
+  };
+  for (const card of root.querySelectorAll('.sym-card')) {
+    const grid = card.querySelector('.stats-grid');
+    if (!grid) continue;
+    out.cards += 1;
+    const [a, b] = [...grid.children].map((c) => c.getBoundingClientRect());
+    const stacked = b.top >= a.bottom - 1;
+    if (stacked) out.stacked += 1; else out.sideBySide += 1;
+    const labels = [...grid.querySelectorAll('.stat-label')].filter(shown)
+      .map((el) => textEdges(el).left);
+    const values = [...grid.querySelectorAll('.stat-value')].filter(shown)
+      .map((el) => textEdges(el).right);
+    const spread = (xs) => Math.max(...xs) - Math.min(...xs);
+    out.readings.push({ stacked, labelSpread: spread(labels), valueSpread: spread(values),
+                        labels: labels.length, values: values.length });
+  }
+  return out;
+}"""
+
+
+def _assert_stacked_blocks_share_tracks(read: dict) -> None:
+    assert read["cards"] == CARD_COUNT, f"{read['cards']} result cards, not {CARD_COUNT}"
+    problems = []
+    for index, card in enumerate(read["readings"], start=1):
+        if not card["stacked"]:
+            continue
+        if card["labelSpread"] > al.TOLERANCE_PX:
+            problems.append(
+                f"card {index}: labels of Baseline and Variant start {card['labelSpread']:.1f} px apart"
+            )
+        if card["valueSpread"] > al.TOLERANCE_PX:
+            problems.append(
+                f"card {index}: values of Baseline and Variant end {card['valueSpread']:.1f} px apart"
+            )
+    assert not problems, "\n".join(problems)
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+@pytest.mark.parametrize("name", list(KINDS))
+def test_blocks_stacked_in_a_card_share_one_label_track_and_one_value_track(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    name,
+    width,  # noqa: F811
+):
+    """PM ruling R2-2 (S-1.19). Rejects each stacked block packing its own tracks (Variant's values
+    ended 77 px left of Baseline's at 1920 on the Logic Changes cards), a shared label track whose
+    values are left-aligned, and a shared track set for blocks that sit side by side."""
+    _prepare(tmp_path, monkeypatch)
+    with _evaluated(firefox, advisor_server, monkeypatch, name, width) as probe:
+        read = probe.page.evaluate(_SHARED_TRACKS_JS, KINDS[name]["results"])
+    _assert_stacked_blocks_share_tracks(read)
+
+
+# Where the blocks stack at the widths the review captured (the ruling's evidence): the Asset Swaps
+# cards at 1440 and 1920 and the Logic Changes cards at 1920. The test above holds nothing for a
+# width where no card stacks, so these three pin that a stacked card is what it measured.
+@pytest.mark.parametrize(("name", "width"), [("swap", 1440), ("swap", 1920), ("logic", 1920)])
+def test_the_captured_stacked_widths_stack_every_card_so_the_shared_track_rule_is_measured(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    name,
+    width,  # noqa: F811
+):
+    _prepare(tmp_path, monkeypatch)
+    with _evaluated(firefox, advisor_server, monkeypatch, name, width) as probe:
+        read = probe.page.evaluate(_SHARED_TRACKS_JS, KINDS[name]["results"])
+    assert read["stacked"] == CARD_COUNT, (
+        f"{read['stacked']} of {read['cards']} cards stack: {read}"
+    )
+    _assert_stacked_blocks_share_tracks(read)
+
+
+def test_logic_change_blocks_still_sit_side_by_side_at_1440_with_their_own_tracks(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,  # noqa: F811
+):
+    """PM ruling R2-2: side by side stays as S-1.19 has it. Rejects fixing the stacked case by
+    stacking every card, or by one grid of both blocks that keeps them under each other always."""
+    _prepare(tmp_path, monkeypatch)
+    with _evaluated(firefox, advisor_server, monkeypatch, "logic", 1440) as probe:
+        read = probe.page.evaluate(_SHARED_TRACKS_JS, LOGIC["results"])
+        columns = al.measure(probe.page, al.FIGURE_COLUMNS_JS, _figure_spec("logic"))
+    assert read["sideBySide"] == CARD_COUNT, (
+        f"{read['sideBySide']} of {read['cards']} cards side by side"
+    )
+    assert not columns["violations"], "\n".join(columns["violations"])
+
+
+@pytest.mark.parametrize("width", [1001, 1920])
+@pytest.mark.parametrize("name", list(KINDS))
+def test_stacked_blocks_share_tracks_when_the_figures_are_at_the_edge_of_their_formats(
+    firefox,
+    advisor_server,
+    tmp_path,
+    monkeypatch,
+    name,
+    width,  # noqa: F811
+):
+    """PM ruling R2-2 over a negative, a zero, the longest figure and a dash: the one value track is
+    as wide as the longest value of either block, and every value still ends at its right edge."""
+
+    def edge_figures(card: dict) -> None:
+        card["baseline_stats"] = {**(card.get("baseline_stats") or {}), **_EDGE_BASELINE}
+        card["variant_stats"] = {**(card.get("variant_stats") or {}), **_EDGE_VARIANT}
+
+    _prepare(tmp_path, monkeypatch)
+    with _evaluated(firefox, advisor_server, monkeypatch, name, width, edit=edge_figures) as probe:
+        read = probe.page.evaluate(_SHARED_TRACKS_JS, KINDS[name]["results"])
+        contained = probe.page.evaluate(_CONTAINMENT_JS, KINDS[name]["results"])
+    _assert_stacked_blocks_share_tracks(read)
+    _assert_contained(contained, CARD_COUNT)
 
 
 @pytest.mark.parametrize("name", list(KINDS))
