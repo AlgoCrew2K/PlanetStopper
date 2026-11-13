@@ -452,6 +452,7 @@ return out;
 ROW_START_JS = _script(
     r"""
 const tol = spec.tolerance || TOL;
+const SUBPIXEL = 0.5;
 const maxGap = spec.max_gap === undefined ? 24 : spec.max_gap;
 const controlSelector = spec.controls || CONTROL;
 const isControl = (el) => {
@@ -478,12 +479,13 @@ rows.forEach((row, index) => {
     .map((el) => ({ el, box: contentBox(el), control: false }))
     .filter((x) => x.box);
   items.forEach((x) => { x.control = isControl(x.el); });
-  // A line is the run of items whose tops are within half an item's height of the line's first.
+  // A line is the run of items that share some height: an item centred beside a taller one is on
+  // that one's line, an item wrapped below it is not.
   const sorted = items.slice().sort((a, b) => a.box.top - b.box.top || a.box.left - b.box.left);
   const lines = [];
   for (const x of sorted) {
     const last = lines[lines.length - 1];
-    if (last && Math.abs(x.box.top - last[0].box.top) <= Math.max(tol, (x.box.bottom - x.box.top) / 2)) last.push(x);
+    if (last && last.some((y) => x.box.top < y.box.bottom - tol / 2 && y.box.top < x.box.bottom - tol / 2)) last.push(x);
     else lines.push([x]);
   }
   const v = [];
@@ -498,7 +500,9 @@ rows.forEach((row, index) => {
         }
       } else {
         const gap = x.box.left - line[i - 1].box.right;
-        if (gap > maxGap) v.push('row ' + (index + 1) + ': ' + label + ' starts ' + fix(gap) + ' px after the element before it, more than ' + maxGap);
+        // A grid gap of exactly the bound measures a fraction of a pixel over it when a text box
+        // rounds differently from its element's box.
+        if (gap > maxGap + SUBPIXEL) v.push('row ' + (index + 1) + ': ' + label + ' starts ' + fix(gap) + ' px after the element before it, more than ' + maxGap);
       }
     });
   });
@@ -815,16 +819,20 @@ TABLE_GROUPS: dict[str, dict] = {
         "owner": "C5",
     },
     # --- the Advisor Overview
+    # The cards the page script writes after Run Claude advisor (the answer is a labelled stub the
+    # browser fulfils, so no model is called). The first button of a card is its Apply button, or the
+    # disabled "Blocked by OOS gate" button of a rejected suggestion.
     "suggestion_cards": {
         "host": "/ai-advisor",
         "open": {"tab": "overview", "action": "run_claude_advisor"},
         "kind": _FIELDS,
-        "group": None,
+        "group": "#suggestions-container",
+        "rows": '#suggestions-container > [id^="card-"]',
         "fields": [
-            {"name": "title"},
-            {"name": "gate dots"},
-            {"name": "figures"},
-            {"name": "buttons"},
+            {"name": "ring", "selector": '[data-testid="confidence-ring"]'},
+            {"name": "gate dots", "selector": '[data-testid="gate-badge"]'},
+            {"name": "figures", "selector": '[data-testid="projected-impact-bar"]'},
+            {"name": "buttons", "selector": ".suggestion-dismiss-btn", "numeric": True},
         ],
         "status": "action",
         "owner": "C2",
@@ -906,9 +914,17 @@ TABLE_GROUPS: dict[str, dict] = {
         "open": {"tab": "retirement"},
         "kind": _FIELDS,
         "group": '[data-testid="tab-panel-retirement"]',
-        "rows": '[data-testid="retirement-recommendation-card"]',
-        "fields": [],
-        "status": "unpinned",
+        # A tenure card's lifecycle block carries the same testid, so a card is told apart by the class
+        # the tenure card also holds.
+        "rows": ".retirement-rec-card:not(.tenure-review-entry)",
+        "fields": [
+            {"name": "pair line", "selector": ".card-header-row"},
+            {"name": "figures line", "selector": ".retirement-rec-meta"},
+            {"name": "gates line", "selector": ".retirement-rec-gates"},
+            {"name": "basis line", "selector": ".retirement-rec-basis"},
+        ],
+        "status": "ref",
+        "seed": "recommendation_cards",
         "owner": "C3",
     },
     "tenure_cards": {
@@ -1031,12 +1047,20 @@ TABLE_GROUPS: dict[str, dict] = {
         "seed": "frontrunner_proposals",
         "owner": "C4",
     },
+    # The cards of a live run, written by the page script from the run route's answer (a labelled stub
+    # the browser fulfils); a rejected card sits in a collapsed section, which the test opens, and only
+    # a rejected card carries guidance.
     "live_run_cards": {
         "host": "/ai-advisor",
         "open": {"tab": "strategy-builder", "action": "run_analysis"},
         "kind": _FIELDS,
-        "group": None,
-        "fields": [{"name": "title"}, {"name": "strip"}, {"name": "guidance"}],
+        "group": "#sb-run-results",
+        "rows": "#sb-run-results .proposal-card",
+        "fields": [
+            {"name": "title", "selector": ".card-name"},
+            {"name": "strip", "selector": '[data-testid="objective-strip"]'},
+            {"name": "guidance", "selector": '[data-testid="apply-guidance"]', "optional": True},
+        ],
         "status": "action",
         "owner": "C4",
     },
@@ -1091,6 +1115,13 @@ TOOLBAR_ROWS: dict[str, dict] = {
         "host": "/ai-advisor",
         "open": {"tab": "asset-swaps"},
         "row": '[data-testid="try-swap-form"]',
+        "status": "ref",
+        "owner": "C4",
+    },
+    "tweak_form": {
+        "host": "/ai-advisor",
+        "open": {"tab": "logic-changes"},
+        "row": '[data-testid="try-tweak-form"]',
         "status": "ref",
         "owner": "C4",
     },
@@ -1161,9 +1192,11 @@ FIGURE_LINES: dict[str, dict] = {
     "retirement_last_run_tiles": {
         "host": "/ai-advisor",
         "open": {"tab": "retirement"},
-        "line": None,
-        "items": ".mini-stat",
-        "status": "unpinned",
+        # A tile has no box of its own (``display: contents``): its figure, the value and the label,
+        # is the item, and the note under a tile is a line of its own below every figure.
+        "line": ".retirement-tiles",
+        "items": ".retirement-tile-figure",
+        "status": "ref",
         "owner": "C3",
     },
     "tenure_run_line": {

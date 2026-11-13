@@ -34,6 +34,7 @@ pytestmark = pytest.mark.browser
 SEEDS = {
     "strategy_builder": lambda: adv.seed_strategy_builder(survivors=3, backtest_failures=1),
     "frontrunner_proposals": lambda: adv.seed_frontrunner_proposals(5),
+    "recommendation_cards": lambda: adv.seed_recommendation_cards(3),
 }
 SHOWN = (
     "(sel) => [...document.querySelectorAll(sel)]"
