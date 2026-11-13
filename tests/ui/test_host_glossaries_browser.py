@@ -86,19 +86,29 @@ MARKED_JS = """
 
 def _line(host: str, key: str) -> str:
     text = next(x["text"] for x in copy.glossary(host) if x["key"] == key)
-    return " ".join(text.split())
+    # The Performance and History worlds patch the trading cost to 0.25 (the sibling fixture).
+    return " ".join(copy.fill(text, friction_pct="0.25").split())
 
 
 def _titles(probe, selector: str) -> list[dict]:
     return probe.page.evaluate(LABELS_JS, selector)
 
 
-def _expect(probe, host: str, selector: str, wanted: dict[str, str], where: str) -> None:
-    """Each label text in ``wanted`` is on the page under ``selector`` and its title is the line."""
+def _expect(
+    probe, host: str, selector: str, wanted: dict[str, str], where: str, *, prefix: bool = False
+) -> None:
+    """Each label text in ``wanted`` is on the page under ``selector`` and its title is the line.
+
+    A label is matched by its whole text; ``prefix`` also takes a label that continues after the
+    wanted words with a hidden or windowed note ("Max DD" then "needs 30 trading days"), which
+    would otherwise match a different label that merely starts with the same words ("Max DD
+    reduction")."""
     found = _titles(probe, selector)
     problems = []
     for text, key in wanted.items():
-        matches = [f for f in found if f["text"] == text or f["text"].startswith(text + " ")]
+        matches = [
+            f for f in found if f["text"] == text or (prefix and f["text"].startswith(text + " "))
+        ]
         if not matches:
             problems.append(f"{where}: no label {text!r} under {selector}")
             continue
@@ -132,7 +142,7 @@ DASHBOARD_LABELS = (
 
 def _expect_dashboard(probe, where: str) -> None:
     for selector, wanted in DASHBOARD_LABELS:
-        _expect(probe, "/", selector, wanted, where)
+        _expect(probe, "/", selector, wanted, where, prefix=True)
 
 
 def test_the_dashboard_labels_carry_their_glossary_line_as_a_title(

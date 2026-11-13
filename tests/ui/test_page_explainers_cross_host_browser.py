@@ -599,6 +599,8 @@ def test_with_every_script_refused_the_template_built_disclosures_and_labels_are
         and page_of(r.get("host_place") or "") == host
         and not slotted(r)
         and "new_resolved" not in r
+        # Y02's reference wording is shortened by CX-8, which the History tests pin.
+        and r["key"] != "Y02"
         and not all(_flat(part) in text for part in new_alternatives(r))
         and world == "full"
     ]
