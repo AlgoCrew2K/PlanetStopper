@@ -430,6 +430,7 @@
                     throw new Error("backtest unavailable (HTTP " + res.status + ")");
                 }
                 resultsArea.innerHTML = _renderResults(res.body);
+                if (window.syncStackedStatsGrids) { window.syncStackedStatsGrids(); }
             })
             .catch(function (err) {
                 resultsArea.innerHTML = "";

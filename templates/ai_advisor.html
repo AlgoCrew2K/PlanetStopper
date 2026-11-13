@@ -766,6 +766,10 @@
             .stats-grid > div > .stats-col-label { grid-column: 1 / -1; }
             .stats-grid .stat-row { display: contents; }
             .stats-grid .stat-value { text-align: right; }
+            /* Blocks that sit one under the other (the script marks the grid) share one label track
+               and one value track, so their labels start at one x and their values end at one x. */
+            .stats-grid--stacked { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content); justify-content: start; gap: 6px 12px; }
+            .stats-grid--stacked > div { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; max-width: none; }
         }
         .stat-pos { color: var(--studio-pos); }
         .stat-neg { color: var(--studio-neg); }
@@ -1241,15 +1245,15 @@
             .prism-block:has(> .prism-rationale) > .prism-rationale { flex: 1 1 auto; }
         }
 
-        /* From 1240 px the history table's columns share its width, so no column leaves a wide empty
+        /* The history table's columns take their content width, a symphony name wraps past 28rem,
+           and Summary takes the rest and clips inside its cell, so no column leaves a wide empty
            band beside the next one's text. */
-        @media (min-width: 1240px) {
-            .obs-table { table-layout: fixed; }
-            .obs-table th:nth-child(1), .obs-table td:nth-child(1) { width: 19%; }
-            .obs-table th:nth-child(2), .obs-table td:nth-child(2) { width: 22%; }
-            .obs-table th:nth-child(3), .obs-table td:nth-child(3) { width: 20%; }
-            .obs-table th:nth-child(4), .obs-table td:nth-child(4) { width: 20%; }
-        }
+        .obs-table { display: grid; grid-template-columns: max-content fit-content(28rem) max-content max-content minmax(0, 1fr); }
+        .obs-table thead, .obs-table tbody, .obs-table tr { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
+        .obs-table th, .obs-table td { min-width: 0; }
+        .obs-table th:nth-child(1), .obs-table td:nth-child(1),
+        .obs-table th:nth-child(3), .obs-table td:nth-child(3),
+        .obs-table th:nth-child(4), .obs-table td:nth-child(4) { white-space: nowrap; }
 
         /* A narrower page: the panels give up some padding. */
         @media (max-width: 700px) {
