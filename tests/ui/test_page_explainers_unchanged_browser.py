@@ -120,6 +120,8 @@ REWRITTEN_FIGURE_KEYS = frozenset(
         "testid:sleeves-empty",
         "testid:history-caption",
         "testid:settings-caption",
+        # History's exit reasons disclosure is gone: the element that held its definitions went with it.
+        "id:reason-descriptions-list",
     }
 )
 REWRITTEN_CONTROL_TESTIDS = frozenset({"retirement-pointer", "autotune-older-summary"})
@@ -144,6 +146,8 @@ REMOVED_DISCLOSURES = {
     ("/performance", "summary", "What the terms mean"): 4,
     ("/history", "summary", "What the terms mean"): 2,
     ("/settings", "summary", "What the terms mean"): 3,
+    # History's exit reasons disclosure: its four definitions became lines of the History Glossary.
+    ("/history", "summary", "What the exit reasons mean"): 1,
 }
 
 # The summary of a tenure evidence cell of an item the missing line names reads its heading and its

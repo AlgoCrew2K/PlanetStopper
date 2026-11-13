@@ -256,17 +256,19 @@ def test_the_headline_figures_are_one_row_with_tabular_figures(page):
     assert "mini-stat" not in _template(page), f"{page}: boxed stat tiles are back"
 
 
-def test_history_by_reason_is_one_ledger_with_the_definitions_collapsed():
+def test_history_by_reason_is_one_ledger_with_no_definitions_disclosure():
+    """The four exit-reason definitions are lines of the page's Glossary, so the section holds the
+    one ledger and no disclosure, and the script keeps no definition map or renderer."""
     html = _template("history")
     section = html[html.index('data-testid="by-reason-section"') :]
     section = section[: section.index('data-testid="recent-triggers"')]
     assert section.count("<table") == 1 and section.count("<thead>") == 1
     assert section.count('data-testid="reason-card"') == 4
-    assert "<details" in section and "reason-descriptions" in section
-    assert re.search(r"<details[^>]*\bopen\b", section) is None, "the definitions start open"
+    assert "<details" not in section and "reason-descriptions" not in section
     script = _script("history")
-    assert "renderReasonDescriptions(" in script
-    assert "REASON_DESCRIPTIONS[reason]" in script
+    assert "renderReasonDescriptions" not in script
+    assert "REASON_DESCRIPTIONS" not in script
+    assert "reason-descriptions" not in script
 
 
 def test_history_reason_ledger_stacks_on_a_phone_with_its_own_labels():

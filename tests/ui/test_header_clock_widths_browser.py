@@ -215,16 +215,21 @@ HEADER_PAGE_MOMENTS = {
 }
 
 
+def serve_header_status(answer: dict):
+    """A route handler answering ``/api/header-status`` with the body of ``answer``."""
+
+    def serve(route):
+        route.fulfill(status=200, content_type="application/json", body=_json(answer["json"]))
+
+    return serve
+
+
 def _header_page_facts(firefox, advisor_server, name: str, width: int) -> dict:  # noqa: F811
     moment, reasons = HEADER_PAGE_MOMENTS[name]
     seed_dashboard_state()
     answer = header_answer(moment, reasons=reasons)
     with open_probe(firefox, advisor_server, width=width, height=HEIGHT) as probe:
-
-        def serve(route):
-            route.fulfill(status=200, content_type="application/json", body=_json(answer["json"]))
-
-        probe.page.route("**/api/header-status", serve)
+        probe.page.route("**/api/header-status", serve_header_status(answer))
         open_page(probe, HEADER_PAGE)
         labels, _ = STATES[name]
         wait_until_label(probe, labels)

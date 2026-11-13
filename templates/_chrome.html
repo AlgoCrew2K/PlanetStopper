@@ -120,6 +120,12 @@
      below), so the longest engine label (Rebalance pause) leaves the countdown whole. */
   @media (min-width: 1401px) and (max-width: 1500px) {
     .engine-label-long .studio-nav-wide { display:none !important; }
+    /* The clock and chip stay on, so the header's gaps and padding tighten until the row fits the window. */
+    .shell-nav { gap:8px; padding-left:16px; padding-right:16px; }
+    .shell-nav-links { margin-left:0; }
+    .shell-link { padding:0 8px; }
+    .shell-link[aria-current="page"]::after { left:8px; right:8px; }
+    .shell-nav-status { gap:6px; }
   }
   @media (max-width: 1400px) {
     .shell-nav { flex-wrap:wrap; row-gap:16px; }

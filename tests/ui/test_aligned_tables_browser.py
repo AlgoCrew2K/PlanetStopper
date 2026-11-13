@@ -97,7 +97,6 @@ DEFAULT_MIN_ROWS = 2
 # Lines that may wrap into rows below 1440 px: the rule asks for one line each from 1440 px.
 LINE_FROM_WIDTH = {
     "tracked_armed_triggered": 1440,
-    "dollar_saved_line": 1440,
     "sleeve_card_line": 1440,
     "performance_headline_strip": 1440,
     "history_hero_figures": 1440,
@@ -227,7 +226,6 @@ DASHBOARD_STATES = {
             _group(TABLE, "symphony_cards"),
             _group(TOOLBAR, "hero_top"),
             _group(LINE, "tracked_armed_triggered"),
-            _group(LINE, "dollar_saved_line"),
         ],
     },
     "sleeves": {
@@ -887,6 +885,11 @@ HEADER_ONLY_AS_AT_THE_REFERENCE = frozenset(
 )
 
 
+# A group whose layout is not "one line of equal gaps" and which has a module of its own: the dollar
+# summary (a sentence beside a stacked column), measured by test_dashboard_dollar_summary_browser.
+MEASURED_BY_ITS_OWN_MODULE = frozenset({(LINE, "dollar_saved_line")})
+
+
 def _groups_of_host(host: str, tab: str | None) -> list[tuple[str, str, dict]]:
     """Every registry group of ``host`` (of one Advisor tab when ``tab`` is given) the page itself
     holds, a group a user action produces left out."""
@@ -895,6 +898,8 @@ def _groups_of_host(host: str, tab: str | None) -> list[tuple[str, str, dict]]:
         for name, entry in getattr(al, registry).items():
             wanted = entry.get("open", {})
             if entry["host"] != host or "action" in wanted or wanted.get("tab") != tab:
+                continue
+            if (registry, name) in MEASURED_BY_ITS_OWN_MODULE:
                 continue
             if registry == TABLE and entry.get("group") is None and not entry.get("rows"):
                 continue
@@ -1152,6 +1157,13 @@ EXCUSED = {
         TABLE,
         "correlation_matrix",
     ): "centred tiles under centred headers by ruling: no column edge applies to it",
+    (
+        LINE,
+        "dollar_saved_line",
+    ): (
+        "a lead sentence beside a stacked column of three lines, not one line of equal gaps: "
+        "measured by tests/ui/test_dashboard_dollar_summary_browser.py"
+    ),
 }
 SWEEP_STATES = [
     *DASHBOARD_STATES.values(),

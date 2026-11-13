@@ -245,16 +245,15 @@ def test_the_disclosure_summary_looks_the_same_on_both_pages(
     for path, selector in (
         ("/performance", "details[data-terms] > summary"),
         ("/history", "details[data-terms] > summary"),
-        ("/history", "#reason-descriptions > summary"),
     ):
         with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
             _open(probe, path)
             styles[(path, selector)] = probe.page.evaluate(_SUMMARY_STYLE_JS, selector)
-    reference = styles[("/history", "#reason-descriptions > summary")]
+    reference = styles[("/performance", "details[data-terms] > summary")]
     assert reference is not None
     for key, style in styles.items():
         assert style is not None, f"{key}: no such summary on the page"
         assert style == reference, (
-            f"{key} differs from History's own disclosure: {style} vs {reference}"
+            f"{key} differs from Performance's own disclosure: {style} vs {reference}"
         )
     assert reference["cursor"] == "pointer"

@@ -343,32 +343,10 @@
 
         @media (min-width: 1001px) {
             .metrics-tbl--stack { width: auto; table-layout: auto; }
-            .metrics-tbl--stack th, .metrics-tbl--stack td { white-space: nowrap; }
+            .metrics-tbl--stack td { white-space: nowrap; }
             .metrics-tbl--stack th:first-child,
-            .metrics-tbl--stack td:first-child { width: auto; }
+            .metrics-tbl--stack td:first-child { width: auto; white-space: normal; }
             .metrics-tbl--fit { width: auto; }
-        }
-
-        /* From 1240 px the first panel pairs the controls with the basis and stamp captions (right
-           column) so the band beside the controls is not empty. */
-        @media (min-width: 1240px) {
-            [data-testid="perf-controls-panel"] {
-                display: grid;
-                grid-template-columns: minmax(0, 1fr) 520px;
-                column-gap: 24px;
-                align-items: start;
-            }
-            [data-testid="perf-controls-panel"] > * { grid-column: 1 / -1; }
-            [data-testid="perf-controls-panel"] > .hp-toolbar:not(.perf-captions) { grid-column: 1; }
-            [data-testid="perf-controls-panel"] > .perf-captions {
-                grid-column: 2;
-                flex-wrap: wrap;
-                align-items: flex-start;
-                gap: 4px 16px;
-                margin-bottom: 4px;
-            }
-            [data-testid="perf-controls-panel"] > .perf-captions .hp-note.hp-asof { margin-left: 0; }
-            [data-testid="perf-controls-panel"] > .insufficient-banner { margin-bottom: 8px; grid-column: 1 / -1; }
         }
 
         /* From 1440 px the four headline figures sit in one row with one gap between them. */
@@ -376,10 +354,6 @@
             .hp-figs { display: flex; flex-wrap: nowrap; }
             .hp-fig { flex: none; padding: 0 20px; white-space: nowrap; }
             .hp-fig:first-child { padding-left: 0; }
-        }
-
-        @media (min-width: 1340px) {
-            [data-testid="perf-controls-panel"] { grid-template-columns: minmax(0, 1fr) 600px; }
         }
 
         @media (max-width: 900px) {

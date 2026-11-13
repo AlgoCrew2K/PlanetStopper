@@ -95,17 +95,15 @@ def test_the_page_does_not_scroll_sideways_and_keeps_11_px_text_at_375(
 _LEDGER_FACTS = """
 () => {
   const rows = [...document.querySelectorAll('#reason-cards tr[data-testid="reason-card"]')];
-  const defs = document.querySelector('[data-testid="reason-descriptions"]');
   return {
     heights: rows.map((r) => Math.round(r.getBoundingClientRect().height)),
-    definitionsOpen: !!defs && defs.open,
     height: document.documentElement.scrollHeight,
   };
 }
 """
 
 
-def test_history_reasons_are_one_line_each_and_the_definitions_start_collapsed(
+def test_history_reasons_are_one_line_each(
     firefox,
     advisor_server,
     tmp_path,
@@ -125,7 +123,6 @@ def test_history_reasons_are_one_line_each_and_the_definitions_start_collapsed(
         facts = probe.page.evaluate(_LEDGER_FACTS)
     assert facts["heights"], "premise: the seeded exits give at least one reason row"
     assert all(h <= 40 for h in facts["heights"]), f"a reason row wraps: {facts['heights']}"
-    assert facts["definitionsOpen"] is False
 
 
 def test_history_is_no_longer_than_five_screens_at_375(

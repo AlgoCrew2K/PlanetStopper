@@ -21,7 +21,8 @@ CONTRACT PINNED
   included), and every ``data-testid``, id, ``data-label`` other than the one History exits label,
   and JSON key survives the rewording.
 * History reason names come from a display map; the stored and API reason strings stay as sent, an
-  unmapped reason is shown as sent, and each of the four reasons carries its own definition.
+  unmapped reason is shown as sent, and each of the four reasons carries its own definition as a line
+  of the History Glossary (no "What the exit reasons mean" disclosure remains).
 * History's ``.hp-more`` rule lives in the shared stylesheet, not in the History template.
 """
 
@@ -79,7 +80,7 @@ PLACEMENT = {
     "Y15": ('[data-testid="recent-triggers"]', "heading", ".hp-head"),
 }
 # Containers a script rewrites with innerHTML: no description or disclosure may sit inside one.
-REWRITTEN = ("tbody", "#reason-cards", "#triggers-tbody", "#reason-descriptions", ".hp-scroll")
+REWRITTEN = ("tbody", "#reason-cards", "#triggers-tbody", ".hp-scroll")
 
 
 def norm(text: str) -> str:
@@ -450,6 +451,15 @@ class TestHistoryRelabelsServerRendered:
         for row in soup.select("#reason-cards tr"):
             assert row.find_all("td")[3].get("data-label") == new
 
+    def test_the_server_render_carries_no_reason_definitions_disclosure(self, client):
+        """No disclosure on History reads "What the exit reasons mean": the four definitions are
+        Glossary lines, so the page's only disclosure is its Glossary."""
+        soup = soup_of(client, "/history")
+        summaries = [norm(s.get_text()) for s in soup.select("details > summary")]
+        assert REASON_DISCLOSURE_SUMMARY not in summaries, summaries
+        assert REASON_DISCLOSURE_SUMMARY not in norm(soup.get_text())
+        assert summaries == ["Glossary"], summaries
+
     def test_the_four_placeholder_reasons_carry_their_display_names_in_order(self, client):
         soup = soup_of(client, "/history")
         names = [norm(row.find("td").get_text()) for row in soup.select("#reason-cards tr")]
@@ -487,8 +497,8 @@ class TestContractNamesSurvive:
             "Win rate",
             "Avg per exit",
         ]
-        assert soup.select_one("#reason-descriptions") is not None
-        assert soup.select_one('[data-testid="reason-descriptions"]') is not None
+        assert soup.select_one("#reason-descriptions") is None, "the reasons disclosure is back"
+        assert soup.select_one('[data-testid="reason-descriptions"]') is None
 
     def test_performance_keeps_ten_metric_rows_and_its_testids(self, client):
         soup = soup_of(client, "/performance")
@@ -634,8 +644,9 @@ HISTORY_STATE = """
   const state = () => ({
     reasonRows: H.$$('#reason-cards tr').map((tr) => tr.children.map(cell)),
     hero: H.text('[data-testid="stat-trigger-count"]'),
-    names: H.$$('#reason-descriptions-list dt').map((e) => e.textContent.trim()),
-    definitions: H.$$('#reason-descriptions-list dd').map((e) => e.textContent.trim()),
+    disclosures: H.$$('details').map((e) => (e.querySelector('summary') || e).textContent.trim()),
+    reasonDisclosure: H.$$('#reason-descriptions, [data-testid="reason-descriptions"]').length,
+    glossary: H.$$('details[data-terms="glossary"] p').map((e) => e.textContent.trim()),
     exits: H.$$('#triggers-tbody tr').map((tr) => tr.children.map((td) => td.textContent.trim())),
     section: H.$('[data-testid="by-reason-section"]').innerHTML,
     page: H.$('.page-wrap').textContent,
@@ -643,16 +654,14 @@ HISTORY_STATE = """
 """
 
 
-def definition_by_name() -> dict[str, str]:
-    """Display name to definition: the D29 rows of Copy table B, which Y14b reuses without the name."""
-    mapping = {}
-    for key in ("D29a", "D29b", "D29c", "D29d"):
-        name, _, rest = pc.text(key, "B").partition(": ")
-        mapping[name] = rest
-    assert list(mapping.values()) == pc.row("Y14b", "C")["new_texts"], (
-        "premise: Y14b's definitions are the D29 rows without their names"
-    )
-    return mapping
+# The reasons in the page's order: Take-profit, Trailing stop, VWAP breakdown, VWAP bleed.
+REASON_GLOSSARY_KEYS = ("D29b", "D29a", "D29c", "D29d")
+REASON_DISCLOSURE_SUMMARY = "What the exit reasons mean"
+
+
+def history_glossary_texts() -> list[str]:
+    """The History Glossary's lines in order, from the copy fixture."""
+    return [norm(line["text"]) for line in pc.glossary("History")]
 
 
 class TestHistoryScriptBuilt:
@@ -687,14 +696,41 @@ class TestHistoryScriptBuilt:
         out = self.run(tmp_path, monkeypatch, "return state();")
         assert out["hero"].startswith(norm(pc.text("Y06", "C")))
 
-    def test_each_reason_definition_is_its_own_text_under_its_display_name(
+    def test_the_script_built_page_carries_no_reason_definitions_disclosure(
         self, tmp_path, monkeypatch
     ):
+        """The page script no longer fills a "What the exit reasons mean" disclosure: neither the
+        element nor its summary text is on the page after a window with all four reasons draws."""
         out = self.run(tmp_path, monkeypatch, "return state();")
-        expected = definition_by_name()
-        assert out["names"] == new_pieces(pc.row("Y14a", "C"))
-        assert out["definitions"] == [expected[name] for name in out["names"]]
-        assert len(set(out["definitions"])) == 4, "each reason has a definition of its own"
+        assert out["reasonDisclosure"] == 0, "the reasons disclosure element is on the page"
+        assert REASON_DISCLOSURE_SUMMARY not in out["disclosures"], out["disclosures"]
+        assert REASON_DISCLOSURE_SUMMARY not in norm(out["page"]) + " " + out["section"]
+
+    def test_the_four_reason_definitions_are_glossary_lines_led_by_the_reason_names(
+        self, tmp_path, monkeypatch
+    ):
+        """S-4.16: the History Glossary holds D29b, D29a, D29c and D29d in that order, each reading
+        its reference definition word for word with the reason's display name as the lead term."""
+        out = self.run(tmp_path, monkeypatch, "return state();")
+        lines = pc.glossary("History")
+        assert [line["key"] for line in lines if line["key"] in REASON_GLOSSARY_KEYS] == list(
+            REASON_GLOSSARY_KEYS
+        )
+        reason_lines = [line for line in lines if line["key"] in REASON_GLOSSARY_KEYS]
+        for line in reason_lines:
+            assert line["text"] == pc.text(line["key"], "B"), (
+                f"{line['key']} is not the reference definition word for word"
+            )
+        names = [row[0]["text"] for row in out["reasonRows"]]
+        assert sorted(line["lead_term"] for line in reason_lines) == sorted(names), (
+            "each reason's display name leads exactly one Glossary line"
+        )
+        assert out["glossary"] == history_glossary_texts(), (
+            "the rendered History Glossary is not the copy table's lines in order"
+        )
+        assert len(set(line["text"] for line in reason_lines)) == 4, (
+            "each reason has a definition of its own"
+        )
 
     def test_the_exits_table_shows_display_names_for_every_stored_reason(
         self, tmp_path, monkeypatch
