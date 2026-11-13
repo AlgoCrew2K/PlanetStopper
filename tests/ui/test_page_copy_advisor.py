@@ -274,17 +274,23 @@ def test_a_tab_ends_with_one_closed_glossary_holding_table_gs_lines_in_order(adv
 
 @pytest.mark.parametrize("host", adv.OTHER_TAB_GLOSSARY_HOSTS)
 def test_every_line_of_a_tab_glossary_is_unchanged_from_the_reference_row(advisor, host):
-    """S-4.5 and S-4.7: no line of these six tabs is a Table G2 line, so each equals the reference
-    row it moved from, word for word."""
+    """S-4.5 and S-4.7: a line of these six tabs that is not a Table G2 line equals the reference
+    row it moved from, word for word; the Table G2 lines (the Frontrunner Builder's three term
+    lines, X11a to X11c) read exactly their Table G2 text."""
     shown = advisor.open("full", key=True, seed=_seed_everything)
     _, glossary = _panel_glossary(shown, host)
+    g2 = 0
     for line in copy_fixture.glossary(host):
-        assert line["source"] == "ref", f"{line['key']}: premise, no G2 line on this tab"
         node = glossary.select_one(f'p[data-term="{line["key"]}"]')
         assert node is not None, line["key"]
+        if line["source"] == "G2":
+            assert adv.norm(node.get_text(" ")) == adv.norm(line["text"]), line["key"]
+            g2 += 1
+            continue
         assert adv.norm(node.get_text(" ")) == adv.norm(copy_fixture.text(line["key"], "B")), line[
             "key"
         ]
+    assert g2 == (3 if host == "Frontrunner Builder" else 0), (host, g2)
 
 
 @pytest.mark.parametrize("world", ["empty", "full"])
@@ -1532,9 +1538,31 @@ def test_the_chat_default_body_reads_t02_and_names_both_buttons_that_open_a_disc
     assert "Discuss this proposal" in text and "Chat about this" in text
 
 
+def test_how_a_conversation_opens_is_said_once_on_the_chat_tab(advisor):
+    """S-3.19: T02 and the example prompts show; the removed title (CX-18) is on no panel of the
+    page and its element is gone, so the tab says once how a conversation opens."""
+    shown = advisor.open("full", key=True, seed=_seed_everything)
+    state = shown.page.select_one('[data-testid="chat-default-state"]')
+    assert state is not None
+    text = adv.norm(state.get_text(" "))
+    assert copy_fixture.a_text("T02") in text
+    assert len(state.select("ul.chat-example-prompts li")) == 3
+    removed = "Select a recommendation or diagnostic figure to open a contextual explanation."
+    assert removed not in adv.norm(shown.page.get_text(" ")), "the old title is still on the page"
+    assert "contextual explanation" not in adv.norm(shown.page.get_text(" "))
+    assert state.select_one(".chat-default-title") is None, "the title element is still there"
+    tab = adv.panel_of(shown.page, "chat")
+    assert adv.norm(tab.get_text(" ")).count("Discuss this proposal") == 1
+
+
 # --- the Glossary keys on labels (TG3-15), in the server render
 
-_FR_LABEL_LINES = {"Calmar": "X11", "CAGR": "X11", "Max DD": "X11", "Node count change": "X12"}
+_FR_LABEL_LINES = {
+    "Calmar": "X11a",
+    "CAGR": "X11b",
+    "Max DD": "X11c",
+    "Node count change": "X12",
+}
 
 
 def _key_of_cell(cell) -> str | None:

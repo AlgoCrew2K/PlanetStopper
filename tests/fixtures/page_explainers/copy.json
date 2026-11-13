@@ -1,6 +1,6 @@
 {
  "plan_path": "feature-plans/aligned-tables-and-quiet-copy.md",
- "plan_sha": "f1d07c75f9c1f26f298c94791bb5f6e3632394e9",
+ "plan_sha": "75243235526c367d6b09b0da245b7794f8ddf63d",
  "reference_commit": "c0760e70eb6f8c6620002570b493bb9ca4ec6b1e",
  "rows": [
   {
@@ -972,6 +972,94 @@
    "unchanged": false,
    "ref_text": null,
    "slots": []
+  },
+  {
+   "key": "CX-15",
+   "host_place": "Retirement, a new line directly under the tenure run line (the run line at templates/ai_advisor.html:2422-2435)",
+   "builder": "server render",
+   "disposition": "added: shown only when k is at least 1 (AC-6); {k} is the number of too-few-days cards, {n} the number of tenure cards on the tab, {needs_days} is N",
+   "new_text": "Redundancy not decided for {k} of {n} symphonies: too few shared trading days with the other symphonies; {needs_days} are needed.",
+   "why": "G-44: the fact is said once per screen instead of on each card",
+   "table": "X",
+   "kind": "added",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": [
+    "k",
+    "n",
+    "needs_days"
+   ]
+  },
+  {
+   "key": "CX-16",
+   "host_place": "Frontrunner Builder, the Identity line's sentence after its \"Identity\" label (templates/ai_advisor.html:3278)",
+   "builder": "server render",
+   "disposition": "reworded: takes the incumbent clause of the removed On approval line",
+   "new_text": "Each frontrunner proposal is a full standalone copy of its incumbent with one new frontrunner overlay; the incumbent is never modified.",
+   "why": "G-45",
+   "table": "X",
+   "kind": "reworded",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-17",
+   "host_place": "Frontrunner Builder, the \"On approval\" line (templates/ai_advisor.html:3280)",
+   "builder": "server render",
+   "disposition": "removed: the risk banner says approving creates an undeployed symphony, and CX-16 says the incumbent is never modified",
+   "new_text": null,
+   "why": "G-45",
+   "table": "X",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-18",
+   "host_place": "Chat, the default state's title \"Select a recommendation or diagnostic figure to open a contextual explanation.\" (templates/ai_advisor.html:2680-2682)",
+   "builder": "server render",
+   "disposition": "removed: T02 says how a conversation opens",
+   "new_text": null,
+   "why": "G-50",
+   "table": "X",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-19",
+   "host_place": "History, the \"What the exit reasons mean\" disclosure under By exit reason (templates/history.html:552; its lines from static/history.js:227-232)",
+   "builder": "server render and page script",
+   "disposition": "removed; its four definitions are History Glossary lines D29b, D29a, D29c and D29d",
+   "new_text": null,
+   "why": "G-52",
+   "table": "X",
+   "kind": "removed",
+   "new_text_note": null,
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
+  },
+  {
+   "key": "CX-20",
+   "host_place": "Logic Changes, a result card's apply line (static/ai_advisor_logic_changes.js:246)",
+   "builder": "page script",
+   "disposition": "reworded per AC-3: \"To apply:\" said once",
+   "new_text": null,
+   "why": "G-39",
+   "table": "X",
+   "kind": "reworded",
+   "new_text_note": "per AC-3 S-3.15",
+   "unchanged": false,
+   "ref_text": null,
+   "slots": []
   }
  ],
  "glossary": {
@@ -1661,6 +1749,34 @@
     "source": "ref"
    },
    {
+    "key": "D29b",
+    "text": "Take-profit: the exit fired to keep a gain the Monte Carlo check judged likely to fade.",
+    "lead_term": "Take-profit",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29a",
+    "text": "Trailing stop: the exit fired because the symphony fell further below its peak than its volatility-scaled stop allows.",
+    "lead_term": "Trailing stop",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29c",
+    "text": "VWAP breakdown: the exit fired after the symphony had gained enough to arm this check, its holdings then traded below their volume-weighted average price, and its return stayed under the session high for several checks in a row.",
+    "lead_term": "VWAP breakdown",
+    "slots": [],
+    "source": "ref"
+   },
+   {
+    "key": "D29d",
+    "text": "VWAP bleed: the exit fired after the symphony's own return stayed at or below a volatility-scaled loss line for several checks in a row; despite the name, this check does not look at the volume-weighted average price.",
+    "lead_term": "VWAP bleed",
+    "slots": [],
+    "source": "ref"
+   },
+   {
     "key": "Y16",
     "text": "Detail: the exit's exit alpha, in pts.",
     "lead_term": "Detail",
@@ -2266,11 +2382,25 @@
     "source": "ref"
    },
    {
-    "key": "X11",
-    "text": "Calmar: yearly return divided by the deepest fall; higher is better. CAGR: the yearly growth rate. Max DD: the deepest fall from a high to a later low.",
+    "key": "X11a",
+    "text": "Calmar: yearly return divided by the deepest fall; higher is better.",
     "lead_term": "Calmar",
     "slots": [],
-    "source": "ref"
+    "source": "G2"
+   },
+   {
+    "key": "X11b",
+    "text": "CAGR: the yearly growth rate.",
+    "lead_term": "CAGR",
+    "slots": [],
+    "source": "G2"
+   },
+   {
+    "key": "X11c",
+    "text": "Max DD: the deepest fall from a high to a later low.",
+    "lead_term": "Max DD",
+    "slots": [],
+    "source": "G2"
    },
    {
     "key": "X12",
@@ -2448,10 +2578,12 @@
    "key": "TG3-15",
    "host": "Strategy Builder, Frontrunner Builder",
    "element": "the \"Live Baseline\" column header of the stats tables; the Calmar, CAGR, Max DD and Node count change labels on Frontrunner cards (templates/ai_advisor.html:3297-3330)",
-   "glossary_line": "B07t; X11, X12",
+   "glossary_line": "B07t; X11a to X11c, X12",
    "line_keys": [
     "B07t",
-    "X11",
+    "X11a",
+    "X11b",
+    "X11c",
     "X12"
    ]
   },

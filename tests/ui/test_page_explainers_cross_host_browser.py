@@ -582,6 +582,8 @@ def test_with_every_script_refused_the_template_built_disclosures_and_labels_are
         and r.get("placement_kind") == "D"
         and page_of(r["host"]) == host
         and not slotted(r)
+        # X11 is three Glossary lines now (X11a to X11c), whose words read on in the page's text
+        and r["key"] != "X11"
         and _flat(copy.text(r["key"], "B")) in text
     ]
     shown_keys = {key for d in disclosures for key in d["lines"]}

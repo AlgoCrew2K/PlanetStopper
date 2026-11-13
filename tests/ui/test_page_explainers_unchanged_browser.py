@@ -155,8 +155,19 @@ _REWRITTEN_EVIDENCE_SUMMARY = re.compile(
 )
 
 
+# The summary of an available Marginal contribution, Backtest or Composite score cell headlines the
+# item's own figure (the total return difference, the total return gap, the composite with its scale
+# and population), not the first stored figure the reference's summary carried; each figure the
+# reference showed still shows once, in the summary or the cell's disclosure (the Advisor render
+# tests pin that, S-6.31 to S-6.35).
+_REHEADLINED_EVIDENCE_SUMMARY = re.compile(r"^(Marginal contribution|Backtest|Composite score)\b")
+
+
 def _is_rewritten_evidence_summary(control: dict) -> bool:
-    return control["tag"] == "summary" and bool(_REWRITTEN_EVIDENCE_SUMMARY.match(control["text"]))
+    return control["tag"] == "summary" and bool(
+        _REWRITTEN_EVIDENCE_SUMMARY.match(control["text"])
+        or _REHEADLINED_EVIDENCE_SUMMARY.match(control["text"])
+    )
 
 
 def _relabelled_by_a_copy_row(key: str) -> bool:

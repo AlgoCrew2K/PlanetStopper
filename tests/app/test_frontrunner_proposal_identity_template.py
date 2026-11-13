@@ -400,12 +400,30 @@ class TestFrontrunnerSourceCardOverlayIdentity:
         """The incumbent's name carries the testid the identity line used to."""
         assert 'data-testid="fr-incumbent-name"' in card
 
-    def test_explainer_line_is_stated_once_above_the_cards(self, page, card):
-        assert page.count("Approve creates a NEW undeployed Composer symphony") == 1
-        shared = page.find('data-testid="fr-explainer-line"')
-        assert shared != -1 and shared < page.find('data-testid="frontrunner-proposal-card"')
-        assert "the incumbent is never modified" in page[shared : shared + 300]
+    def test_the_identity_line_reads_the_plans_sentence_which_also_says_the_incumbent_is_not_touched(
+        self, page
+    ):
+        """S-3.17: the Identity line's sentence after its label is the CX-16 text, and
+        "the incumbent is never modified" is said on the tab once, by that line."""
+        import html as html_lib
+        import re
+
+        from tests.ui import _page_copy as copy_fixture
+
+        found = re.search(r'data-testid="fr-identity-note"[^>]*>(.*?)</p>', page, re.S)
+        assert found, "the shared identity note is missing"
+        text = " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", found.group(1))).split())
+        wanted = " ".join(copy_fixture.x_row("CX-16")["new_text"].split())
+        assert text == f"Identity {wanted}", text
+        assert page.count("the incumbent is never modified") == 1
+
+    def test_no_on_approval_line_restates_the_risk_banner(self, page, card):
+        """S-3.17: the line that repeated the risk banner is gone, with its label and testid."""
+        assert 'data-testid="fr-explainer-line"' not in page
+        assert "On approval" not in page
+        assert "Approve creates a NEW undeployed" not in page
         assert "Approve creates a NEW undeployed" not in card
+        assert "NEW UNDEPLOYED symphony" in page, "the risk banner itself must stay"
 
     def test_overlay_summary_line_present_with_testid(self, card):
         idx = card.find('data-testid="fr-overlay-summary"')
@@ -574,6 +592,38 @@ class TestRetrofitSourceCardIdentity:
             f"(preview)' label leaking onto a retrofit card is exactly the dishonesty this "
             f"feature exists to fix. card slice: {card[:2500]!r}"
         )
+
+
+class TestTheTabSaysNothingSharedWhenNoFrontrunnerProposalIsPending:
+    """S-3.18: only retrofit proposals pending, and no proposals at all: no Identity line and no
+    approval line; the risk banner stays, and the empty state is the one the reference shows."""
+
+    def test_only_retrofit_proposals_carry_no_identity_line_and_no_approval_line(
+        self, client, monkeypatch
+    ):
+        row = _make_pending_row(
+            row_id=31, symphony_id="hash-retro", proposal_source="strategy_builder_retrofit"
+        )
+        page = _render_advisor_page(
+            client, monkeypatch, pending_rows=[row], bot_state={"hash-retro": {"name": "Retro Sym"}}
+        )
+        assert 'data-testid="fr-identity-note"' not in page
+        assert 'data-testid="fr-explainer-line"' not in page
+        assert "On approval" not in page
+        assert "the incumbent is never modified" not in page
+        assert "NEW UNDEPLOYED symphony" in page, "the risk banner stays"
+
+    def test_no_proposals_show_the_empty_state_and_the_banner_and_no_shared_line(
+        self, client, monkeypatch
+    ):
+        from tests.ui import _page_copy as copy_fixture
+
+        page = _render_advisor_page(client, monkeypatch, pending_rows=[], bot_state={})
+        assert 'data-testid="fr-identity-note"' not in page
+        assert "On approval" not in page
+        assert "NEW UNDEPLOYED symphony" in page, "the risk banner stays"
+        empty = " ".join(copy_fixture.x_row("CX-11")["new_text"].split())
+        assert empty in " ".join(page.split()), "the empty state is the CX-11 text"
 
 
 # ===========================================================================

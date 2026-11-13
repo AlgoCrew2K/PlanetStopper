@@ -184,9 +184,9 @@ def test_the_frontrunner_change_labels_carry_their_glossary_lines_as_their_title
 ):
     _prepare(tmp_path, monkeypatch)
     wanted = {
-        "Calmar": _line_text("Frontrunner Builder", "X11"),
-        "CAGR": _line_text("Frontrunner Builder", "X11"),
-        "Max DD": _line_text("Frontrunner Builder", "X11"),
+        "Calmar": _line_text("Frontrunner Builder", "X11a"),
+        "CAGR": _line_text("Frontrunner Builder", "X11b"),
+        "Max DD": _line_text("Frontrunner Builder", "X11c"),
         "Node count change": _line_text("Frontrunner Builder", "X12"),
     }
     with _open(firefox, advisor_server, "Frontrunner Builder") as probe:

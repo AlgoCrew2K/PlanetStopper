@@ -594,7 +594,7 @@ class TestFragment:
 _ENTRY_WATCH = {
     **_WATCH,
     "missing": '[data-testid="tenure-review-missing"]',
-    "undecided": '[data-testid="tenure-review-undecided"]',
+    "undecided": '[data-testid="tenure-review-evidence-redundancy"] > details',
     "summaries": '[data-testid="tenure-review-entry"] .tenure-review-evidence-summary',
 }
 _STATUS_ONLY = ("unavailable", "not applicable")

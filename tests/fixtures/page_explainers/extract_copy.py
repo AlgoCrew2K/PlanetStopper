@@ -51,7 +51,7 @@ REF_TEMPLATE_PATH = "templates/ai_advisor.html"
 REFERENCE_COMMIT = "c0760e70eb6f8c6620002570b493bb9ca4ec6b1e"
 # The approved commit; the tables read here are byte-equal at ac4563cb, the commit that last
 # changed them.
-PLAN_COMMIT = "f1d07c75"
+PLAN_COMMIT = "75243235"
 OUT = HERE / "copy.json"
 
 HEADINGS = {

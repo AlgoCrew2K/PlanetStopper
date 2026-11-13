@@ -257,14 +257,11 @@
         .try-swap-form, .try-tweak-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
         .form-row { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; }
 
-        /* The description line, above the tab bar. */
-        .adv-caption { margin: 0 0 8px; }
-
-        /* Overview top: the toolbar (picker, Run, the one-line hint, the Retirement pointer) on one row,
+        /* Overview top: the toolbar (picker, Run, the one-line hint) on one row,
            then the stamp and suggestions, then the autotune runs. One panel holds all of it. */
         .adv-grid {
             display: grid;
-            grid-template-columns: auto minmax(0, 1fr) auto;
+            grid-template-columns: auto minmax(0, 1fr);
             gap: 12px 24px;
             align-items: end;
             background: var(--studio-paper);
@@ -504,12 +501,8 @@
         .cap-nav-cue--start { left: 0; background: linear-gradient(to right, var(--studio-paper), transparent); }
         .cap-nav-cue--end { right: 0; background: linear-gradient(to left, var(--studio-paper), transparent); }
 
-        /* A description under a heading: dim ink, readable size, with its term disclosure right after. */
+        /* A description under a heading: dim ink, readable size. */
         .adv-explainer { margin: 0 0 8px; font-size: 12px; line-height: 1.4; color: var(--studio-ink-dim); }
-        .adv-explainer:has(+ .hp-more) { margin-bottom: 2px; }
-        .adv-explainer + .hp-more { margin: 0 0 12px; }
-        .retirement-subsection[data-testid="retirement-recommender-section"] .adv-explainer + .hp-more { margin-bottom: 4px; }
-        .hp-more p { margin: 0 0 6px; }
 
         /* Tab panels: only the active panel is visible */
         .tab-panel { display: none; }
@@ -638,7 +631,6 @@
 
         /* Chat tab and panel */
         .chat-default-state { text-align: left; }
-        .chat-default-title { font-weight: 500; font-size: 14px; margin-bottom: 4px; }
         .chat-default-body { color: var(--studio-ink-dim); font-size: 13px; margin-bottom: 8px; }
         .chat-example-prompts { color: var(--studio-ink-dim); font-size: 13px; list-style: none; padding: 0; }
         .chat-example-prompts li { padding: 2px 0; }
@@ -765,8 +757,12 @@
             .stats-table th:first-child { width: 8.5rem; }
             .stats-table th:not(:first-child), .stats-table td:not(:first-child) { text-align: right; }
             /* A result card's Baseline and Variant columns: a label track and a value track sized to
-               their content, the value on the right of its track. */
-            .stats-grid > div { display: grid; grid-template-columns: max-content max-content; justify-content: start; gap: 6px 12px; align-content: start; }
+               their content, the value on the right of its track. The columns sit side by side while
+               both fit inside the card; one that does not fit sits under the other at its left edge,
+               and a track narrower than its content wraps instead of leaving the card. */
+            .stats-grid { display: flex; flex-wrap: wrap; align-items: flex-start; }
+            .stats-grid > div { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content); justify-content: start; gap: 6px 12px; align-content: start; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+            .stats-grid .stat-label, .stats-grid .stat-value { overflow-wrap: anywhere; }
             .stats-grid > div > .stats-col-label { grid-column: 1 / -1; }
             .stats-grid .stat-row { display: contents; }
             .stats-grid .stat-value { text-align: right; }
@@ -818,9 +814,9 @@
             font-variant-numeric: tabular-nums;
         }
 
-        /* The rationale takes the width of the block (a long one is a row of its own), so no space
-           beside a capped column is left empty. */
+        /* A long rationale is a row of its own, no wider than 110 characters so a line stays readable. */
         .prism-rationale {
+            max-width: 110ch;
             font-size: 13px;
             color: var(--studio-ink);
             line-height: 1.6;
@@ -1072,13 +1068,14 @@
         .tenure-review-entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
         .tenure-review-line { color: var(--studio-ink-dim); font-size: 12px; margin-bottom: 4px; }
         .tenure-verdict-chip--none { --dot: var(--studio-ink-dim); }
-        /* From 1001 px the six evidence items sit in six equal columns, in the order they are written,
-           so every card's items start at the same x. Narrower, they wrap in one flex row and stack on a
+        /* From 1001 px the six evidence items sit in six columns (the composite score takes two shares
+           so its headline stays on one line), in the order they are written, so every card's items
+           start at the same x. Narrower, they wrap in one flex row and stack on a
            phone, the redundancy item as wide as its text. */
         .tenure-review-evidence-grid { margin-top: 8px; }
         .tenure-review-evidence { min-width: 0; }
         @media (min-width: 1001px) {
-            .tenure-review-evidence-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0 16px; align-items: start; }
+            .tenure-review-evidence-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) repeat(4, minmax(0, 1fr)); gap: 0 16px; align-items: start; }
         }
         @media (max-width: 1000px) {
             .tenure-review-evidence-grid { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 16px; }
@@ -1104,12 +1101,6 @@
         /* ------------------------------------------------------------------ */
         /* Advisor observations: one line per producer, its history behind it  */
         /* ------------------------------------------------------------------ */
-        .obs-section .obs-framing-note {
-            margin: 0 0 12px;
-            font-size: 12px;
-            line-height: 1.5;
-            color: var(--studio-ink-dim);
-        }
         .obs-section-note { font-size: 12px; font-weight: 400; color: var(--studio-ink-dim); margin-left: 8px; }
         .obs-producer { border-top: 1px solid var(--studio-border); }
         .obs-history > summary { list-style: none; cursor: pointer; }
@@ -1131,6 +1122,8 @@
            the history table spans the whole width. */
         @media (min-width: 1001px) {
             .obs-lines { width: 100%; justify-content: start; }
+            /* The last column takes what the others leave, so the open history spans the section. */
+            .obs-lines.cols-table { grid-template-columns: repeat(4, auto) minmax(max-content, 1fr); }
             .obs-producer, .obs-history, .obs-producer-line {
                 grid-column: 1 / -1;
                 display: grid;
@@ -1146,7 +1139,7 @@
         .obs-row-link:hover { color: var(--studio-ink); }
         .obs-row-link:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
         /* The marker takes one fixed width, so the toggle's word and the Retirement row's link start at one offset. */
-        .obs-history-toggle::before, .obs-row-link::before { display: inline-block; width: 1em; }
+        .obs-history-toggle::before, .obs-row-link::before { display: inline-block; width: 1.4em; }
         .obs-history-toggle::before { content: "+"; }
         .obs-history[open] .obs-history-toggle::before { content: "\2212"; }
         .obs-row-link::before { content: "\2192"; }
@@ -1227,8 +1220,7 @@
             .autotune-panel > #autotune-runs-list:has(.autotune-empty) { grid-column: 2; align-self: start; }
         }
 
-        /* Narrower, the empty autotune message shares the row of the terms disclosure, so an empty panel
-           takes one line less. */
+        /* Narrower, the empty autotune message takes the row under the description. */
         @media (max-width: 1239px) {
             .autotune-panel:has(.autotune-empty) {
                 display: grid;
@@ -1237,17 +1229,15 @@
                 align-items: center;
             }
             .autotune-panel:has(.autotune-empty) > * { grid-column: 1 / -1; }
-            .autotune-panel:has(.autotune-empty) > details.hp-more { grid-column: 1; }
             .autotune-panel > #autotune-runs-list:has(.autotune-empty) { grid-column: 2; }
         }
 
         @media (min-width: 1240px) {
             .prism-lenses { grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
-            /* A short rationale sits beside the description and its terms; a long one is as wide as its
-               text, so it takes a row of its own, in columns, under them. */
+            /* A short rationale sits beside the description; a long one is as wide as its
+               text, so it takes a row of its own, in columns, under it. */
             .prism-block:has(> .prism-rationale) { display: flex; flex-wrap: wrap; align-items: flex-start; column-gap: 24px; }
             .prism-block:has(> .prism-rationale) > * { flex: 1 1 100%; min-width: 0; }
-            .prism-block:has(> .prism-rationale) > .prism-intro { flex: 2 1 28rem; }
             .prism-block:has(> .prism-rationale) > .prism-rationale { flex: 1 1 auto; }
         }
 
@@ -1259,20 +1249,6 @@
             .obs-table th:nth-child(2), .obs-table td:nth-child(2) { width: 22%; }
             .obs-table th:nth-child(3), .obs-table td:nth-child(3) { width: 20%; }
             .obs-table th:nth-child(4), .obs-table td:nth-child(4) { width: 20%; }
-        }
-
-        /* From 1440 px the tab bar takes the left and the description the right, so the description's
-           one line does not leave the right of the panel empty. */
-        @media (min-width: 1440px) {
-            .adv-panel--nav {
-                display: grid;
-                grid-template-columns: max-content minmax(12rem, 1fr);
-                column-gap: 24px;
-                align-items: start;
-            }
-            .adv-panel--nav > .adv-note { grid-column: 2; grid-row: 1; }
-            .adv-panel--nav > .hp-more { grid-column: 2; grid-row: 2; }
-            .adv-panel--nav > .cap-nav-wrap { grid-column: 1; grid-row: 1 / span 2; }
         }
 
         /* A narrower page: the panels give up some padding. */
@@ -1385,11 +1361,9 @@
              data-tab="overview"
              class="tab-panel tab-panel--active">
 
-        {# The Overview's top panel. One toolbar row holds the symphony picker, Run, the one-line hint (it sits
-           in the suggestions column while that column holds only the hint) and the pointer at the Retirement
-           tab; the lens stamp, the run summary and any suggestions follow, then the autotune runs. The
-           pointer text comes from _build_retirement_pointer over context this page already reads, so it
-           makes no request of its own. #}
+        {# The Overview's top panel. One toolbar row holds the symphony picker, Run and the one-line hint (it sits
+           in the suggestions column while that column holds only the hint); the lens stamp, the run summary
+           and any suggestions follow, then the autotune runs. #}
         <p class="adv-explainer" data-explainer="O03">Run Claude advisor suggests stop-setting changes for one symphony; you can accept one only if it holds up on history the tuning never saw.</p>
 
         <div data-testid="advisor-grid" class="adv-grid">
@@ -2044,7 +2018,7 @@
                 {% set gap_legs = {'max_drawdown_gap': ('realized', 'backtest'), 'max_drawdown_difference': ('without', 'with')}.get(fig_name) -%}
                 {% set gap_shown = ((0 - value) | round(2)) if gap_legs else none -%}
                 <{{ tag }} class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: {% if unit == 'days' %}{{ value | int }}{% elif gap_legs %}{{ gap_shown | abs | tenure_number }}{% elif fig_name == 'max_drawdown' or fig_name.endswith('_max_drawdown') %}{{ value | abs | tenure_number }}{% else %}{{ value | tenure_number }}{% endif %}
-                    {%- if unit == 'percent' or unit == 'percentage points' %}%{% elif unit is string and unit.strip() %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit }}{% endif %}{% else %} (unit not recorded){% endif %}
+                    {%- if unit == 'percent' or unit == 'percentage points' %}%{% elif unit is string and unit.strip() %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit | replace(', fleet-normalized', '') }}{% endif %}{% else %} (unit not recorded){% endif %}
                     {%- if gap_legs %} ({% if gap_shown == 0 %}{{ gap_legs[0] }} and {{ gap_legs[1] }} are equally deep{% else %}{{ gap_legs[0] }} is {{ 'shallower' if gap_shown < 0 else 'deeper' }} than {{ gap_legs[1] }}{% endif %}){% endif %}
                     {%- if with_population %}, {% if population is whole_number %}normalized across {{ population | int }} {{ 'symphony' if population == 1 else 'symphonies' }}{% else %}population not recorded{% endif %}{% endif %}</{{ tag }}>
                 {% elif value is finite_number %}
@@ -2070,7 +2044,9 @@
             {# An item the missing list names has its reason in the missing line, so its cell reads only its status; any other item keeps its reason. #}
             {% set named_in_missing = missing_items is sequence and missing_items is not string and missing_items is not mapping and name in missing_items %}
             {% set pair_figured = pair is mapping and (pair.get('correlation') is mapping and pair.get('correlation').get('value') is finite_number or pair.get('ci_lower') is mapping and pair.get('ci_lower').get('value') is finite_number or pair.get('ci_upper') is mapping and pair.get('ci_upper').get('value') is finite_number or pair.get('stressed_correlation') is mapping and pair.get('stressed_correlation').get('value') is finite_number or pair.get('holdings_overlap') is mapping and pair.get('holdings_overlap').get('value') is finite_number) %}
-            {% set first_fig = (figs.keys() | list | first) if status == 'available' and figs is mapping and figs else none %}
+            {# Marginal contribution and Backtest headline the symphony's own figure, by name; every other cell its first figure. #}
+            {% set own_fig = {'marginal': 'total_return_difference', 'backtest': 'total_return_gap'}.get(name) %}
+            {% set first_fig = (own_fig if own_fig else (figs.keys() | list | first)) if status == 'available' and figs is mapping and (figs or own_fig) else none %}
             {% set paired_with = ((pair.get('sibling_name') if pair.get('sibling_name') is string and pair.get('sibling_name').strip() else (pair.get('sibling_id') | tenure_text)) if pair is mapping else '') %}
             {% set headline_kind = 'status' if status != 'available' else ('figure' if first_fig is not none else ('pair' if pair_figured else ('nofig' if figs is not mapping else 'none'))) %}
             {% set headline %}
@@ -2105,7 +2081,7 @@
                 {% endif %}
                 {% if status == 'available' and figs is mapping %}
                 {% for fig_name, fig in figs.items() %}
-                    {% if not (headline_kind == 'figure' and loop.first) %}
+                    {% if not (headline_kind == 'figure' and fig_name == first_fig) %}
                     {{ tenure_figure(fig_name, fig, item.get('population_size'), name == 'composite') }}
                     {% endif %}
                 {% endfor %}
@@ -2130,6 +2106,10 @@
                 {% endif %}
                 {% if name == 'redundancy' and missing_items is sequence and missing_items is not string and missing_items is not mapping and 'redundancy' in missing_items %}
                 <div class="tenure-review-evidence-meta retirement-rec-meta">not used in the verdict</div>
+                {# The stored list of comparisons that decided nothing is kept here, once, in full. #}
+                {% if (item.get('reason') | tenure_redundancy_missing(none)) is not none %}
+                <div class="tenure-review-evidence-meta retirement-rec-meta">{{ item.get('reason') }}</div>
+                {% endif %}
                 {% endif %}
                 {% set not_compared = item.get('not_compared') %}
                 {% if not_compared is sequence and not_compared is not string and not_compared is not mapping %}
@@ -2353,6 +2333,20 @@
                 <span data-testid="tenure-review-threshold-note">{{ tenure_review.get('threshold_note') }}</span>
                 {% endif %}
             </div>
+            {# Cards whose redundancy is undecided only for too few shared days: said once here, not on each card. #}
+            {% set fleet = namespace(short=0) %}
+            {% for e in tenure_review_entries if e is mapping %}
+            {% set fleet_missing = e.get('missing_items') %}
+            {% set fleet_ev = e.get('evidence') %}
+            {% set fleet_red = fleet_ev.get('redundancy') if fleet_ev is mapping else none %}
+            {% if fleet_missing is sequence and fleet_missing is not string and fleet_missing is not mapping and 'redundancy' in fleet_missing and fleet_red is mapping %}
+            {% set fleet_phrase = fleet_red.get('reason') | tenure_redundancy_missing(page_copy.redundancy_needs_days) %}
+            {% if fleet_phrase is not none and fleet_phrase.startswith('not decided') %}{% set fleet.short = fleet.short + 1 %}{% endif %}
+            {% endif %}
+            {% endfor %}
+            {% if fleet.short >= 1 %}
+            <p class="tenure-review-line" data-testid="tenure-review-fleet-line">Redundancy not decided for {{ fleet.short }} of {{ tenure_review_entries | length }} symphonies: too few shared trading days with the other symphonies; {{ page_copy.redundancy_needs_days }} are needed.</p>
+            {% endif %}
             {% if not tenure_review_entries %}
             <p class="prism-empty" data-testid="tenure-review-no-symphonies">No live symphonies in this review.</p>
             {% endif %}
@@ -2387,10 +2381,20 @@
                 {% set missing = e.get('missing_items') %}
                 {% set missing_list = missing is sequence and missing is not string and missing is not mapping %}
                 {% if 'missing_items' in e and (missing or not missing_list) %}
-                <div class="tenure-review-line" data-testid="tenure-review-missing">missing: {% if not missing_list %}not recorded{% endif %}{% for m in (missing if missing_list else []) %}{% set mi = ev.get(m) if m is string else none %}{% if not loop.first %}; {% endif %}{{ (m | replace('_', ' ')) if m is string and m.strip() else 'not recorded' }} ({% set redundancy_phrase = (mi.get('reason') | tenure_redundancy_missing(page_copy.redundancy_needs_days)) if m == 'redundancy' and mi is mapping else none %}{% if redundancy_phrase is not none %}{{ redundancy_phrase }}{% else %}{% if mi is mapping and mi.get('status') == 'not_applicable' %}not applicable: {% endif %}{{ (mi.get('reason') if mi is mapping else none) | tenure_text }}{% endif %}){% endfor %}</div>
-                {% set redundancy_item = ev.get('redundancy') %}
-                {% if missing_list and 'redundancy' in missing and redundancy_item is mapping and (redundancy_item.get('reason') | tenure_redundancy_missing(page_copy.redundancy_needs_days)) is not none %}
-                <details class="hp-more" data-testid="tenure-review-undecided"><summary>Comparisons that decided nothing</summary><div class="tenure-review-line">{{ redundancy_item.get('reason') | tenure_text }}</div></details>
+                {# A redundancy item short of shared days is said once for the whole review (the line under the run line), so it is left out of this card's line. #}
+                {% set shown = namespace(entries=[]) %}
+                {% for m in (missing if missing_list else []) %}
+                {% set mi = ev.get(m) if m is string else none %}
+                {% set redundancy_phrase = (mi.get('reason') | tenure_redundancy_missing(page_copy.redundancy_needs_days)) if m == 'redundancy' and mi is mapping else none %}
+                {% if redundancy_phrase is none or not redundancy_phrase.startswith('not decided') %}
+                {% set entry -%}
+                {{ (m | replace('_', ' ')) if m is string and m.strip() else 'not recorded' }} ({% if redundancy_phrase is not none %}{{ redundancy_phrase }}{% else %}{% if mi is mapping and mi.get('status') == 'not_applicable' %}not applicable: {% endif %}{{ (mi.get('reason') if mi is mapping else none) | tenure_text }}{% endif %})
+                {%- endset %}
+                {% set _ = shown.entries.append(entry) %}
+                {% endif %}
+                {% endfor %}
+                {% if not missing_list or shown.entries %}
+                <div class="tenure-review-line" data-testid="tenure-review-missing">missing: {% if not missing_list %}not recorded{% else %}{{ shown.entries | join('; ') }}{% endif %}</div>
                 {% endif %}
                 {% endif %}
                 <div class="tenure-review-evidence-grid">
@@ -2631,9 +2635,6 @@
             <p class="cap-tab-attribution">{% if advisor_synthesis_model_known %}{{ advisor_synthesis_model | e }}{% else %}Chat model not known{% endif %}</p>
 
             <div data-testid="chat-default-state" class="hero-section chat-default-state adv-panel">
-                <div class="chat-default-title">
-                    Select a recommendation or diagnostic figure to open a contextual explanation.
-                </div>
                 <p class="chat-default-body" data-explainer="T02">Chat explains and changes nothing; the Discuss this proposal and Chat about this buttons on proposal and suggestion cards open it.</p>
                 <ul class="chat-example-prompts" aria-label="Example questions">
                     <li>"Why did the gate reject this swap?"</li>
@@ -3201,9 +3202,8 @@
                its overlay, its figures). Identity applies to frontrunner proposals; the approval line to all. #}
             <div class="fr-shared" data-testid="fr-shared-notes">
                 {% if frontrunner_proposals | selectattr('proposal_source', 'equalto', 'frontrunner_builder') | list %}
-                <p class="fr-line fr-identity-line" data-testid="fr-identity-note"><span class="fr-shared-label">Identity</span>Each frontrunner proposal is a full standalone copy of its incumbent with one new frontrunner overlay.</p>
+                <p class="fr-line fr-identity-line" data-testid="fr-identity-note"><span class="fr-shared-label">Identity</span>Each frontrunner proposal is a full standalone copy of its incumbent with one new frontrunner overlay; the incumbent is never modified.</p>
                 {% endif %}
-                <p class="fr-line fr-explainer-line" data-testid="fr-explainer-line"><span class="fr-shared-label">On approval</span>Approve creates a NEW undeployed Composer symphony &mdash; the incumbent is never modified.</p>
             </div>
             <div class="proposal-cards" data-testid="frontrunner-proposal-cards">
                 {% for p in frontrunner_proposals %}
@@ -3232,7 +3232,7 @@
                         </thead>
                         <tbody>
                             <tr>
-                                <td data-glossary="X11">Calmar</td>
+                                <td data-glossary="X11a">Calmar</td>
                                 {% if is_fr %}
                                 <td data-testid="fr-incumbent-calmar">{% if m.incumbent_calmar is defined and m.incumbent_calmar is not none %}{{ "%.3f" | format(m.incumbent_calmar) }}{% else %}—{% endif %}</td>
                                 {% endif %}
@@ -3240,7 +3240,7 @@
                                 <td data-testid="fr-candidate-calmar">{% if _cand_calmar is defined and _cand_calmar is not none %}{{ "%.3f" | format(_cand_calmar) }}{% else %}—{% endif %}</td>
                             </tr>
                             <tr>
-                                <td data-glossary="X11">CAGR</td>
+                                <td data-glossary="X11b">CAGR</td>
                                 {% if is_fr %}
                                 <td data-testid="fr-incumbent-cagr">{% if m.incumbent_cagr is defined and m.incumbent_cagr is not none %}{{ "%.2f%%" | format(m.incumbent_cagr * 100) }}{% else %}—{% endif %}</td>
                                 {% endif %}
@@ -3248,7 +3248,7 @@
                                 <td data-testid="fr-candidate-cagr">{% if _cand_cagr is defined and _cand_cagr is not none %}{{ "%.2f%%" | format(_cand_cagr * 100) }}{% else %}—{% endif %}</td>
                             </tr>
                             <tr>
-                                <td data-glossary="X11">Max DD</td>
+                                <td data-glossary="X11c">Max DD</td>
                                 {% if is_fr %}
                                 <td data-testid="fr-incumbent-mdd">{% if m.incumbent_max_drawdown is defined and m.incumbent_max_drawdown is not none %}{{ "%.2f%%" | format((m.incumbent_max_drawdown | abs) * 100) }}{% else %}—{% endif %}</td>
                                 {% endif %}
@@ -3306,7 +3306,9 @@
                 <p data-term="X06">Incumbent: your current symphony. Frontrunner overlay: a rule placed ahead of the symphony's own logic that switches into VIX-linked funds when its conditions are met, for example a watched ticker's RSI rising above a set level.</p>
                 <p data-term="X08">Same title: several cards can copy the same symphony; they differ in their overlay and figures, which View the added overlay shows.</p>
                 <p data-term="X09">Strategy Builder (retrofit): a from-scratch Strategy Builder design offered for this symphony; it does not contain the incumbent's logic.</p>
-                <p data-term="X11">Calmar: yearly return divided by the deepest fall; higher is better. CAGR: the yearly growth rate. Max DD: the deepest fall from a high to a later low.</p>
+                <p data-term="X11a">Calmar: yearly return divided by the deepest fall; higher is better.</p>
+                <p data-term="X11b">CAGR: the yearly growth rate.</p>
+                <p data-term="X11c">Max DD: the deepest fall from a high to a later low.</p>
                 <p data-term="X12">Node count change: how many more or fewer steps the copy's rule tree has than the original; fewer is simpler.</p>
             {% endcall %}
 

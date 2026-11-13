@@ -104,7 +104,7 @@ EXPECTED_KEYS = {
     "overview": {"O09a", "O09c", "O10", "O11", "O16", "O24"},
     "retirement": {"R06", "R07", "R08", "R09", "R29a", "R29b", "R29c", "R29d", "R29e", "R29f"},
     "strategy-builder": {"B07t"},
-    "frontrunner-builder": {"X11", "X12"},
+    "frontrunner-builder": {"X11a", "X11b", "X11c", "X12"},
     "swap": {"W06"},
     "logic": {"L05"},
 }

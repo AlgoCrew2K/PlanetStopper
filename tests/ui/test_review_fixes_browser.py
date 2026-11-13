@@ -625,7 +625,7 @@ def test_each_symphony_first_and_last_series_dates_are_on_the_correlations_tab(
             assert item["series_last"] in text, f"{symphony_id}: last series date not on the tab"
 
 
-def test_frontrunner_list_states_identity_and_approval_once_and_the_card_keeps_its_overlay_line(
+def test_frontrunner_list_states_identity_once_and_the_card_keeps_its_overlay_line(
     firefox, advisor_server
 ):
     seed_pending_frontrunner_proposal()
@@ -637,9 +637,10 @@ def test_frontrunner_list_states_identity_and_approval_once_and_the_card_keeps_i
             () => {
               const card = document.querySelector('[data-testid="frontrunner-proposal-card"]');
               const shared = document.querySelector('[data-testid="fr-shared-notes"]');
+              // The "On approval" line restated the risk banner and is gone: the shared notes hold
+              // the Identity line alone, which says the incumbent is never modified.
               const lines = [
                 shared.querySelector('[data-testid="fr-identity-note"]'),
-                shared.querySelector('[data-testid="fr-explainer-line"]'),
                 card.querySelector('[data-testid="fr-overlay-summary"]'),
               ];
               const labels = lines.map((l) => l && l.querySelector('.fr-shared-label, .fr-line-label'));
@@ -654,10 +655,13 @@ def test_frontrunner_list_states_identity_and_approval_once_and_the_card_keeps_i
             """
         )
         assert all(facts["present"]), (
-            f"the list or the card lacks one of its three lines: {facts['present']}"
+            f"the list or the card lacks one of its two lines: {facts['present']}"
         )
         assert all(facts["labelled"]), f"a line has no label: {facts['labelTexts']}"
-        assert len(set(facts["labelTexts"])) == 3
+        assert len(set(facts["labelTexts"])) == 2
+        assert probe.page.locator('[data-testid="fr-explainer-line"]').count() == 0, (
+            "the On approval line is back"
+        )
         assert facts["rawInLines"] == 0, "the raw overlay string is still in the paragraph"
         assert facts["rawInPreview"], "the raw overlay is not under its preview"
         assert "incumbent" in " ".join((facts["nodeDelta"] or "").split()).lower(), (

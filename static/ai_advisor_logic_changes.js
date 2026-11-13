@@ -243,7 +243,7 @@
         if (proposal.apply_guidance) {
             guidanceHtml = `
             <div class="apply-guidance" data-testid="apply-guidance">
-                <strong>To apply:</strong> ${_escapeHtml(proposal.apply_guidance)}
+                <strong>To apply:</strong> ${_escapeHtml(String(proposal.apply_guidance).replace(/^To apply:\s*/i, ''))}
             </div>`;
         }
 

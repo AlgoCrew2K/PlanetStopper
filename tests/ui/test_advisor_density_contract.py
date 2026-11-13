@@ -567,8 +567,11 @@ class TestFrontrunnerSharedTextOnce:
             seed_pending_frontrunner_proposal()
         html = _page(client)
         panel = html[html.index('data-testid="tab-panel-frontrunner-builder"') :]
-        assert panel.count(_SHARED_APPROVAL_TEXT) == 1, "the approval sentence repeats per card"
+        # The "On approval" line restated the risk banner and is gone; the one shared sentence is
+        # the Identity line, which also says the incumbent is never modified.
+        assert panel.count(_SHARED_APPROVAL_TEXT) == 0, "the approval line is back"
         assert panel.count("Each frontrunner proposal is a full standalone copy") == 1
+        assert panel.count("the incumbent is never modified") == 1
         shared = panel.index('data-testid="fr-shared-notes"')
         first_card = panel.index('data-testid="frontrunner-proposal-card"')
         assert shared < first_card, "the shared text sits above the list"

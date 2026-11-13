@@ -7308,14 +7308,14 @@ def _build_retirement_summary_tiles(last_run: object) -> list[dict]:
 
 
 def _retirement_pointer_result(text: str) -> dict:
-    """The pointer's text and its status, the text without the leading "Retirement: "."""
-    return {"text": text, "status": text.removeprefix("Retirement: ")}
+    """The pointer's status: the text without the leading "Retirement: "."""
+    return {"status": text.removeprefix("Retirement: ")}
 
 
 def _build_retirement_pointer(
     last_run: object, recommendations: object, review_entries: object = ()
 ) -> dict:
-    """The line the Retirement row points from: {"text": ..., "status": ...}.
+    """The line the Retirement row points from: {"status": ...}.
 
     Never run: "Retirement: not run yet". A good run: its Eastern time, its recommendation
     count and how many decisions are still pending. A run that did not finish names its

@@ -826,15 +826,14 @@ class TestRetirementRowSecurity:
 
 
 class TestRetirementPointerStatus:
-    """``_build_retirement_pointer`` keeps ``text`` and gains ``status``: the text without its
-    leading "Retirement: "."""
+    """``_build_retirement_pointer`` returns ``status`` alone, the one key the Retirement row of the
+    observations list reads; the full text it once carried had no reader and is gone."""
 
-    def test_never_run_has_a_status_and_the_unchanged_text(self):
+    def test_never_run_has_a_status(self):
         import app as app_module
 
         got = app_module._build_retirement_pointer(None, [])
         assert got["status"] == _NEVER_RUN_STATUS
-        assert got["text"] == f"Retirement: {_NEVER_RUN_STATUS}"
 
     def test_a_good_run_status_is_the_time_the_count_and_the_pending_count(self):
         import app as app_module
@@ -844,7 +843,6 @@ class TestRetirementPointerStatus:
             [{"approval_status": "pending"}, {"approval_status": "approved"}],
         )
         assert got["status"] == "last run 2026-11-09 22:51 ET, 2 recommendations, 1 pending"
-        assert got["text"] == f"Retirement: {got['status']}"
 
     def test_one_recommendation_reads_in_the_singular(self):
         import app as app_module
@@ -861,7 +859,6 @@ class TestRetirementPointerStatus:
             {"run_at": _ROW_RUN_AT, "status": "internal_error"}, []
         )
         assert got["status"] == "last run internal error, 2026-11-09 22:51 ET"
-        assert got["text"] == f"Retirement: {got['status']}"
 
     @pytest.mark.parametrize("status", [None, "", "  ", 5])
     def test_a_run_with_no_readable_state_reads_unknown(self, status):
@@ -870,10 +867,30 @@ class TestRetirementPointerStatus:
         got = app_module._build_retirement_pointer({"run_at": _ROW_RUN_AT, "status": status}, [])
         assert got["status"] == "last run unknown, 2026-11-09 22:51 ET"
 
-    def test_no_other_key_is_added(self):
+    @pytest.mark.parametrize(
+        "row",
+        [None, {"run_at": _ROW_RUN_AT, "status": "ok", "recommendations": 2}],
+        ids=["never run", "a good run"],
+    )
+    def test_the_value_carries_only_the_key_the_page_reads(self, row):
+        """S-7.18: no key without a reader. The Retirement row reads ``status`` and nothing else
+        (the template, the scripts and the routes read no other), so the value holds it alone."""
         import app as app_module
 
-        assert set(app_module._build_retirement_pointer(None, [])) == {"text", "status"}
+        assert set(app_module._build_retirement_pointer(row, [])) == {"status"}
+
+    def test_the_template_reads_no_other_key_of_the_value(self):
+        """The set above is the set the template reads: every attribute it takes of the context
+        value is ``status``."""
+        import pathlib
+
+        template = (
+            pathlib.Path(__file__).resolve().parents[2] / "templates" / "ai_advisor.html"
+        ).read_text(encoding="utf-8")
+        read = set(re.findall(r"retirement_pointer\.(\w+)", template))
+        read |= set(re.findall(r"retirement_pointer\[\s*['\"](\w+)['\"]", template))
+        read |= set(re.findall(r"retirement_pointer\.get\(\s*['\"](\w+)['\"]", template))
+        assert read == {"status"}, read
 
 
 # ===========================================================================
@@ -1079,11 +1096,11 @@ class TestHelpers:
         import app as app_module
 
         s = w.CAPTURED_SUMMARY
-        assert "Retirement: not run yet" in app_module._build_retirement_pointer(None, [])["text"]
+        assert "not run yet" in app_module._build_retirement_pointer(None, [])["status"]
         good = app_module._build_retirement_pointer(
             {**s, "recommendations": 2},
             [{"approval_status": "pending"}, {"approval_status": "approved"}],
-        )["text"]
+        )["status"]
         assert "2 recommendations" in good and "1 pending" in good
         assert w.et_text(s["run_at"], _RUN_AT_FORMAT, -4) in good
         # Review retire candidates count with the cards: a candidate with no decision, or a
@@ -1099,14 +1116,14 @@ class TestHelpers:
             {**s, "recommendations": 2},
             [{"approval_status": "pending"}, {"approval_status": "approved"}],
             review,
-        )["text"]
+        )["status"]
         assert "2 recommendations" in both and "3 pending" in both
         only_review = app_module._build_retirement_pointer({**s, "recommendations": 0}, [], review)[
-            "text"
+            "status"
         ]
         assert "0 recommendations" in only_review and "2 pending" in only_review
         failed = app_module._build_retirement_pointer(w.internal_error_summary(monkeypatch), [])[
-            "text"
+            "status"
         ]
         assert "internal error" in failed.lower()
 

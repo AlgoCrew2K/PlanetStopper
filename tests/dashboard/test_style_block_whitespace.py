@@ -37,7 +37,12 @@ _REFERENCE_DIGESTS = {
     # other pages' style rules (the diffs are those rules and the one doubled blank line removed).
     # Re-pinned after the sweep layout fixes: the observation lines' history tables no longer size the
     # shared tracks, and the suggestion cards' actions keep one width (a comment and two rules).
-    "ai_advisor.html": "e0c1a4fc201cc00879dfebeb30707ba9615d45e2387bb49447c51999ebd8fa78",
+    # Re-pinned after the Advisor fix round: the rules of the removed caption, guardrail note,
+    # disclosure and navigation-grid markup are deleted, the result cards' columns wrap, the history
+    # table spans its section, and the rationale and the composite track are sized.
+    # Re-pinned after the Market Prism intro's own flex rule was deleted so the capped rationale takes
+    # a row of its own under the description; the diff is that one rule and nothing else.
+    "ai_advisor.html": "9aceb1961dcd342de1951caa808122e49f97b8cfac441760e77f731996c3c6ad",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     # Re-pinned after the Performance and History explainers, relabels and density layout were
     # added, and settings.html after the Settings explainers and density change (each diff

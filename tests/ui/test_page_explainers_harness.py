@@ -239,7 +239,7 @@ def test_the_fixture_holds_a_row_for_every_description_and_every_other_changed_t
     a_keys = [r["key"] for r in copy.a_rows()]
     x_keys = [r["key"] for r in copy.x_rows()]
     assert len(a_keys) == len(set(a_keys)) and len(x_keys) == len(set(x_keys))
-    assert x_keys == [f"CX-{n}" for n in range(1, 15)]
+    assert x_keys == [f"CX-{n}" for n in range(1, 21)]
     for key in ("D01", "A01", "O01", "B03", "X05", "D20"):
         assert copy.a_row(key)["kind"] in {"removed", "moved"} and copy.a_text(key) is None, key
     assert copy.a_row("dp.lead")["unchanged"] and copy.a_text("dp.lead"), (
@@ -248,6 +248,9 @@ def test_the_fixture_holds_a_row_for_every_description_and_every_other_changed_t
     assert copy.x_row("CX-1")["new_text"] == "No suggestions yet."
     assert copy.x_row("CX-5")["new_text"] == "Show all checks"
     assert copy.x_row("CX-11")["new_text"] == "Proposals appear here after a build."
+    assert copy.x_row("CX-15")["slots"] == ["k", "n", "needs_days"]
+    for key in ("CX-17", "CX-18", "CX-19"):
+        assert copy.x_row(key)["kind"] == "removed" and copy.x_row(key)["new_text"] is None, key
     for key in ("CX-4", "CX-6", "CX-7"):
         assert copy.x_row(key)["new_text"] is None and copy.x_row(key)["new_text_note"]
 
@@ -263,7 +266,9 @@ def test_the_glossary_lists_every_host_in_the_plans_order_with_the_lines_it_name
         "X06",
         "X08",
         "X09",
-        "X11",
+        "X11a",
+        "X11b",
+        "X11c",
         "X12",
     ]
     assert [line["key"] for line in copy.glossary("Chat")] == ["A04"]
