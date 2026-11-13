@@ -703,13 +703,15 @@ class TestARefusedClickNamesTheRenderedButton:
         )
 
         message = out["state"]["message"]
-        assert message.endswith(f"Choose {label} again."), message
+        # Every other control of the Advisor says "Click <label> again."; the verb is the same here.
+        assert message.endswith(f"Click {label} again."), message
         assert "Run review now" not in message
 
     def test_the_source_names_no_button_that_is_not_rendered(self):
         label = _rendered_button_label()
         source = _source()
-        assert f"Choose {label} again." in source
+        assert f"Click {label} again." in source
+        assert f"Choose {label} again." not in source
         assert "Click Run review now again" not in source
 
 
