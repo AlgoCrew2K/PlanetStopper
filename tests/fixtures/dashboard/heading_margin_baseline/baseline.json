@@ -1,6 +1,6 @@
 {
- "base_sha": "b8a49292015d4377a7c8fcfacd72acaac6fabf29",
- "captured_at_utc": "2026-11-13T13:33:30Z",
+ "base_sha": "f869256c56da2fd4c5273c34a34f5c90803af628",
+ "captured_at_utc": "2026-11-13T21:42:08Z",
  "capture_instant": "2026-10-21T11:00:00-04:00",
  "browser_version": "148.0.2",
  "views": {
@@ -40,7 +40,7 @@
      "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "b8fdd1eaf4c239e44a2dd40ea931fe5c262661c72a108ec19ac0ff73f5e0578e"
+    "style_digest": "ffd3b24da6cae5579fe9a41de443bdd353a1d98c662cb06accef9721e7ab3b08"
    },
    {
     "tag": "div",
@@ -59,7 +59,26 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "f7060c808a1247d1ee2aee85d277ce05a154bc47852941a8965239029db85990"
+    "style_digest": "774370616a5845288271c970716957e810cc939d65acc0318f4ce5c843b94d01"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "dollar-lines"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "$41.95 lost net of trading costs no real",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "f72ead9d7b1b5e48ff182ea570299eba9626357be39c0251dc6e53f458a4c646"
    },
    {
     "tag": "div",
@@ -130,7 +149,7 @@
      "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "5c9e6184826d9b250f1389dd981c561242380756cc5812b792f969a93b40960c"
+    "style_digest": "af17cb0a46c58297798361c4cb4541c478b1dbb134124da0114ef8bcb0fedc49"
    },
    {
     "tag": "div",
@@ -149,7 +168,26 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "67db8ea8a3c50f8cb1dd613cfd0c0f2456a4f23c81e00b78c62e42e910801add"
+    "style_digest": "6fc3b220104cdb7d4bf91dfd68c2246fc90ab1a99b65c193139a04aa089c40ae"
+   },
+   {
+    "tag": "div",
+    "classes": [
+     "dollar-lines"
+    ],
+    "parent_classes": [
+     "dollar-panel",
+     "hero-section"
+    ],
+    "shared_rule_matches": false,
+    "text": "$41.95 lost net of trading costs no real",
+    "margins": {
+     "margin-top": "0px",
+     "margin-right": "0px",
+     "margin-bottom": "0px",
+     "margin-left": "0px"
+    },
+    "style_digest": "fd40306fdb61714f29acf2ea3733f891fa2add6c5f3878fa5e6c38e3e6be94cd"
    },
    {
     "tag": "div",
@@ -382,7 +420,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "28cac803d3c3eaffafd8707b00c5961813897ce0919425bd5081945f0b2fc4c7"
+    "style_digest": "1639ddf949d76f2ae113555e7547695dd42fa61df9c5f2358be758363fd713b2"
    },
    {
     "tag": "div",
@@ -401,7 +439,7 @@
      "margin-bottom": "16px",
      "margin-left": "0px"
     },
-    "style_digest": "fde8865232c12eae232ad3f669e572d734bb998f7c870cbcdb60525fa240d7bc"
+    "style_digest": "54a4aa512728dcd047fbc15e0d909514171757caaed39e39b7641ec681885fd3"
    },
    {
     "tag": "div",
@@ -418,7 +456,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "03c9bec5fff8ac3c0502da0b89566db638f5ebce0551ae0c6f257e342a4d710e"
+    "style_digest": "b7db2741a3ad7266ff586df2151db1403331e8469b86afabbb0d7ba603f3171d"
    },
    {
     "tag": "div",
@@ -574,23 +612,23 @@
     "style_digest": "51492150898bfeb6fd9efcaabf9c9e660cf0bb372c51ae79c54c4b0234d643de"
    },
    {
-    "tag": "details",
+    "tag": "div",
     "classes": [
-     "hp-more"
+     "hp-head"
     ],
     "parent_classes": [
      "hero-section",
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "What the exit reasons mean Take-profitth",
+    "text": "Today's exits (0) Today's exits",
     "margins": {
-     "margin-top": "12px",
+     "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "0px",
+     "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "18c4cf18ba16682cb890285d4a6448c69f97edfe6644b686eedc1fd79771d1a1"
+    "style_digest": "04bef18316f1c79166a7cd736c440f0d60327a2597fea93fccc605a1493ac3f5"
    },
    {
     "tag": "div",
@@ -609,7 +647,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "195f93d53ac7e32fa80a030f4dcf933bc8f371e05d2a0d15f820bff16f7f75e6"
+    "style_digest": "b751ed1e0d5fb008a6b2b5128de98d9b76ba523ff4b253a08719bd9ccfa39d34"
    },
    {
     "tag": "p",
@@ -628,7 +666,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "ba351c62051ac15d8b34135c5bd6f57afadae7cc3bdedaac2f4aed25d15330d2"
+    "style_digest": "1639ddf949d76f2ae113555e7547695dd42fa61df9c5f2358be758363fd713b2"
    },
    {
     "tag": "div",
@@ -647,7 +685,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "b4718a339874f268a344c05fb9831539e995ee25b1c9b592f6773659ba32f58f"
+    "style_digest": "51492150898bfeb6fd9efcaabf9c9e660cf0bb372c51ae79c54c4b0234d643de"
    }
   ],
   "history|load|1440|dark": [
@@ -668,7 +706,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "91952f8a2ec07cbd3a3887b54a3278d9eb75461bbe84cdbd19da84e9ab2cf1c8"
+    "style_digest": "64df5ed0a4f149369431f27621dee24ced8ab468757f627e1f4fead8306d88c8"
    },
    {
     "tag": "div",
@@ -687,7 +725,7 @@
      "margin-bottom": "16px",
      "margin-left": "0px"
     },
-    "style_digest": "e1803b521cf1d00c901a81463da2731bb8a71d8f74bf17634c43bc3897b32ab0"
+    "style_digest": "b124bdebb0b8ca328d286489a99c85567322da311cec8514bc0376665e7aeef6"
    },
    {
     "tag": "div",
@@ -704,7 +742,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "95d7dfc62e38f2a59d86af2adf136593d87ea057276057b562d364c39dca8b32"
+    "style_digest": "091dfc18d2ab5435e397fce377d937803be343936dbc0bb57a2ef00d6e54c647"
    },
    {
     "tag": "div",
@@ -860,23 +898,23 @@
     "style_digest": "9d59e916c47e3638e72f19e677cae8b1af286457f07b5d0e768d2e4a45772a67"
    },
    {
-    "tag": "details",
+    "tag": "div",
     "classes": [
-     "hp-more"
+     "hp-head"
     ],
     "parent_classes": [
      "hero-section",
      "hp-panel"
     ],
     "shared_rule_matches": false,
-    "text": "What the exit reasons mean Take-profitth",
+    "text": "Today's exits (0) Today's exits",
     "margins": {
-     "margin-top": "12px",
+     "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "0px",
+     "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "ad502c92ffc414c97f625dffdd85e01997f4debc800da28cdfdfb6edcdf4010e"
+    "style_digest": "387bde73a22e55eb87b6b9b19361f16375373a0bf44bf4ab28b25b6ae6af9471"
    },
    {
     "tag": "div",
@@ -895,7 +933,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "76278c035cb3e6b462d20329c967dc2d7b4c969eeb9b652cb6f25330de2a0829"
+    "style_digest": "a6e3bafcaad8743b31b87055ef8006a379d2f57aeb4c415c16629fd81c3b1797"
    },
    {
     "tag": "p",
@@ -914,7 +952,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "8a9a0c587df8889adfe769097bb9cef540c8c3bc7c31b48ef4e6519e58cb4523"
+    "style_digest": "64df5ed0a4f149369431f27621dee24ced8ab468757f627e1f4fead8306d88c8"
    },
    {
     "tag": "div",
@@ -933,7 +971,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "82aeab9053773ddb7684115099bf0a06b596b3b4e6dd44b3b141070a5a70f734"
+    "style_digest": "9d59e916c47e3638e72f19e677cae8b1af286457f07b5d0e768d2e4a45772a67"
    }
   ],
   "history|load|375|light": [
@@ -1144,25 +1182,6 @@
      "margin-left": "0px"
     },
     "style_digest": "49955d6c6ac6e048b39ca7a155e9cb2db5690f119a24c36045284c6ae3ab8850"
-   },
-   {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the exit reasons mean Take-profitth",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "74a7015ffd378d8f1c2868139f224b56702e4e9732b39f51963dc7e07df66594"
    },
    {
     "tag": "div",
@@ -1451,25 +1470,6 @@
     "style_digest": "d7e81b1ceca57a1ce092495977eacbad190038fba52c1908f34ddb5dea1eca91"
    },
    {
-    "tag": "details",
-    "classes": [
-     "hp-more"
-    ],
-    "parent_classes": [
-     "hero-section",
-     "hp-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "What the exit reasons mean Take-profitth",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "2dd950e9bf6d048d8a539645c7bf71b3a16aa01a91512581033178506dcccf6e"
-   },
-   {
     "tag": "div",
     "classes": [
      "hp-head"
@@ -1564,7 +1564,7 @@
      "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "f0ae6f276bf38cc024b727fd984b249918f6240bc3ce709061a911bc556c37ba"
+    "style_digest": "e97c4a20fced4191c1be3efbf11f7c61af9de0da45db006bc2c6fc0b26ce34b1"
    },
    {
     "tag": "div",
@@ -1583,7 +1583,7 @@
      "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "9fd8b7488de9e9b445782f199e43de83e049a78872cc88bf5b72ff64aa127cbd"
+    "style_digest": "e8f02cabe40f8d7b5757e17a35d440a49f2225074707fa8ee651a62dfde1c5d0"
    },
    {
     "tag": "div",
@@ -1600,10 +1600,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "4px",
+     "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "480bc191768e47e601c32a734aa0624024313b94c4cae8e48ce39327ceef43b4"
+    "style_digest": "e8f02cabe40f8d7b5757e17a35d440a49f2225074707fa8ee651a62dfde1c5d0"
    },
    {
     "tag": "div",
@@ -1619,10 +1619,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "8px",
+     "margin-bottom": "16px",
      "margin-left": "0px"
     },
-    "style_digest": "17653f2c5372530fb97a0a7c19cdc7cc09a210b36696d20e2fc80c9b01b28d3a"
+    "style_digest": "96e1db0ca2a903f6efd783e81fa3bce317eaf77bc03d7036d4abf7d8b8d79265"
    },
    {
     "tag": "div",
@@ -1641,7 +1641,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "fac6dd37b056954c7ef5acac6359bbd8f3a50692c1af612356c76ea9b23a39f4"
+    "style_digest": "2a320f13be819ad85cb85769d02d13b74125a94921b2a984be889cc8a84be237"
    },
    {
     "tag": "div",
@@ -1931,7 +1931,7 @@
      "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "3bf49677eeb153f4f9d3948521f1a11810273a176e30a8d838571fba0cc36f62"
+    "style_digest": "92379d559d11575a7fa0c48631a778a4fd4977ec9418155a0885e01dd94284b7"
    },
    {
     "tag": "div",
@@ -1950,7 +1950,7 @@
      "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "5d2d78961f4ad825a1cb1611351a79c1b4158ec6ecbae4ce608b15039a33545e"
+    "style_digest": "55d09c9f0c1e2ef6c1758bfd0e621d34874ee1fa962dbab109920289811b2493"
    },
    {
     "tag": "div",
@@ -1967,10 +1967,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "4px",
+     "margin-bottom": "12px",
      "margin-left": "0px"
     },
-    "style_digest": "6e468d523c49b42cddb30e1856eb301dd069cdb4cb7450f2ac98a491de3e69a5"
+    "style_digest": "55d09c9f0c1e2ef6c1758bfd0e621d34874ee1fa962dbab109920289811b2493"
    },
    {
     "tag": "div",
@@ -1986,10 +1986,10 @@
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "8px",
+     "margin-bottom": "16px",
      "margin-left": "0px"
     },
-    "style_digest": "8bcdc952a02747814bc46325fb55c27154e3ec6f1352206ffb1d736be88860ac"
+    "style_digest": "fce19b836c310c8bfc208ee848949ed0b04463bde8c9d7f0607b8198cda64adc"
    },
    {
     "tag": "div",
@@ -2008,7 +2008,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "d88d4243368c3c0a607ec1675132f4a5dc8abe62cd61d3a92f8951ef33185ea8"
+    "style_digest": "c7978f76b253fae2253c34e1367f508aae2ff6a00b2a75274284ec5e1dfa49f5"
    },
    {
     "tag": "div",
@@ -3737,7 +3737,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
+    "style_digest": "25702b4691b9e4b1fd98db7b13d9410c7ff00bd8620c1553efcce5df89171351"
    },
    {
     "tag": "div",
@@ -3943,7 +3943,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "faa6e646e8e34f0a9701455359b65f8e6c8e2e1a98d8196c7ed946b577efe130"
+    "style_digest": "9d66d3f5ec8b8d1297596d1886dcdc5cba1ec1c4b3caf0844f97efbae5741c6c"
    },
    {
     "tag": "span",
@@ -4005,7 +4005,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
+    "style_digest": "25702b4691b9e4b1fd98db7b13d9410c7ff00bd8620c1553efcce5df89171351"
    },
    {
     "tag": "div",
@@ -4211,7 +4211,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "faa6e646e8e34f0a9701455359b65f8e6c8e2e1a98d8196c7ed946b577efe130"
+    "style_digest": "9d66d3f5ec8b8d1297596d1886dcdc5cba1ec1c4b3caf0844f97efbae5741c6c"
    },
    {
     "tag": "span",
@@ -4273,7 +4273,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
+    "style_digest": "25702b4691b9e4b1fd98db7b13d9410c7ff00bd8620c1553efcce5df89171351"
    },
    {
     "tag": "div",
@@ -4335,7 +4335,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
+    "style_digest": "25702b4691b9e4b1fd98db7b13d9410c7ff00bd8620c1553efcce5df89171351"
    },
    {
     "tag": "div",
@@ -4457,7 +4457,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
+    "style_digest": "25702b4691b9e4b1fd98db7b13d9410c7ff00bd8620c1553efcce5df89171351"
    },
    {
     "tag": "div",
@@ -4519,7 +4519,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
+    "style_digest": "25702b4691b9e4b1fd98db7b13d9410c7ff00bd8620c1553efcce5df89171351"
    },
    {
     "tag": "div",
@@ -4581,27 +4581,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
-   },
-   {
-    "tag": "div",
-    "classes": [
-     "chat-default-title"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "chat-default-state",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Select a recommendation or diagnostic fi",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "4px",
-     "margin-left": "0px"
-    },
-    "style_digest": "500a52962a4657c48707ac8e59cfab165454a80207d65838f4862bf4394e9194"
+    "style_digest": "25702b4691b9e4b1fd98db7b13d9410c7ff00bd8620c1553efcce5df89171351"
    },
    {
     "tag": "p",
@@ -4663,7 +4643,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
+    "style_digest": "25702b4691b9e4b1fd98db7b13d9410c7ff00bd8620c1553efcce5df89171351"
    },
    {
     "tag": "div",
@@ -4725,7 +4705,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "c8b68949dc1687227cb9de7f506dacc51328215dc8bd136cd49407a39f1f29e7"
+    "style_digest": "25702b4691b9e4b1fd98db7b13d9410c7ff00bd8620c1553efcce5df89171351"
    },
    {
     "tag": "div",
@@ -4807,7 +4787,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
+    "style_digest": "2287feb06f4c738da5f0b65127688cfa413b9491975a69ea22a47cfce63ccb81"
    },
    {
     "tag": "div",
@@ -5013,7 +4993,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "e32a42de1693b8481d730d15b4bd69ceffd4de19cd638a1003dc516b81aaa1d1"
+    "style_digest": "9ab11e6b63e21cfd2c78c05f2827c15310dc3e1714afd5a24cdc06ca25763f93"
    },
    {
     "tag": "span",
@@ -5075,7 +5055,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
+    "style_digest": "2287feb06f4c738da5f0b65127688cfa413b9491975a69ea22a47cfce63ccb81"
    },
    {
     "tag": "div",
@@ -5281,7 +5261,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "e32a42de1693b8481d730d15b4bd69ceffd4de19cd638a1003dc516b81aaa1d1"
+    "style_digest": "9ab11e6b63e21cfd2c78c05f2827c15310dc3e1714afd5a24cdc06ca25763f93"
    },
    {
     "tag": "span",
@@ -5343,7 +5323,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
+    "style_digest": "2287feb06f4c738da5f0b65127688cfa413b9491975a69ea22a47cfce63ccb81"
    },
    {
     "tag": "div",
@@ -5405,7 +5385,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
+    "style_digest": "2287feb06f4c738da5f0b65127688cfa413b9491975a69ea22a47cfce63ccb81"
    },
    {
     "tag": "div",
@@ -5527,7 +5507,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
+    "style_digest": "2287feb06f4c738da5f0b65127688cfa413b9491975a69ea22a47cfce63ccb81"
    },
    {
     "tag": "div",
@@ -5589,7 +5569,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
+    "style_digest": "2287feb06f4c738da5f0b65127688cfa413b9491975a69ea22a47cfce63ccb81"
    },
    {
     "tag": "div",
@@ -5651,27 +5631,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
-   },
-   {
-    "tag": "div",
-    "classes": [
-     "chat-default-title"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "chat-default-state",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Select a recommendation or diagnostic fi",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "4px",
-     "margin-left": "0px"
-    },
-    "style_digest": "a99865ca82d1d81cfbda9ba399e1c4e14f8012b951557434a2171cb8bfcbf2c4"
+    "style_digest": "2287feb06f4c738da5f0b65127688cfa413b9491975a69ea22a47cfce63ccb81"
    },
    {
     "tag": "p",
@@ -5733,7 +5693,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
+    "style_digest": "2287feb06f4c738da5f0b65127688cfa413b9491975a69ea22a47cfce63ccb81"
    },
    {
     "tag": "div",
@@ -5795,7 +5755,7 @@
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5603002785660d6a749b84ed9bc89b4757c9c9e90cf3018e409c75c1f5424037"
+    "style_digest": "2287feb06f4c738da5f0b65127688cfa413b9491975a69ea22a47cfce63ccb81"
    },
    {
     "tag": "div",
@@ -6722,26 +6682,6 @@
      "margin-left": "0px"
     },
     "style_digest": "dce12ad65bbaf94cb24245fe54e980d4dc6fdbc08a9b35094ed0c96fe4fb70bc"
-   },
-   {
-    "tag": "div",
-    "classes": [
-     "chat-default-title"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "chat-default-state",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Select a recommendation or diagnostic fi",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "4px",
-     "margin-left": "0px"
-    },
-    "style_digest": "ef92afede4c65dcb8a1ef31761aaa9c00f92b42e7f7f5a28c039a4f036b97783"
    },
    {
     "tag": "p",
@@ -7792,26 +7732,6 @@
      "margin-left": "0px"
     },
     "style_digest": "0fb43cb6480abbf8b6977b37aa77eb9be8bf162c81fad48270f85c7cf794f774"
-   },
-   {
-    "tag": "div",
-    "classes": [
-     "chat-default-title"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "chat-default-state",
-     "hero-section"
-    ],
-    "shared_rule_matches": false,
-    "text": "Select a recommendation or diagnostic fi",
-    "margins": {
-     "margin-top": "0px",
-     "margin-right": "0px",
-     "margin-bottom": "4px",
-     "margin-left": "0px"
-    },
-    "style_digest": "93db522351ba09126389f93b15bf965b3758c4ba2d9651b39e719f772550cc89"
    },
    {
     "tag": "p",

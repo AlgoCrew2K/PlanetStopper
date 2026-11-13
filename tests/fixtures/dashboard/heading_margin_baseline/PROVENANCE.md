@@ -148,6 +148,34 @@ Advisor and Settings comparison cases changed on purpose and `baseline.json` was
 - sha256 of `baseline.json` (LF line ends): `37655d9961540428270676d8a41a7960e5dab417eb435b380d37cfa53961d434`.
 - PM sign-off: not needed (producer output; the only differences are the slice's own added and re-arranged elements).
 
+## Revision: re-recorded at the aligned-tables-and-quiet-copy fix round R1 merged head
+
+The fix round's two tracks (Advisor pages and copy; dashboard, Performance, History and header layout) re-arranged
+elements on four pages, so the element set or computed style of 28 comparison cases changed on purpose and
+`baseline.json` was written again.
+
+- `base_sha` in the file, `BASE_SHA` in the producer and the producer's refusal now name
+  `f869256c56da2fd4c5273c34a34f5c90803af628`, the merge of the two tracks, which is the last commit that touched
+  `static`, `templates` or `app.py` (the producer ran at that very head, so the diff over those paths is empty and
+  the paths are clean; the commit that records this file is a fixture-only commit). The worktree holds a `.env`;
+  the producer removes the credential variables and the module values the import set, so the record does not read
+  it. Run twice in separate processes: the two records were equal apart from `captured_at_utc`.
+- Producer call and Firefox (`148.0.2`) as above; 76 views, 542 elements (was 546).
+- Compared with the previous record, view by view: the 76 view keys are the same; 28 views differ (Advisor 20,
+  History 4, Dashboard 2, Performance 2), all in their element set or an element's text, margin or computed style.
+  No heading was lost: every `.section-header` of the previous record is present with the same tag, classes, four
+  margins and text, and the margins of the elements the shared rule matches are equal in every view.
+- Element-set changes, each by R1 fix: Dashboard load gains the `dollar-lines` element (the stacked dollar lines,
+  track B `abe01b19`); History load gains the `hp-head` of "Today's exits" and loses the `hp-more` exit-reasons
+  disclosure (track B, the exit reasons text moved out of a disclosure); Advisor Chat loses the
+  `chat-default-title` element (track A `2747483b`, the contained result cards and stylesheet cleanup). The rest
+  are computed-style changes with the same element set: the Advisor `cap-nav-wrap` and `obs-lines` rows (track A
+  stylesheet cleanup), the History `hp-*` toolbar, scroll and note rows, the Performance `hp-figs`, `hp-toolbar`
+  and `metrics-caption` rows, and two margin changes outside the shared rule's reach (Performance `perf-captions`
+  bottom 4px to 12px, `insufficient-banner` bottom 8px to 16px, track B layout).
+- sha256 of `baseline.json` (LF line ends): `a2dc6dceb9c5744b7915d29d5318c2c86968e03b67575bd07da81933c1bddfe3`.
+- PM sign-off: not needed (producer output; the only differences are the fix round's own re-arranged elements).
+
 ## Regenerating
 
 A different Firefox version, or a deliberate change of a page that moves the elements, needs a new capture,
