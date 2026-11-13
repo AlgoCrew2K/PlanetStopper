@@ -25,6 +25,8 @@ with the poll answer put in the named engine state by the helpers of
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from tests.ui import _alignment as al
@@ -66,6 +68,25 @@ PAGES = ("/history", "/performance", "/settings", "/ai-advisor")
 # The server instant and degradation each state is read at (a Degraded header needs an open session).
 MOMENTS = {SHORT: (et(11, 0), ["engine_failing"]), LONG: (et(15, 56), None)}
 LINKS = 5
+# The account the review's header held: the chip is as wide as a real account label and short code
+# make it. The id is made up in the real shape (the short code is its first eight characters).
+ACCOUNT_ENV = {"ACCOUNT_ROTH": "880be47e-5d3c-4b1e-9f2a-3c8d7e6a1b04"}
+CHIP_TEXT = "Roth IRA 880be47e"
+# The pages set their text in Manrope, a web font the browser tests never download (every request
+# but the server's is refused), so the browser falls back to a narrower system face and the header
+# measures about 50 px short of the review's 1461 px content edge at a 1440 px window. A letter
+# spacing of 0.55 px on the header's text brings the content edge to within 1% of the review's
+# (1447, 1450 and 1452 px in windows of 1401, 1420 and 1440 px, against the 1455, 1458 and 1461 px
+# it measured, with the brand 169, the links 406, the status 206, the chip 154, Force run now 113
+# and Emergency Liquidate 152 px wide), so the fit is judged at widths close to the real font's.
+# Only this stylesheet widens the text; no rule of the page is touched. ``!important`` outranks the
+# header's own ``letter-spacing: 0 !important`` on its two buttons.
+WEB_FONT_WIDTH_CSS = """
+[data-testid="studio-nav"], [data-testid="studio-nav"] *,
+[data-testid="studio-nav"] > #emergency-liquidate,
+[data-testid="studio-nav"] > [data-testid="force-run-btn"],
+[data-testid="studio-nav"] > [data-testid="mode-pill"] { letter-spacing: 0.55px !important; }
+"""
 
 FACTS_JS = """
 () => {
@@ -80,6 +101,7 @@ FACTS_JS = """
     viewport: vw,
     scrollWidth: document.documentElement.scrollWidth,
     label: (q('#engine-status-label') || {textContent: ''}).textContent.trim(),
+    chip: (q('#ws-wrap') || {textContent: ''}).textContent.replace(/\\s+/g, ' ').trim(),
     liquidate, force, links,
   };
 }
@@ -110,14 +132,32 @@ def _faults(facts: dict, width: int) -> list[str]:
 
 def _walk(page, label_ok) -> list[str]:
     problems: list[str] = []
+    page.add_style_tag(content=WEB_FONT_WIDTH_CSS)
     for width in WIDTHS:
         page.set_viewport_size({"width": width, "height": HEIGHT})
         page.wait_for_timeout(150)
         facts = page.evaluate(FACTS_JS)
         if not label_ok(facts["label"]):
             problems.append(f"{width} px: the header reads {facts['label']!r}, not the state under test")
+        if facts["chip"] != CHIP_TEXT:
+            problems.append(f"{width} px: the workspace chip reads {facts['chip']!r}, not {CHIP_TEXT!r}")
         problems.extend(_faults(facts, width))
     return problems
+
+
+def _with_real_account_chip(world: dict) -> dict:
+    """The harness world's page with its workspace chip reading what an account makes it read.
+
+    The harness render has no account in its environment, so the server prints the chip's placeholder
+    words; the page script never rewrites them on the dashboard. Only those two spans' text changes.
+    """
+    label = re.compile(r'(<span id="ws-label">)[^<]*(</span>)')
+    short = re.compile(r'(<span id="ws-uuid"[^>]*>)[^<]*(</span>)')
+    html = world["html"]
+    assert label.search(html) and short.search(html), "premise: the render holds the chip's spans"
+    html = label.sub(r"\g<1>Roth IRA\g<2>", html, count=1)
+    html = short.sub(r"\g<1>880be47e\g<2>", html, count=1)
+    return {**world, "html": html}
 
 
 @pytest.mark.parametrize("name", [SHORT, LONG])
@@ -133,7 +173,7 @@ def test_a_page_with_the_header_in_each_state_is_never_wider_than_its_window(
     read 1455 to 1463 px in a 1401 to 1460 px window, with Emergency Liquidate cut by the edge)."""
     seed_dashboard_state()
     moment, reasons = MOMENTS[name]
-    answer = header_answer(moment, reasons=reasons)
+    answer = header_answer(moment, reasons=reasons, accounts=ACCOUNT_ENV)
     labels, _ = STATES[name]
     with open_probe(firefox, advisor_server, width=WIDTHS[0], height=HEIGHT) as probe:
 
@@ -157,7 +197,7 @@ def test_the_dashboard_with_the_header_in_each_state_is_never_wider_than_its_win
     labels, _ = STATES[name]
     with running_server() as server:
         context = firefox.new_context(viewport={"width": WIDTHS[0], "height": HEIGHT})
-        probe = new_probe(firefox, server, world, context=context)
+        probe = new_probe(firefox, server, _with_real_account_chip(world), context=context)
         try:
             probe.state = _state_body(world, name)
             probe.page.goto(server.base_url + "/")

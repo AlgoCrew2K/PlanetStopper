@@ -142,6 +142,31 @@ def test_the_comparison_rows_fill_the_box_and_every_figure_lies_inside_it(
         _assert_box(probe.page, f"comparison rows at {width}")
 
 
+# The pages set their text in Manrope, a web font the browser tests never download, so the browser
+# measures a narrower system face; the review read the real font, which is wider. A letter spacing
+# of 0.4 px on every text stands in for the difference, so a layout that fits only the narrower
+# text fails.
+WIDER_TEXT_CSS = "body, body * { letter-spacing: 0.4px !important; }"
+
+
+@pytest.mark.parametrize("width", EDGE_WIDTHS)
+def test_the_rows_stay_inside_the_box_with_the_wider_text_of_the_web_font(
+    firefox,  # noqa: F811
+    advisor_server,  # noqa: F811
+    seeded,  # noqa: F811
+    width,
+):
+    """Rejects a grid that fits the fallback face and overflows the box in the real font (the review
+    saw the alpha cut at 1001 px)."""
+    seeded("dashboard_full")
+    with _Dashboard(firefox, advisor_server, width, al.VIEWPORT_HEIGHT) as probe:
+        probe.page.add_style_tag(content=WIDER_TEXT_CSS)
+        probe.page.wait_for_timeout(200)
+        found = al.measure(probe.page, BOX_JS, {})
+        assert found["found"] >= MIN_ROWS
+        assert not found["inside"], f"wider text at {width}: " + "; ".join(found["inside"])
+
+
 @pytest.mark.parametrize("width", [1001, al.WIDTHS[-2]])
 def test_the_rows_keep_filling_the_box_after_three_polls_and_a_window_pick_and_back(
     firefox,  # noqa: F811

@@ -273,6 +273,25 @@ def test_a_saved_and_a_five_figure_total_keep_the_layout(firefox, world, kind, w
             probe.context.close()
 
 
+# The pages set their text in Manrope, a web font the browser tests never download, so the browser
+# measures a narrower system face; the review read the real font, which is wider. A letter spacing
+# of 0.4 px on every text stands in for the difference, so a column that fits only the narrower text
+# fails at 1001 px.
+WIDER_TEXT_CSS = "body, body * { letter-spacing: 0.4px !important; }"
+
+
+def test_the_layout_holds_with_the_wider_text_of_the_web_font_at_1001(firefox, world):  # noqa: F811
+    """Rejects a column that fits the fallback face and wraps or collides in the real font."""
+    with running_server() as server:
+        probe = _open(firefox, server, world, 1001, summary=_total(world, "lost"))
+        try:
+            probe.page.add_style_tag(content=WIDER_TEXT_CSS)
+            probe.page.wait_for_timeout(200)
+            _assert_summary(probe.page, "wider text at 1001")
+        finally:
+            probe.context.close()
+
+
 @pytest.mark.parametrize("width", [1001, 1440])
 def test_a_summary_that_answers_500_keeps_the_layout_with_its_dashes(firefox, world, width):  # noqa: F811
     """Every figure reads as a dash, and the sentence, meta and column keep the rule's layout."""
