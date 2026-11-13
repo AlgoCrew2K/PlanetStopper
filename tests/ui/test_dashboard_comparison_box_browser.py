@@ -118,7 +118,9 @@ return out;
 
 def _assert_box(page, where: str) -> None:
     found = al.measure(page, BOX_JS, {})
-    assert found["found"] >= MIN_ROWS, f"{where}: {found['found']} comparison rows, premise {MIN_ROWS}"
+    assert found["found"] >= MIN_ROWS, (
+        f"{where}: {found['found']} comparison rows, premise {MIN_ROWS}"
+    )
     assert not found["inside"], f"{where}: " + "; ".join(found["inside"])
     assert not found["reach"], f"{where}: " + "; ".join(found["reach"])
 
@@ -196,7 +198,9 @@ def test_the_rows_keep_filling_the_box_after_three_polls_and_a_window_pick_and_b
 def _open(firefox, server, world, width: int, *, state=None, strips=None):  # noqa: F811
     context = firefox.new_context(viewport={"width": width, "height": al.VIEWPORT_HEIGHT})
     probe = new_probe(firefox, server, world, context=context)
-    probe.state = sup.with_stamp(world["state"], sup.render_stamp(world)) if state is None else state
+    probe.state = (
+        sup.with_stamp(world["state"], sup.render_stamp(world)) if state is None else state
+    )
     for token, body in (strips or {}).items():
         probe.strips[token] = body
     probe.page.goto(server.base_url + "/")
@@ -232,7 +236,12 @@ def test_figures_at_the_edge_of_their_formats_lie_inside_the_box(firefox, world,
     poll and the strip, at the widths where the box is narrowest."""
     with running_server() as server:
         probe = _open(
-            firefox, server, world, width, state=_edge_state(world), strips={"30d": _edge_strip(world)}
+            firefox,
+            server,
+            world,
+            width,
+            state=_edge_state(world),
+            strips={"30d": _edge_strip(world)},
         )
         try:
             probe.page.evaluate("window.loadState()")

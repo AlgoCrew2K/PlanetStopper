@@ -191,7 +191,9 @@ def _open(firefox, server, world, width: int, *, summary=None, fail_summary=Fals
 
 def _total(world, kind: str) -> dict:
     saved, events, coverage = TOTALS[kind]
-    return sup.summary_with(world["summaries"]["30d"], saved=saved, events=events, coverage=coverage)
+    return sup.summary_with(
+        world["summaries"]["30d"], saved=saved, events=events, coverage=coverage
+    )
 
 
 # ---------------------------------------------------------------------------

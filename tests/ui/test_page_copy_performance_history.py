@@ -654,7 +654,8 @@ HISTORY_STATE = """
 """
 
 
-REASON_GLOSSARY_KEYS = ("D29b", "D29a", "D29c", "D29d")  # Take-profit, Trailing stop, VWAP breakdown, VWAP bleed
+# The reasons in the page's order: Take-profit, Trailing stop, VWAP breakdown, VWAP bleed.
+REASON_GLOSSARY_KEYS = ("D29b", "D29a", "D29c", "D29d")
 REASON_DISCLOSURE_SUMMARY = "What the exit reasons mean"
 
 

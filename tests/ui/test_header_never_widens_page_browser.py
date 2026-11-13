@@ -51,8 +51,8 @@ from tests.ui._shell_support import (  # noqa: F401  (fixtures)
 from tests.ui.test_header_clock_widths_browser import (
     HEIGHT,
     STATES,
-    _json,
     _state_body,
+    serve_header_status,
     wait_until_label,
 )
 from tests.ui.test_page_explainers_performance_history_browser import (  # noqa: F401
@@ -138,9 +138,13 @@ def _walk(page, label_ok) -> list[str]:
         page.wait_for_timeout(150)
         facts = page.evaluate(FACTS_JS)
         if not label_ok(facts["label"]):
-            problems.append(f"{width} px: the header reads {facts['label']!r}, not the state under test")
+            problems.append(
+                f"{width} px: the header reads {facts['label']!r}, not the state under test"
+            )
         if facts["chip"] != CHIP_TEXT:
-            problems.append(f"{width} px: the workspace chip reads {facts['chip']!r}, not {CHIP_TEXT!r}")
+            problems.append(
+                f"{width} px: the workspace chip reads {facts['chip']!r}, not {CHIP_TEXT!r}"
+            )
         problems.extend(_faults(facts, width))
     return problems
 
@@ -176,11 +180,7 @@ def test_a_page_with_the_header_in_each_state_is_never_wider_than_its_window(
     answer = header_answer(moment, reasons=reasons, accounts=ACCOUNT_ENV)
     labels, _ = STATES[name]
     with open_probe(firefox, advisor_server, width=WIDTHS[0], height=HEIGHT) as probe:
-
-        def serve(route):
-            route.fulfill(status=200, content_type="application/json", body=_json(answer["json"]))
-
-        probe.page.route("**/api/header-status", serve)
+        probe.page.route("**/api/header-status", serve_header_status(answer))
         open_page(probe, path)
         wait_until_label(probe, labels)
         problems = _walk(probe.page, lambda label: label in labels)

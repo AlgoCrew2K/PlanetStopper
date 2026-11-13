@@ -90,8 +90,8 @@ def test_the_dashboards_own_disclosure_rules_each_match_an_element(
     seeded("dashboard_full")
     with _Dashboard(firefox, advisor_server, WIDTH, al.VIEWPORT_HEIGHT) as probe:
         unmatched = probe.page.evaluate(UNMATCHED_JS, ".hp-more")
-    assert not unmatched, "the dashboard's stylesheet places disclosures that are gone:\n" + "\n".join(
-        unmatched
+    assert not unmatched, (
+        "the dashboard's stylesheet places disclosures that are gone:\n" + "\n".join(unmatched)
     )
 
 

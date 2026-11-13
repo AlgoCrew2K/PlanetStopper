@@ -126,7 +126,10 @@ def _current_text(page: str) -> str:
     template = _STYLE.sub("", _read(TEMPLATES / f"{page}.html"))
     parts = [template] + [_read(TEMPLATES / name) for name in SHARED_MARKUP]
     parts += [_read(STATIC / s) for s in sorted(set(_SCRIPT_FILE.findall(template)))]
-    parts += [_read(STATIC / s) for s in sorted(set(_SCRIPT_FILE.findall(_read(TEMPLATES / "_chrome.html"))))]
+    parts += [
+        _read(STATIC / s)
+        for s in sorted(set(_SCRIPT_FILE.findall(_read(TEMPLATES / "_chrome.html"))))
+    ]
     return "\n".join(parts)
 
 

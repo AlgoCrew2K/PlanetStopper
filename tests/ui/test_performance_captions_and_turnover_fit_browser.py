@@ -230,7 +230,10 @@ def test_the_turnover_table_with_the_longest_figures_still_fits_its_panel(
         probe.page.route("**/api/exit-turnover?*", widest)
         _open(probe, "/performance", preconditions=(200, _usable_preconditions_body()))
         _check(
-            probe.page, TURNOVER_JS, f"exit turnover with long figures at {width}", rows=MIN_TURNOVER_ROWS
+            probe.page,
+            TURNOVER_JS,
+            f"exit turnover with long figures at {width}",
+            rows=MIN_TURNOVER_ROWS,
         )
 
 
@@ -269,6 +272,6 @@ def test_the_turnover_panel_with_no_symphony_shows_its_empty_state_inside_its_bo
         )
         assert facts["rows"] == 0, f"premise: no turnover row, {facts['rows']} drawn"
         assert facts["text"], "the empty state has no text"
-        assert facts["panelLeft"] <= facts["left"] and facts["right"] <= facts["panelRight"] + 0.5, (
-            f"the empty state runs outside its panel: {facts}"
-        )
+        assert (
+            facts["panelLeft"] <= facts["left"] and facts["right"] <= facts["panelRight"] + 0.5
+        ), f"the empty state runs outside its panel: {facts}"
