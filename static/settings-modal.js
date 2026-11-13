@@ -274,6 +274,8 @@
         el.style.display = 'flex';
         // Focus trap: first focusable element inside the surface on open.
         setTimeout(function () {
+            // A control the user already focused inside the modal keeps its focus.
+            if (el.contains(document.activeElement)) { return; }
             var first = el.querySelector('button,input,[tabindex="0"]');
             if (first) { first.focus(); }
         }, 50);
