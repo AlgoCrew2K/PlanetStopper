@@ -69,6 +69,8 @@ def probe(firefox, world):  # noqa: F811
 # The widths the headline module does not sample, either side of the desktop breakpoint (1240 px)
 # where the picker leaves the headline's row.
 BAND_WIDTHS = [1001, 1120, 1239, 1240, 1290, 1350]
+# The picker's own padding (2 px) and border (1 px) on its end side, plus a pixel of rounding.
+PICKER_EDGE_ALLOWANCE_PX = 4
 
 _BAND_FACTS = """
 (written) => {
@@ -87,9 +89,11 @@ _BAND_FACTS = """
   }).length;
   const apart = (a, b) => a.right <= b.left + 1 || a.left >= b.right - 1 || a.bottom <= b.top + 1 || a.top >= b.bottom - 1;
   const segmentRows = new Set([...picker.querySelectorAll('button')].map((b) => Math.round(b.getBoundingClientRect().top))).size;
+  const segmentsEnd = Math.max(...[...picker.querySelectorAll('button')].map((b) => b.getBoundingClientRect().right));
   return {
     holds: text.right <= headline.right + 1 && text.left >= headline.left - 1,
     segmentRows,
+    emptyTrackAfterSegments: p.right - segmentsEnd,
     clipped,
     pickerApartFromHeadline: apart(p, headline),
     pickerApartFromChart: apart(p, chart),
@@ -124,6 +128,10 @@ def test_the_headline_holds_its_figure_and_the_picker_clears_it_around_the_deskt
         # With room for it (the default face), the picker is one line, beside the headline or under it.
         assert facts["segmentRows"] == 1, (
             f"{where}: the picker's segments sit on {facts['segmentRows']} lines"
+        )
+        # The control is as wide as its segments (its padding and border aside), never stretched.
+        assert facts["emptyTrackAfterSegments"] <= PICKER_EDGE_ALLOWANCE_PX, (
+            f"{where}: the picker's box runs {facts['emptyTrackAfterSegments']:.0f} px past its segments"
         )
     assert facts["clipped"] == 0, f"{where}: {facts['clipped']} picker segments overflow its box"
     assert facts["pickerApartFromHeadline"], f"{where}: the picker overlaps the headline's box"
