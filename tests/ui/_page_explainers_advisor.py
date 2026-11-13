@@ -173,8 +173,10 @@ def b_rows_for(a_key: str) -> list[dict]:
 
 
 def moved_term_keys() -> set[str]:
-    """The reference term keys that sit in a finished host's Glossary (and in no disclosure)."""
-    return {line["key"] for host in GLOSSARY_HOSTS_DONE for line in copy_fixture.glossary(host)}
+    """The reference term keys that sit in a finished host's Glossary (and in no disclosure), and
+    the reference key the fix round split into one Glossary line per term (X11 into X11a to X11c)."""
+    moved = {line["key"] for host in GLOSSARY_HOSTS_DONE for line in copy_fixture.glossary(host)}
+    return moved | {"X11"}
 
 
 def b_rows_of_tab(tab: str | None) -> list[dict]:

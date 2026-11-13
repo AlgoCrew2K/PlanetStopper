@@ -95,6 +95,13 @@ RULED_REMOVALS = (
     "data:data-explainer=B03",
     "data:data-explainer=X05",
     "class:proposal-cards--fill",
+    # The fix round on the Advisor tabs: the Chat default title (T02 says how a conversation
+    # opens), the Frontrunner "On approval" line (the risk banner and the Identity line say it)
+    # and the X11 Glossary line, split into one line per term (X11a to X11c).
+    "class:chat-default-title",
+    "class:fr-explainer-line",
+    "testid:fr-explainer-line",
+    "data:data-term=X11",
     # The dashboard and its detail panel: the page line and the Tracked, Armed, Triggered line are
     # gone, and every term disclosure became a line of the dashboard's or the panel's Glossary.
     "data:data-explainer=D01",
@@ -138,6 +145,9 @@ RULED_FILE_REMOVALS = frozenset(
         ("templates/index.html", "class:hp-more"),
         ("templates/performance.html", "class:hp-more"),
         ("templates/settings.html", "class:hp-more"),
+        # The Advisor template's last rules for the class went with the disclosures they placed
+        # (the stylesheet check requires it); the shared Glossary macro keeps the class.
+        ("templates/ai_advisor.html", "class:hp-more"),
     }
 )
 

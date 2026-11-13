@@ -1473,8 +1473,9 @@ class TestNoRedundantSiblingIsStated:
             block = card.find("tenure-review-evidence-redundancy")
             assert "no redundant sibling" not in block.text(), key
             assert item["status"] == "unavailable", key
-            assert item["reason"] not in _without_basis_label(block), key
-            assert item["reason"] in card.find("tenure-review-undecided").text(), key
+            # the stored list sits once in the cell's closed disclosure, and on no other part of the card
+            assert _cell_reason_problems(item, block) == [], key
+            assert card.text().count(item["reason"]) == 1, key
             if item["pair"] is None:
                 unproven += 1
             else:
@@ -4822,12 +4823,16 @@ class TestEachNamedRedundancyStateRendersAsStored:
             peer_name = pb.entry_of(record, pb.state_id("below_floor_no_hit", peer))["display_name"]
             assert f"{peer_name} ({floor_below} aligned days" in item["reason"], "fixture sanity"
             card = pb.entry_node(_panel(client), stored["symphony_id"])
-            text = card.find("tenure-review-evidence-redundancy").text()
-            assert peer_name not in text, "the cell names a peer the missing line does not"
-            assert (
-                f"{peer_name} ({floor_below} aligned days"
-                in card.find("tenure-review-undecided").text()
-            ), "the stored list is word for word in the one disclosure"
+            cell = card.find("tenure-review-evidence-redundancy")
+            text = cell.text()
+            assert peer_name not in pb.visible_text(cell), "the closed cell names a peer"
+            assert peer_name not in text.replace(item["reason"], " "), (
+                "the cell names a peer outside the one stored list"
+            )
+            assert text.count(item["reason"]) == 1 and (
+                f"{peer_name} ({floor_below} aligned days" in text
+            ), "the stored list is word for word in the cell's one disclosure"
+            assert card.find("tenure-review-undecided") is None
             assert _NO_SIBLING not in text.lower()
 
     def test_the_pair_beside_an_unused_item_and_the_item_alone_read_the_same_bare_line(
@@ -7286,12 +7291,17 @@ class TestAShownPairThatHoldsNoNumberNamesNoSibling:
         pair = stored["evidence"]["redundancy"]["pair"]
         cell = _redundancy_cell(card)
         assert _summary_of(cell).text() == "Redundancy unavailable"
+        reason = stored["evidence"]["redundancy"]["reason"]
         assert "paired with" not in cell.text()
-        assert pair["sibling_name"] not in cell.text()
+        # the stored list of undecided peers names the sibling among the others, inside the cell's
+        # closed disclosure; the pair's own lines name no sibling
+        assert pair["sibling_name"] not in cell.text().replace(reason, " ")
         assert pair["sibling_name"] not in pb.visible_text(card)
         assert f"aligned days: {pair['n_obs']}" in cell.text()
         for label in ("aligned days", "uncertainty gate", "structural redundancy gate"):
             for line in pb.leaf_nodes_containing(cell, label):
+                if reason in line.text():
+                    continue
                 assert pair["sibling_name"] not in line.text(), label
 
     def test_a_pair_with_only_its_holdings_overlap_computed_still_names_the_sibling(
@@ -7428,7 +7438,10 @@ class TestTheMissingLineWhenTheStoredListIsAbsentOrWrong:
         pb.seed_roster_state(record)
         pb.store_run(record)
         card = pb.entry_node(_panel(client), gap["symphony_id"])
-        assert card.find("tenure-review-missing").text().endswith("; backtest (not recorded)")
+        # this card's redundancy is too-few-days, so the fleet line says it and the line lists the
+        # backtest alone
+        assert pb.is_too_few_days(gap, NEEDED), "fixture sanity"
+        assert card.find("tenure-review-missing").text() == "missing: backtest (not recorded)"
 
     @pytest.mark.parametrize(
         "poison",
