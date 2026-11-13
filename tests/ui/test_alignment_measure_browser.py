@@ -442,6 +442,33 @@ def test_items_that_wrap_onto_a_second_line_are_reported(firefox):  # noqa: F811
     assert any("not on one line" in v for v in found["violations"]), found
 
 
+WRAPPING = {**LINE, "rows_may_wrap": True}
+WRAPPED_BOX = '<div id="l" style="display:flex;flex-wrap:wrap;width:{w}px;gap:{g}px">{items}</div>'
+
+
+def test_a_line_that_breaks_between_items_is_read_row_by_row_when_it_may_wrap(firefox):  # noqa: F811
+    body = WRAPPED_BOX.format(w=150, g=8, items=_items(4))
+    found = _run(firefox, al.LINE_GAPS_JS, WRAPPING, body)
+    assert found["violations"] == [], found
+    assert any(
+        "not on one line" in v for v in _run(firefox, al.LINE_GAPS_JS, LINE, body)["violations"]
+    )
+
+
+def test_a_wrapped_row_with_a_wide_or_unequal_gap_is_still_reported(firefox):  # noqa: F811
+    wide = _run(
+        firefox, al.LINE_GAPS_JS, WRAPPING, WRAPPED_BOX.format(w=700, g=90, items=_items(6))
+    )
+    assert any("more than 48" in v for v in wide["violations"]), wide
+    body = (
+        '<div id="l" style="display:flex;flex-wrap:wrap;width:700px"><span class="i">one</span>'
+        '<span class="i" style="margin-left:10px">two</span>'
+        '<span class="i" style="margin-left:30px">three</span></div>'
+    )
+    unequal = _run(firefox, al.LINE_GAPS_JS, WRAPPING, body)
+    assert any("gaps are not equal" in v for v in unequal["violations"]), unequal
+
+
 def test_a_label_that_breaks_across_lines_is_reported_only_when_no_wrap_is_asked(firefox):  # noqa: F811
     body = (
         '<div id="l" style="display:flex;gap:24px"><span class="i" style="width:60px">'

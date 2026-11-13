@@ -402,7 +402,23 @@ lines.forEach((line, index) => {
   // Items on one line start at tops within half the smaller item's height of each other.
   const tops = items.map((x) => x.box.top);
   const height = items.length ? Math.min(...items.map((x) => x.box.bottom - x.box.top)) : 0;
-  if (items.length > 1 && Math.max(...tops) - Math.min(...tops) > Math.max(tol, height / 2)) {
+  if (spec.rows_may_wrap) {
+    // A line whose items cannot all fit may break between items (never inside one): the items
+    // are read as rows by vertical overlap, and the gaps of each row are equal and at most the bound.
+    const rows = [];
+    for (const x of items.slice().sort((a, b) => a.box.top - b.box.top || a.box.left - b.box.left)) {
+      const row = rows.find((r) => r.some((y) => x.box.top < y.box.bottom && y.box.top < x.box.bottom));
+      if (row) row.push(x); else rows.push([x]);
+    }
+    rows.forEach((row, ri) => {
+      row.sort((a, b) => a.box.left - b.box.left);
+      const rowGaps = row.slice(1).map((x, i) => x.box.left - row[i].box.right);
+      if (rowGaps.some((g) => g > maxGap)) v.push('line ' + (index + 1) + ' row ' + (ri + 1) + ': a gap of ' + fix(Math.max(...rowGaps)) + ' px, more than ' + maxGap);
+      if (rowGaps.length && Math.max(...rowGaps) - Math.min(...rowGaps) > tol) {
+        v.push('line ' + (index + 1) + ' row ' + (ri + 1) + ': gaps are not equal (' + rowGaps.map(fix).join(', ') + ')');
+      }
+    });
+  } else if (items.length > 1 && Math.max(...tops) - Math.min(...tops) > Math.max(tol, height / 2)) {
     v.push('line ' + (index + 1) + ': the items are not on one line (tops ' + fix(Math.min(...tops)) + ' to ' + fix(Math.max(...tops)) + ')');
   } else if (gaps.length) {
     if (gaps.some((g) => g > maxGap)) v.push('line ' + (index + 1) + ': a gap of ' + fix(Math.max(...gaps)) + ' px, more than ' + maxGap);
@@ -1115,8 +1131,12 @@ FIGURE_LINES: dict[str, dict] = {
     "dollar_saved_line": {
         "host": "/",
         "open": {},
-        "line": ".dollar-lead",
-        "items": ":scope > *",
+        # The four figures the panel lays on one line: the lead and the three lines after it.
+        "line": '[data-testid="dollar-saved-panel"]',
+        "items": ".dollar-lead, .dollar-line",
+        # At 1440 the four figures with their empty-state words do not all fit one row: the line may
+        # break between figures, never inside one, and each row has equal gaps.
+        "rows_may_wrap": True,
         "status": "ref",
         "owner": "C5",
     },
