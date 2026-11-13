@@ -35,7 +35,9 @@ _REFERENCE_DIGESTS = {
     # previous pin is those style and markup changes and nothing else.
     # Re-pinned after the quiet-copy and aligned-figures slice reworked the Advisor tabs' and the
     # other pages' style rules (the diffs are those rules and the one doubled blank line removed).
-    "ai_advisor.html": "23e8820096c4961c0c1301e5f395cd41064b81cf09c54932c0a096f70a79ac8c",
+    # Re-pinned after the sweep layout fixes: the observation lines' history tables no longer size the
+    # shared tracks, and the suggestion cards' actions keep one width (a comment and two rules).
+    "ai_advisor.html": "e0c1a4fc201cc00879dfebeb30707ba9615d45e2387bb49447c51999ebd8fa78",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     # Re-pinned after the Performance and History explainers, relabels and density layout were
     # added, and settings.html after the Settings explainers and density change (each diff
@@ -48,7 +50,9 @@ _REFERENCE_DIGESTS = {
     # Re-pinned a last time after the aligned figures, the one Glossary per page and the removed
     # captions grid, two-group risk table and far-end stamps (each diff is those rules and markup).
     "history.html": "57145336af1b162a784a601e4c83bba13a9959fd220b604a37a7df2108c71ca7",
-    "performance.html": "d2f362209613b6d14ad51a2ff0427e4516017d89c9ac6c304578821fcf9a0ebb",
+    # performance.html was re-pinned after the risk metrics table took its content width from 1001 px
+    # (one `.metrics-tbl--fit` rule); the diff is that rule and nothing else.
+    "performance.html": "1cf625da28f6599c0578a81a36fe8aca5a7f23b00aa35d68bde061940dbff773",
     "settings.html": "8d12e03679dfe44dc055d3fee78ca322f20d1caaea6a7ee6499c30df18e3abfe",
 }
 
