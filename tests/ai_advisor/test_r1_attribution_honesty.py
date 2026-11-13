@@ -215,9 +215,7 @@ def test_ac3_sb_run_controls_note_stale_from_templates_copy_removed(client, monk
     )
 
 
-def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_significance_bar(
-    client, monkeypatch
-):
+def test_ac3_sb_model_line_and_description_say_what_the_removed_run_note_said(client, monkeypatch):
     """Corrected copy per doc-reconciliation §1.3: generation-model attribution
     + Atlas community sourcing + FDR/Yekutieli-calibrated significance bar,
     with single-strongest-candidate winner-take-all framing (not plural
@@ -244,25 +242,29 @@ def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_si
     monkeypatch.setattr(ase, "_has_composer_key", lambda: True)
     monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-sb-model")
     html = _get_html(client, monkeypatch)
-    run_controls_marker = 'class="run-controls-note"'
-    start = html.find(run_controls_marker)
-    assert start != -1, "run-controls-note element not found in rendered HTML"
-    end = html.find("</p>", start)
-    assert end != -1
-    note = html[start:end]
-    assert "test-marker-sb-model" in note, (
-        f"AC-3 GAP: run-controls-note does not reflect the configured "
-        f"generation model — it must be read at render time, never a hardcoded "
-        f"model name literal. Element text: {note}"
+    # The plan removes the run note under "Propose new strategies": the model and the community
+    # source are said by the tab's model line, the single-winner-per-run fact by its description
+    # B00, and nothing restates them in the run controls.
+    from tests.ui import _page_copy as copy_fixture
+
+    panel_start = html.find('data-testid="tab-panel-strategy-builder"')
+    assert panel_start != -1
+    line_start = html.find('class="cap-tab-attribution"', panel_start)
+    assert line_start != -1, "the Strategy Builder model line is missing"
+    line = html[line_start : html.find("</p>", line_start)]
+    assert "test-marker-sb-model" in line, (
+        f"AC-3 GAP: the model line does not reflect the configured generation model "
+        f"(read at render time, never a literal). Element text: {line}"
     )
-    note_lower = note.lower()
-    assert "community" in note_lower or "atlas" in note_lower, (
-        f"AC-3 GAP: run-controls-note does not mention the Atlas community library. Element text: {note_lower}"
+    assert "community" in line.lower(), (
+        f"the model line does not mention community strategies: {line}"
     )
-    assert "single" in note_lower or "strongest" in note_lower, (
-        f"AC-3 GAP: run-controls-note does not correct the plural 'candidates are "
-        f"surfaced' framing to the actual single-winner-per-run semantics. Element text: {note_lower}"
-    )
+    description = " ".join(copy_fixture.a_text("B00").lower().split())
+    assert "at most one per run" in description and "strongest" in description
+    assert " ".join(copy_fixture.a_text("B00").split()) in " ".join(html.split())
+    controls_start = html.find('data-testid="strategy-builder-controls"', panel_start)
+    controls = html[controls_start : html.find('id="sb-run-results"', controls_start)]
+    assert 'class="run-controls-note"' not in controls, "a run note is back in the controls"
 
 
 # ===========================================================================
