@@ -20,11 +20,11 @@ Contract pinned (the plan's AC-1, AC-2, AC-6, AC-7 and AC-8 for the Advisor page
   Blocked breakdown is a line of its own below them; the tenure run line and a tenure card's head
   and decision row sit with even gaps; the undecided-peers disclosure opens and closes by click,
   Enter and Space and is closed after a reload.
-* At 375 and 320 the tab strip shows a cue at each edge past which a tab lies out of view and at no
+* At 390 and 320 the tab strip shows a cue at each edge past which a tab lies out of view and at no
   other edge; every tab is reached by scrolling the strip and chosen by a tap (a mouse click at the
   tab's centre: Firefox has no touch emulation here, so the gesture itself is the live phone check),
   then by Tab and Enter.
-* The autotune table states identical columns once, at 1440 and at 375.
+* The autotune table states identical columns once, at 1440 and at 390.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ TABS = (
     "strategy-builder",
     "frontrunner-builder",
 )
-PHONE = (375, 812)
+PHONE = (390, 844)
 VERY_NARROW = (320, 812)
 DESKTOPS = [(1440, 900), (1240, 900)]
 EDGE_TOLERANCE = 0.5
@@ -918,7 +918,7 @@ def test_below_1001_px_the_cards_keep_the_references_form_and_their_tab_does_not
 
 
 # ---------------------------------------------------------------------------
-# AC-7: the tab strip cue and the eight tabs at 375 and 320 (S-7.7 .. S-7.9)
+# The tab strip cue and the eight tabs at 390 and 320
 # ---------------------------------------------------------------------------
 
 
@@ -948,7 +948,7 @@ def _assert_cues_match_the_edges(state: dict) -> None:
             )
 
 
-def test_at_375_every_tab_is_inside_the_strip_or_a_cue_marks_the_edge_past_it(
+def test_at_390_every_tab_is_inside_the_strip_or_a_cue_marks_the_edge_past_it(
     firefox,
     advisor_server,
     tmp_path,
@@ -957,9 +957,9 @@ def test_at_375_every_tab_is_inside_the_strip_or_a_cue_marks_the_edge_past_it(
     _prepare(tmp_path, monkeypatch, seed=_seed_everything)
     with _open(firefox, advisor_server, PHONE) as opened:
         state = opened.evaluate(_STRIP_JS)
-        assert state["pageScroll"] == state["pageClient"], "the page scrolls sideways at 375"
+        assert state["pageScroll"] == state["pageClient"], "the page scrolls sideways at 390"
         assert state["strip"]["scrollWidth"] > state["strip"]["clientWidth"], (
-            "premise: eight tabs do not fit in 375 px"
+            "premise: eight tabs do not fit in 390 px"
         )
         _assert_cues_match_the_edges(state)
         assert state["end"] is not None and state["end"]["shown"], (
@@ -1018,7 +1018,7 @@ def test_a_resize_that_widens_the_strip_removes_a_cue_that_no_longer_has_a_tab_t
 ):
     _prepare(tmp_path, monkeypatch, seed=_seed_everything)
     with _open(firefox, advisor_server, PHONE) as opened:
-        assert opened.evaluate(_STRIP_JS)["end"]["shown"], "premise: the end cue shows at 375"
+        assert opened.evaluate(_STRIP_JS)["end"]["shown"], "premise: the end cue shows at 390"
         opened.page.set_viewport_size({"width": 1440, "height": 900})
         opened.page.wait_for_timeout(300)
         state = opened.evaluate(_STRIP_JS)

@@ -9,14 +9,15 @@ skips. The expected text of a row comes from ``tests/fixtures/page_explainers/co
 
 Scenarios swept over the (world, host) pairs of ``harness.WORLD_HOST_PAIRS``:
 
-* S-1.15, S-1.17, S-1.19: each description shows, in full, with its words, at 1440 and at 375;
+* each description shows, in full, with its words, at 1440 and at 390;
 * S-2.12: every disclosure is closed on load, named "What the terms mean" and opens and closes by
   Enter and by Space; S-2.14 on Overview and Performance; S-2.18 with every script refused;
 * S-3.11: every template-built reworded label shows its new words with every script refused;
 * S-5.4 and S-5.10: honesty texts equal the reference's, a missing figure leaks no placeholder;
 * the type contract (light and dark) at 1440 and the document no wider than the viewport, the
   empty states included;
-* at 375 and 320 the page is no wider than the phone, and no added text is under 11 px.
+* at 1000, 390 and 320 the page is no wider than the viewport, and at 390 no added text is under
+  11 px and opening then closing each Glossary restores the page's height.
 
 Recorded against the host cycles' own tests (same assertion, same world): S-2.12 and S-2.14 on `/`
 (``test_page_explainers_dashboard_browser.py``).
@@ -31,12 +32,12 @@ import re
 import pytest
 
 from tests.app.conftest import _reset_scheduler_run_state  # noqa: F401  (autouse, health state)
+from tests.ui import _alignment as al
 from tests.ui import _page_copy as copy
 from tests.ui import _page_explainers as harness
 from tests.ui import _page_explainers_advisor as adv
 from tests.ui import _performance_page as perf
 from tests.ui._shell_support import (  # noqa: F401  (fixtures: overrides, server, browser)
-    NARROW,
     WIDE,
     _empty_post_mortem_directory,
     _stub_database_load_state_for_advisor_routes,
@@ -59,6 +60,8 @@ from tests.ui.test_page_explainers_unchanged_browser import (
 pytestmark = pytest.mark.browser
 
 MIN_TEXT_PX = 11
+# The phone the narrow rules are read at: 390 by 844, and below it 320 and the 1000 px boundary.
+PHONE = (390, al.NARROW_VIEWPORT_HEIGHT[390])
 SUMMARY_TEXT = "What the terms mean"
 PAIRS = harness.WORLD_HOST_PAIRS
 PAIR_IDS = [f"{w}-{h.strip('/') or 'dashboard'}" for w, h in PAIRS]
@@ -177,7 +180,7 @@ def reading(firefox, server, seeded, world, host, width, *, theme=None):  # noqa
     if key in _READ:
         return _READ[key]
     seeded(world)
-    height = 812 if width <= 375 else 900
+    height = al.NARROW_VIEWPORT_HEIGHT.get(width, 900)
     with open_probe(firefox, server, width=width, height=height, theme=theme) as probe:
         probe.context.clock.install(time=harness.CAPTURE_INSTANT)
         open_page(probe, host)
@@ -314,7 +317,7 @@ def test_a_description_is_whole_on_a_phone_never_clipped_or_ellipsed(
     world,
     host,  # noqa: F811
 ):
-    facts = reading(firefox, advisor_server, seeded, world, host, NARROW[0])
+    facts = reading(firefox, advisor_server, seeded, world, host, PHONE[0])
     problems = []
     for tab, state in facts["states"].items():
         for item in state["explainers"]:
@@ -371,7 +374,7 @@ def test_added_text_uses_only_existing_weights_sizes_and_colors_in_both_themes(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("width", [375, 320])
+@pytest.mark.parametrize("width", al.NARROW)
 @pytest.mark.parametrize(("world", "host"), PAIRS, ids=PAIR_IDS)
 def test_the_page_is_no_wider_than_the_phone_on_every_tab(
     firefox,
@@ -422,7 +425,7 @@ def test_added_text_is_at_least_11_px_and_opening_then_closing_every_disclosure_
     host,  # noqa: F811
 ):
     seeded(world)
-    with open_probe(firefox, advisor_server, width=NARROW[0], height=NARROW[1]) as probe:
+    with open_probe(firefox, advisor_server, width=PHONE[0], height=PHONE[1]) as probe:
         probe.context.clock.install(time=harness.CAPTURE_INSTANT)
         open_page(probe, host)
         probe.page.wait_for_timeout(harness.SETTLE_MS)
