@@ -35,7 +35,8 @@ TEMPLATE = REPO / "templates" / "ai_advisor.html"
 
 
 def _template() -> str:
-    return TEMPLATE.read_text(encoding="utf-8")
+    # Line endings normalized, so a phrase that runs over a line break reads the same on any checkout.
+    return TEMPLATE.read_text(encoding="utf-8").replace("\r\n", "\n")
 
 
 def _style_blocks(text: str) -> str:
