@@ -81,12 +81,21 @@ CHIP_TEXT = "Roth IRA 880be47e"
 # and Emergency Liquidate 152 px wide), so the fit is judged at widths close to the real font's.
 # Only this stylesheet widens the text; no rule of the page is touched. ``!important`` outranks the
 # header's own ``letter-spacing: 0 !important`` on its two buttons.
-WEB_FONT_WIDTH_CSS = """
+CALIBRATED_SPACING_PX = 0.55
+# The real font's width is what production and the deploy check see, not what this browser measures,
+# so a second reading widens the text by 0.35 px per character more (about 60% beyond the
+# calibration, about 55 px more header): the fit must hold with room to spare, not by a pixel.
+MARGIN_SPACING_PX = 0.9
+
+
+def _web_font_width_css(spacing: float) -> str:
+    return f"""
 [data-testid="studio-nav"], [data-testid="studio-nav"] *,
 [data-testid="studio-nav"] > #emergency-liquidate,
 [data-testid="studio-nav"] > [data-testid="force-run-btn"],
-[data-testid="studio-nav"] > [data-testid="mode-pill"] { letter-spacing: 0.55px !important; }
+[data-testid="studio-nav"] > [data-testid="mode-pill"] {{ letter-spacing: {spacing}px !important; }}
 """
+
 
 FACTS_JS = """
 () => {
@@ -130,9 +139,9 @@ def _faults(facts: dict, width: int) -> list[str]:
     return [f"{width} px, label {facts['label']!r}: {p}" for p in problems]
 
 
-def _walk(page, label_ok) -> list[str]:
+def _walk(page, label_ok, spacing: float = CALIBRATED_SPACING_PX) -> list[str]:
     problems: list[str] = []
-    page.add_style_tag(content=WEB_FONT_WIDTH_CSS)
+    page.add_style_tag(content=_web_font_width_css(spacing))
     for width in WIDTHS:
         page.set_viewport_size({"width": width, "height": HEIGHT})
         page.wait_for_timeout(150)
@@ -164,6 +173,18 @@ def _with_real_account_chip(world: dict) -> dict:
     return {**world, "html": html}
 
 
+def _page_problems(firefox, advisor_server, path: str, name: str, spacing: float) -> list[str]:  # noqa: F811
+    seed_dashboard_state()
+    moment, reasons = MOMENTS[name]
+    answer = header_answer(moment, reasons=reasons, accounts=ACCOUNT_ENV)
+    labels, _ = STATES[name]
+    with open_probe(firefox, advisor_server, width=WIDTHS[0], height=HEIGHT) as probe:
+        probe.page.route("**/api/header-status", serve_header_status(answer))
+        open_page(probe, path)
+        wait_until_label(probe, labels)
+        return _walk(probe.page, lambda label: label in labels, spacing)
+
+
 @pytest.mark.parametrize("name", [SHORT, LONG])
 @pytest.mark.parametrize("path", PAGES)
 def test_a_page_with_the_header_in_each_state_is_never_wider_than_its_window(
@@ -175,25 +196,25 @@ def test_a_page_with_the_header_in_each_state_is_never_wider_than_its_window(
 ):
     """Rejects a header whose row is wider than the window in the 1401 to 1460 px band (the review
     read 1455 to 1463 px in a 1401 to 1460 px window, with Emergency Liquidate cut by the edge)."""
-    seed_dashboard_state()
-    moment, reasons = MOMENTS[name]
-    answer = header_answer(moment, reasons=reasons, accounts=ACCOUNT_ENV)
-    labels, _ = STATES[name]
-    with open_probe(firefox, advisor_server, width=WIDTHS[0], height=HEIGHT) as probe:
-        probe.page.route("**/api/header-status", serve_header_status(answer))
-        open_page(probe, path)
-        wait_until_label(probe, labels)
-        problems = _walk(probe.page, lambda label: label in labels)
+    problems = _page_problems(firefox, advisor_server, path, name, CALIBRATED_SPACING_PX)
     assert not problems, f"{path} in the {name} state:\n" + "\n".join(problems)
 
 
 @pytest.mark.parametrize("name", [SHORT, LONG])
-def test_the_dashboard_with_the_header_in_each_state_is_never_wider_than_its_window(
+def test_a_page_header_with_a_much_wider_font_still_fits_its_window(
     firefox,  # noqa: F811
-    world,  # noqa: F811
+    advisor_server,  # noqa: F811
+    performance_history_seeded,  # noqa: F811
     name,
 ):
-    """The dashboard writes the engine label from its own poll, so it is read through the harness."""
+    """The margin: the header text 60% wider than the calibration still fits. Rejects a fix that
+    brings the header inside the window by a few pixels in the test browser and overflows in the
+    real font."""
+    problems = _page_problems(firefox, advisor_server, "/history", name, MARGIN_SPACING_PX)
+    assert not problems, f"/history in the {name} state with wider text:\n" + "\n".join(problems)
+
+
+def _dashboard_problems(firefox, world, name: str, spacing: float) -> list[str]:  # noqa: F811
     labels, _ = STATES[name]
     with running_server() as server:
         context = firefox.new_context(viewport={"width": WIDTHS[0], "height": HEIGHT})
@@ -208,7 +229,28 @@ def test_the_dashboard_with_the_header_in_each_state_is_never_wider_than_its_win
                 f"the header never read one of {sorted(labels)}",
                 arg=sorted(labels),
             )
-            problems = _walk(probe.page, lambda label: label in labels)
+            return _walk(probe.page, lambda label: label in labels, spacing)
         finally:
             context.close()
+
+
+@pytest.mark.parametrize("name", [SHORT, LONG])
+def test_the_dashboard_with_the_header_in_each_state_is_never_wider_than_its_window(
+    firefox,  # noqa: F811
+    world,  # noqa: F811
+    name,
+):
+    """The dashboard writes the engine label from its own poll, so it is read through the harness."""
+    problems = _dashboard_problems(firefox, world, name, CALIBRATED_SPACING_PX)
     assert not problems, f"/ in the {name} state:\n" + "\n".join(problems)
+
+
+@pytest.mark.parametrize("name", [SHORT, LONG])
+def test_the_dashboard_header_with_a_much_wider_font_still_fits_its_window(
+    firefox,  # noqa: F811
+    world,  # noqa: F811
+    name,
+):
+    """The margin on the dashboard: the header text 60% wider than the calibration still fits."""
+    problems = _dashboard_problems(firefox, world, name, MARGIN_SPACING_PX)
+    assert not problems, f"/ in the {name} state with wider text:\n" + "\n".join(problems)
