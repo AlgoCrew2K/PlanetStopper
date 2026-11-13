@@ -369,7 +369,12 @@ def test_the_retirement_titles_hold_on_the_tile_labels_and_the_evidence_headings
     tmp_path,
     monkeypatch,
 ):
-    advisor_module._prepare(tmp_path, monkeypatch, world="empty", seed=aligned._seed_retirement)
+    advisor_module._prepare(
+        tmp_path,
+        monkeypatch,
+        world="empty",
+        seed=advisor_module._retirement_with_cards_and_long_review,
+    )
     with advisor_module._open(firefox, advisor_server, VIEW, "retirement") as opened:
         opened.page.evaluate(
             "() => document.querySelectorAll('#tab-panel-retirement details')"

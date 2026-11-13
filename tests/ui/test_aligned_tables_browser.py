@@ -372,12 +372,6 @@ def _seed_overview() -> None:
     prod.seed_same_batch_autotune_runs(4)
 
 
-def _seed_retirement() -> None:
-    w.seed_roster()
-    adv.seed_recommendation_cards(3)
-    adv.seed_long_tenure_review(11)
-
-
 def _seed_survivors() -> None:
     adv.seed_strategy_builder_cards(3)
 
@@ -425,7 +419,7 @@ ADVISOR_STATES = {
         ],
     },
     "retirement": {
-        "seed": _seed_retirement,
+        "seed": advisor_module._retirement_with_cards_and_long_review,
         "tab": "retirement",
         "open": _open_every_disclosure("retirement"),
         "groups": [
@@ -544,15 +538,6 @@ LIVE_RUN_ANSWER = {
 }
 
 
-def _fulfil(probe, pattern: str, body: dict) -> None:
-    probe.page.route(
-        pattern,
-        lambda route: route.fulfill(
-            status=200, content_type="application/json", body=json.dumps(body)
-        ),
-    )
-
-
 @pytest.mark.parametrize("width", al.WIDTHS)
 def test_the_suggestion_cards_the_script_writes_meet_their_rule_at_every_width(
     firefox,  # noqa: F811
@@ -563,7 +548,7 @@ def test_the_suggestion_cards_the_script_writes_meet_their_rule_at_every_width(
 ):
     advisor_module._prepare(tmp_path, monkeypatch, world="empty")
     with open_probe(firefox, advisor_server, width=width, height=al.VIEWPORT_HEIGHT) as probe:
-        _fulfil(probe, "**/ai-advisor/suggest", SUGGESTION_ANSWER)
+        perf_module._fulfil(probe, "**/ai-advisor/suggest", status=200, body=SUGGESTION_ANSWER)
         open_page(probe, "/ai-advisor")
         probe.page.evaluate(
             """() => {
@@ -593,7 +578,9 @@ def test_the_cards_of_a_live_strategy_builder_run_meet_their_rule_at_every_width
 ):
     advisor_module._prepare(tmp_path, monkeypatch, world="empty")
     with open_probe(firefox, advisor_server, width=width, height=al.VIEWPORT_HEIGHT) as probe:
-        _fulfil(probe, "**/ai-advisor/strategy-builder/run", LIVE_RUN_ANSWER)
+        perf_module._fulfil(
+            probe, "**/ai-advisor/strategy-builder/run", status=200, body=LIVE_RUN_ANSWER
+        )
         open_page(probe, "/ai-advisor", fragment="#strategy-builder")
         probe.page.wait_for_selector('[data-testid="tab-panel-strategy-builder"]', state="visible")
         probe.page.evaluate("() => window.sbRunAnalysis()")
