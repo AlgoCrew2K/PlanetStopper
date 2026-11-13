@@ -97,7 +97,6 @@ DEFAULT_MIN_ROWS = 2
 # Lines that may wrap into rows below 1440 px: the rule asks for one line each from 1440 px.
 LINE_FROM_WIDTH = {
     "tracked_armed_triggered": 1440,
-    "dollar_saved_line": 1440,
     "sleeve_card_line": 1440,
     "performance_headline_strip": 1440,
     "history_hero_figures": 1440,
@@ -227,7 +226,6 @@ DASHBOARD_STATES = {
             _group(TABLE, "symphony_cards"),
             _group(TOOLBAR, "hero_top"),
             _group(LINE, "tracked_armed_triggered"),
-            _group(LINE, "dollar_saved_line"),
         ],
     },
     "sleeves": {
@@ -1152,6 +1150,13 @@ EXCUSED = {
         TABLE,
         "correlation_matrix",
     ): "centred tiles under centred headers by ruling: no column edge applies to it",
+    (
+        LINE,
+        "dollar_saved_line",
+    ): (
+        "a lead sentence beside a stacked column of three lines, not one line of equal gaps: "
+        "measured by tests/ui/test_dashboard_dollar_summary_browser.py"
+    ),
 }
 SWEEP_STATES = [
     *DASHBOARD_STATES.values(),

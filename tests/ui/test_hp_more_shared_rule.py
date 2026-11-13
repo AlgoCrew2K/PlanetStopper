@@ -109,11 +109,11 @@ def test_hp_more_is_not_a_primitive_class_of_the_shared_set():
     assert "hp-more" not in cap.PRIMITIVE_CLASSES
 
 
-def test_history_no_longer_defines_the_rules_and_keeps_its_element_and_class():
+def test_history_defines_no_hp_more_rule_and_holds_no_reasons_disclosure_of_its_own():
     html = (TEMPLATES / "history.html").read_text(encoding="utf-8")
     style = "".join(re.findall(r"<style\b[^>]*>(.*?)</style>", html, re.S | re.I))
     assert ".hp-more" not in style, "History still defines a .hp-more rule of its own"
-    assert re.search(r'<details class="hp-more"[^>]*data-testid="reason-descriptions"', html)
+    assert 'data-testid="reason-descriptions"' not in html, "the reasons disclosure is back"
 
 
 def test_every_page_links_the_shared_stylesheet_that_now_holds_the_rules():

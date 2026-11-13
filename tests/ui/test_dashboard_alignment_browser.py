@@ -13,9 +13,9 @@ anything but the server refused. What is measured, with the scripts and registry
 * every symphony card places the name block, the three ledger columns and their figures, the ring,
   the sparkline and the settings button at one offset from its own left edge, before and after the
   page has polled;
-* Tracked, Armed and Triggered, and the four dollar figures, sit on one line each with equal gaps
-  of at most 48 px and no label or value broken across lines, before and after a poll and a window
-  pick and back;
+* Tracked, Armed and Triggered sit on one line with equal gaps of at most 48 px and no label or
+  value broken across lines, before and after a poll and a window pick and back (the dollar summary
+  is measured by ``test_dashboard_dollar_summary_browser``);
 * a sleeve card's name line sits within 48 px, and the rule rows of a sleeve whose rule names
   differ in length start the name, the mode and the actions at one offset;
 * the detail panel's Risk math rows, event rows and Symphony variables rows, and the settings
@@ -217,19 +217,7 @@ def test_tracked_armed_and_triggered_sit_with_equal_gaps_of_at_most_48_px(
         _line(probe.page, "tracked_armed_triggered", f"mini stats at {width}")
 
 
-@pytest.mark.parametrize("width", WIDE_WIDTHS)
-def test_the_four_dollar_figures_sit_on_one_line_each_with_equal_gaps_of_at_most_48_px(
-    firefox,  # noqa: F811
-    advisor_server,  # noqa: F811
-    seeded,  # noqa: F811
-    width,
-):
-    seeded("dashboard_full")
-    with _Dashboard(firefox, advisor_server, width, al.VIEWPORT_HEIGHT) as probe:
-        _line(probe.page, "dollar_saved_line", f"dollar figures at {width}")
-
-
-def test_the_figure_lines_keep_their_gaps_after_a_poll_and_a_window_pick_and_back(
+def test_the_mini_stats_and_comparison_rows_keep_their_layout_after_a_poll_and_a_pick(
     firefox,  # noqa: F811
     advisor_server,  # noqa: F811
     seeded,  # noqa: F811
@@ -244,7 +232,6 @@ def test_the_figure_lines_keep_their_gaps_after_a_poll_and_a_window_pick_and_bac
                 probe.page.locator(f'[data-testid="window-{token}"]').click()
                 probe.page.wait_for_timeout(1500)
             _line(probe.page, "tracked_armed_triggered", f"mini stats {label}")
-            _line(probe.page, "dollar_saved_line", f"dollar figures {label}")
             _offsets(probe.page, "comparison_rows", f"comparison rows {label}", at_least=3)
 
 
