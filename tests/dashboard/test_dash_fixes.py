@@ -94,7 +94,8 @@ class TestF2MddInsufficientHistorySuppressAndAnnotate:
         html = _html()
         wording = f"needs {app_module._MDD_MIN_OBS} trading days"
         hero = re.search(
-            r'<span class="vs-row-label">Max DD <span data-testid="mdd-insufficient-label"[^>]*>([^<]*)</span>',
+            # The label may carry other attributes (data-glossary names its Glossary line).
+            r'<span class="vs-row-label"[^>]*>Max DD <span data-testid="mdd-insufficient-label"[^>]*>([^<]*)</span>',
             html,
         )
         assert hero, "F-2b FAIL: the Max DD row label holds no mdd-insufficient-label annotation."
