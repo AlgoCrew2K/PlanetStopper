@@ -185,7 +185,9 @@ def _edge_state(world) -> dict:
     state = sup.with_stamp(world["state"], sup.render_stamp(world))
     strip = state["portfolio_strip"]
     strip["today_change"] = {"dry_run": -9.87, "if_held": 0.0}
-    strip["cumulative_return"] = {"dry_run": 1234.56, "if_held": -987.65}
+    # The page treats any magnitude of 900 or more as the engine's "not set" value and draws a dash,
+    # so 899.99 is the longest figure a row can print.
+    strip["cumulative_return"] = {"dry_run": 899.99, "if_held": -899.99}
     return state
 
 
@@ -213,7 +215,7 @@ def test_figures_at_the_edge_of_their_formats_lie_inside_the_box(firefox, world,
             wait_for(
                 probe,
                 "() => document.querySelector('[data-testid=\"comp-cumulative-bot-text\"]')"
-                ".textContent.includes('1234.56')",
+                ".textContent.includes('899.99')",
                 "the Cumulative row never drew the longest figure",
             )
             _assert_box(probe.page, f"comparison rows with edge figures at {width}")
