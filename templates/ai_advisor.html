@@ -1172,7 +1172,6 @@
             padding: 4px 12px 4px 0;
             border-bottom: 1px solid var(--studio-border);
         }
-        .obs-table td[data-testid="obs-verdict"]::before { margin-left: -12px; }
         .obs-table td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--studio-border); vertical-align: top; }
         .obs-table tr:last-child td { border-bottom: none; }
         .obs-table .obs-time { white-space: nowrap; }
@@ -1248,10 +1247,12 @@
         /* The history table's columns take their content width, a symphony name wraps past 28rem,
            and Summary takes the rest and clips inside its cell, so no column leaves a wide empty
            band beside the next one's text. */
-        .obs-table { display: grid; grid-template-columns: max-content fit-content(28rem) max-content max-content minmax(0, 1fr); }
-        .obs-table thead, .obs-table tbody, .obs-table tr { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
-        .obs-table th, .obs-table td { min-width: 0; }
-        .obs-table td.obs-symphony { overflow-wrap: anywhere; }
+        @media (min-width: 1001px) {
+            .obs-table { display: grid; grid-template-columns: max-content fit-content(28rem) max-content max-content minmax(0, 1fr); }
+            .obs-table thead, .obs-table tbody, .obs-table tr { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
+            .obs-table th, .obs-table td { min-width: 0; }
+            .obs-table td.obs-symphony { overflow-wrap: anywhere; }
+        }
 
         /* A narrower page: the panels give up some padding. */
         @media (max-width: 700px) {
