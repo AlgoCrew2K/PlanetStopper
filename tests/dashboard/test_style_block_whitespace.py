@@ -42,7 +42,11 @@ _REFERENCE_DIGESTS = {
     # table spans its section, and the rationale and the composite track are sized.
     # Re-pinned after the Market Prism intro's own flex rule was deleted so the capped rationale takes
     # a row of its own under the description; the diff is that one rule and nothing else.
-    "ai_advisor.html": "9aceb1961dcd342de1951caa808122e49f97b8cfac441760e77f731996c3c6ad",
+    # Re-pinned after fix round R2: the stacked result-card tracks, the history columns at content
+    # width and the symphony key wrap were added, and three rules no test could tell from the defaults
+    # (the stacked block's max-width and justify-content, the nowrap of three history columns) were
+    # deleted; the diff is those style rules and nothing else.
+    "ai_advisor.html": "07d5fbdd86b04df68f24ffdfe58184b6a09414facc47e4b24ca846c62c9b042e",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     # Re-pinned after the Performance and History explainers, relabels and density layout were
     # added, and settings.html after the Settings explainers and density change (each diff
@@ -57,7 +61,9 @@ _REFERENCE_DIGESTS = {
     # Re-pinned after the fix round took the 1240 px side-column grids (the hero descriptor, the first
     # description and the exits description), the exit reasons disclosure and its markup out; the diff
     # is those rules, that markup and the four reason definitions added to the Glossary.
-    "history.html": "48005346c57aca1edf410ec82b956e3162652f752fc8ba39d72f72b8c504b975",
+    # Re-pinned after fix round R2 removed the as-of note's `margin-left: 0` rule and its narrow-width
+    # copy; the diff is those two lines.
+    "history.html": "cc7e2da1efab03458cefd4bfc5dd89d5a2ab2f272e4d8a34ef89ca27e2786556",
     # performance.html was re-pinned after the risk metrics table took its content width from 1001 px
     # (one `.metrics-tbl--fit` rule); the diff is that rule and nothing else.
     # Re-pinned after the fix round took the captions' right-hand column grid out and let the stacked
@@ -65,7 +71,9 @@ _REFERENCE_DIGESTS = {
     # those rules.
     # Re-pinned after the stacked table's `max-width: 100%` and its headers' `white-space: normal`
     # were removed (no test could tell them from the defaults); the diff is those two declarations.
-    "performance.html": "d6292dcec164f6740b2d064a09b4bd202c7769a0bee6bbf937ff3e6372cf8b58",
+    # Re-pinned after fix round R2 removed the as-of note's `margin-left: 0` rule and its narrow-width
+    # copy; the diff is those two lines.
+    "performance.html": "5a0c5b0e19fda7e0e1a1bab941b6faac6c4165630f464af2109e159fd5d8eec8",
     "settings.html": "8d12e03679dfe44dc055d3fee78ca322f20d1caaea6a7ee6499c30df18e3abfe",
 }
 
