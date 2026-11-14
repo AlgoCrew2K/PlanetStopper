@@ -250,6 +250,40 @@ def test_no_history_table_column_is_a_fixed_share_of_its_table():
     assert shares == [], f"a history column is a share of the table: {shares}"
 
 
+def _percentage_tracks(css: str) -> list[tuple[str, str, str]]:
+    """Each ``.obs-table`` rule that sizes a grid track as a percentage, as (context, selector, value)."""
+    from tests.ui import _dashboard_primitives_capture as cap
+
+    return [
+        (context, selector, value)
+        for context, selectors, declarations in cap.iter_rules(css)
+        for selector in selectors
+        if ".obs-table" in selector
+        for prop, value in declarations
+        if prop in ("grid-template-columns", "grid-auto-columns", "grid-template") and "%" in value
+    ]
+
+
+def test_no_history_grid_track_is_a_percentage_of_the_table():
+    """A grid track written as a share of the table is a fixed column in another syntax, and the
+    width check above reads only cell widths. Rejects a percentage in ``grid-template-columns`` of
+    the history table, bare or inside ``minmax()`` or ``fit-content()``, in any media block."""
+    tracks = _percentage_tracks(_style_of("ai_advisor"))
+    assert tracks == [], f"a history grid track is a share of the table: {tracks}"
+
+
+@pytest.mark.parametrize(
+    "track",
+    ["20% 1fr", "max-content minmax(0, 40%)", "fit-content(30%) max-content"],
+)
+def test_the_track_scan_reports_a_percentage_in_every_position_and_ignores_content_widths(track):
+    planted = f"@media (min-width: 1001px) {{ .obs-table {{ display: grid; grid-template-columns: {track}; }} }}"
+    assert len(_percentage_tracks(planted)) == 1, track
+    clean = ".obs-table { grid-template-columns: max-content fit-content(28rem) minmax(0, 1fr); }"
+    assert _percentage_tracks(clean) == []
+    assert _percentage_tracks(".other { grid-template-columns: 20% 1fr; }") == []
+
+
 @pytest.mark.parametrize("page", ["history", "performance"])
 def test_the_toolbar_note_margin_is_reset_by_one_rule_and_not_repeated(page):
     """PM ruling R2-3. The toolbar's note has its left margin reset to zero in a rule of its own;
