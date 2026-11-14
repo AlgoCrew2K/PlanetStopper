@@ -654,3 +654,232 @@ def test_opening_every_history_moves_no_line_field_and_never_scrolls_the_page_si
     )
     assert scroll[0] == scroll[1], f"the page scrolls sideways: {scroll}"
     assert advisor_probe.page_errors == [], advisor_probe.page_errors
+
+
+# ---------------------------------------------------------------------------
+# A verdict's status dot is part of its own cell and keeps a gap from the Subject text before it; below
+# 1001 px the opened history is an ordinary table inside its scroll box
+# ---------------------------------------------------------------------------
+
+# Narrowest gap the dot may leave after the Subject text: one cell padding.
+_DOT_GAP_PX = 12
+
+# Per body row of every shown history table: where the Subject text ends, where the Verdict cell's
+# status dot is painted (its cell's content edge plus the dot's own left margin, the dot being the
+# first thing in the cell) and where the text of the Verdict header starts.
+_VERDICT_DOT_JS = """() => {
+  const textBox = (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const boxes = [...range.getClientRects()].filter((g) => g.width > 0);
+    return { left: Math.min(...boxes.map((g) => g.left)), right: Math.max(...boxes.map((g) => g.right)) };
+  };
+  const rows = [];
+  let tables = 0;
+  document.querySelectorAll('table.obs-table').forEach((table, t) => {
+    if (!table.getClientRects().length) return;
+    tables += 1;
+    const header = textBox([...table.querySelectorAll('thead th')][3]);
+    table.querySelectorAll('tbody tr').forEach((row, r) => {
+      const cells = [...row.children];
+      const verdict = cells[3];
+      const cs = getComputedStyle(verdict);
+      const before = getComputedStyle(verdict, '::before');
+      const cell = verdict.getBoundingClientRect();
+      const contentLeft = cell.left + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.paddingLeft) || 0);
+      const dotLeft = contentLeft + (parseFloat(before.marginLeft) || 0);
+      rows.push({ table: t, row: r, subjectRight: textBox(cells[2]).right, dotLeft,
+                  dot: before.content !== 'none' && parseFloat(before.width) > 0,
+                  headerLeft: header.left, cellLeft: cell.left });
+    });
+  });
+  return { tables, rows };
+}"""
+
+
+def _read_verdict_dots(probe, width: int) -> dict:
+    _seed_lines()
+    _open_every_history(probe, width)
+    read = probe.page.evaluate(_VERDICT_DOT_JS)
+    assert read["tables"] >= 2, f"premise: {read['tables']} open history tables"
+    assert len(read["rows"]) >= 10, "premise: the open histories list observations"
+    assert all(r["dot"] for r in read["rows"]), "premise: every verdict cell has a status dot"
+    return read
+
+
+@pytest.mark.parametrize("width", [*al.WIDTHS, *al.NARROW])
+def test_a_verdict_dot_is_at_least_12_px_after_the_subject_text_before_it(advisor_probe, width):
+    """The dot that opens a Verdict cell does not touch the Subject text ending the cell before it
+    (the table printed "Autotune run" and the dot with no space between). Rejects a dot pulled
+    left of its cell by a negative margin, which ate the Subject cell's padding at every width."""
+    read = _read_verdict_dots(advisor_probe, width)
+    tight = [
+        f"table {r['table']} row {r['row']}: {r['dotLeft'] - r['subjectRight']:.1f} px"
+        for r in read["rows"]
+        if r["dotLeft"] - r["subjectRight"] < _DOT_GAP_PX - 0.5
+    ]
+    assert not tight, f"the dot is closer than {_DOT_GAP_PX} px to the Subject text: {tight[:6]}"
+
+
+@pytest.mark.parametrize("width", [*al.WIDTHS, *al.NARROW])
+def test_a_verdict_dot_is_painted_inside_its_own_cell_over_the_verdict_header(advisor_probe, width):
+    """The dot is part of its cell: it starts where the header text above it starts, and no part of
+    it hangs left of the cell. Rejects a hanging dot whose gap is bought back by widening the
+    Subject column's padding."""
+    read = _read_verdict_dots(advisor_probe, width)
+    hanging = [
+        f"table {r['table']} row {r['row']}: dot at {r['dotLeft']:.1f}, header at"
+        f" {r['headerLeft']:.1f}, cell at {r['cellLeft']:.1f}"
+        for r in read["rows"]
+        if r["dotLeft"] < r["cellLeft"] - 0.5
+        or abs(r["dotLeft"] - r["headerLeft"]) > al.TOLERANCE_PX
+    ]
+    assert not hanging, f"the dot is not at its column's edge: {hanging[:6]}"
+
+
+# Per shown history table: the forms of its parts, its width against its scroll box, and each
+# column's text against the width its cells give it. A word is measured in the font of its cell.
+_NARROW_TABLE_JS = """() => {
+  const words = (cell) => {
+    const out = [];
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      out.push(...n.nodeValue.split(/\\s+/).filter(Boolean));
+    }
+    return out;
+  };
+  const widest = (cell, list) => {
+    let widest = 0;
+    for (const word of list) {
+      const ruler = document.createElement('span');
+      ruler.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;';
+      ruler.textContent = word;
+      cell.appendChild(ruler);
+      widest = Math.max(widest, ruler.getBoundingClientRect().width);
+      ruler.remove();
+    }
+    return widest;
+  };
+  const room = (cell) => {
+    const cs = getComputedStyle(cell);
+    return cell.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+           - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0);
+  };
+  const textBox = (cell) => {
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    const boxes = [...range.getClientRects()].filter((g) => g.width > 0);
+    return boxes.length ? { width: Math.max(...boxes.map((g) => g.right)) - Math.min(...boxes.map((g) => g.left)),
+                            height: Math.max(...boxes.map((g) => g.bottom)) - Math.min(...boxes.map((g) => g.top)),
+                            right: Math.max(...boxes.map((g) => g.right)) } : null;
+  };
+  const out = [];
+  document.querySelectorAll('table.obs-table').forEach((table, index) => {
+    if (!table.getClientRects().length) return;
+    const box = table.closest('.obs-scroll');
+    const display = (el) => getComputedStyle(el).display;
+    const record = {
+      index,
+      forms: { table: display(table), head: display(table.tHead), body: display(table.tBodies[0]),
+               rows: [...new Set([...table.rows].map(display))] },
+      table: table.getBoundingClientRect().width,
+      box: box ? box.clientWidth : null,
+      symphony: [],
+      summary: [],
+    };
+    table.querySelectorAll('tbody tr').forEach((row, r) => {
+      const symphony = row.querySelector('td.obs-symphony');
+      const summary = row.querySelector('td[data-testid="obs-summary"]');
+      if (symphony && words(symphony).length) {
+        record.symphony.push({ row: r, room: room(symphony), word: widest(symphony, words(symphony)) });
+      }
+      if (summary && words(summary).length) {
+        const text = textBox(summary);
+        record.summary.push({ row: r, room: room(summary), word: widest(summary, words(summary)),
+                              cell: summary.getBoundingClientRect(), text });
+      }
+    });
+    out.push(record);
+  });
+  return out;
+}"""
+
+
+def _read_narrow_tables(probe, width: int) -> list[dict]:
+    _seed_lines()
+    _open_every_history(probe, width)
+    read = probe.page.evaluate(_NARROW_TABLE_JS)
+    assert len(read) >= 2, f"premise: {len(read)} open history tables"
+    return read
+
+
+@pytest.mark.parametrize("width", al.NARROW)
+def test_below_1001_px_an_open_history_is_an_ordinary_table_that_fills_its_scroll_box(
+    advisor_probe, width
+):
+    """Narrower than 1001 px the history keeps the table layout of the reference: a table of table
+    rows, as wide as its scroll box or wider (it scrolls inside the box). Rejects the grid of
+    content-width tracks, which at 390 gave the Symphony column 50 px and the Summary none."""
+    for table in _read_narrow_tables(advisor_probe, width):
+        forms = table["forms"]
+        assert forms["table"] == "table", f"table {table['index']} is display {forms['table']}"
+        assert forms["head"] == "table-header-group", forms
+        assert forms["body"] == "table-row-group", forms
+        assert forms["rows"] == ["table-row"], forms
+        assert table["box"] is not None, "the table is not inside its scroll box"
+        assert table["table"] >= table["box"] - 1, (
+            f"table {table['index']} is {table['table']:.0f} px in a box of {table['box']}"
+        )
+
+
+@pytest.mark.parametrize("width", al.NARROW)
+def test_below_1001_px_the_symphony_column_is_at_least_as_wide_as_its_longest_word(
+    advisor_probe, width
+):
+    """Narrower than 1001 px a symphony name never breaks inside a word because its column was
+    squeezed. Rejects the content-width grid, whose Symphony track gave a name a few letters a
+    line, and a table that keeps the break-anywhere rule of the wide layout."""
+    names = 0
+    for table in _read_narrow_tables(advisor_probe, width):
+        for cell in table["symphony"]:
+            names += 1
+            assert cell["room"] >= cell["word"] - 1, (
+                f"table {table['index']} row {cell['row']}: the column leaves {cell['room']:.0f} px"
+                f" for a word {cell['word']:.0f} px wide"
+            )
+    assert names >= 10, "premise: the open histories show symphony names"
+
+
+@pytest.mark.parametrize("width", al.NARROW)
+def test_below_1001_px_every_summary_shows_its_text(advisor_probe, width):
+    """Narrower than 1001 px each Summary cell holds a text box of its own width and no clipped
+    sliver. Rejects a Summary track of zero width whose text is cut away inside the cell."""
+    summaries = 0
+    for table in _read_narrow_tables(advisor_probe, width):
+        for cell in table["summary"]:
+            summaries += 1
+            assert cell["text"] is not None, (
+                f"table {table['index']} row {cell['row']}: no text box"
+            )
+            assert cell["text"]["width"] > 1 and cell["text"]["height"] > 1, cell
+            assert cell["room"] >= cell["word"] - 1, (
+                f"table {table['index']} row {cell['row']}: the cell leaves {cell['room']:.0f} px"
+                f" for a word {cell['word']:.0f} px wide"
+            )
+            assert cell["text"]["right"] <= cell["cell"]["right"] + al.TOLERANCE_PX, (
+                f"table {table['index']} row {cell['row']}: the text runs past its cell"
+            )
+    assert summaries >= 10, "premise: the open histories show summaries"
+
+
+@pytest.mark.parametrize("width", al.NARROW)
+def test_below_1001_px_opening_every_history_never_scrolls_the_page_sideways(advisor_probe, width):
+    """Narrower than 1001 px the page is as wide as the viewport with every history open: a table
+    wider than the phone scrolls inside its box. Rejects a table that widens the page."""
+    _seed_lines()
+    _open_every_history(advisor_probe, width)
+    scroll = advisor_probe.page.evaluate(
+        "() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]"
+    )
+    assert scroll[0] == scroll[1], f"the page scrolls sideways at {width}: {scroll}"
+    assert advisor_probe.page_errors == [], advisor_probe.page_errors
