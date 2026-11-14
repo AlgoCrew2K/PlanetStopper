@@ -1113,6 +1113,26 @@
         });
     }
 
+    // A result card's Baseline and Variant blocks sit side by side while both fit and one under the
+    // other when they do not; blocks one under the other share their label and value tracks, which
+    // only the page can tell (it depends on the figures printed), so the grid is marked here.
+    // A grid on a hidden tab is left as it was: it has no layout to measure.
+    function syncStackedStatsGrids() {
+        var grids = document.querySelectorAll('.stats-grid');
+        for (var i = 0; i < grids.length; i++) {
+            var grid = grids[i];
+            if (grid.children.length < 2 || grid.getClientRects().length === 0) { continue; }
+            grid.classList.remove('stats-grid--stacked');
+            var first = grid.children[0].getBoundingClientRect();
+            var second = grid.children[1].getBoundingClientRect();
+            if (second.top >= first.bottom - 1) { grid.classList.add('stats-grid--stacked'); }
+        }
+    }
+    window.syncStackedStatsGrids = syncStackedStatsGrids;
+    if (typeof window.addEventListener === 'function') {
+        window.addEventListener('resize', syncStackedStatsGrids, { passive: true });
+    }
+
     // A change of width changes how many lines a summary takes, so the controls are measured again.
     var _prismResizeTimer = null;
     function watchPrismLensClamp() {
@@ -1205,6 +1225,8 @@
             }
         });
         if (name === 'overview') { refreshPrismLensClamp(); }
+        // A tab that was hidden through a resize has grids still marked for the old width.
+        syncStackedStatsGrids();
         updateTabCues();
     }
 

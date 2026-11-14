@@ -446,3 +446,211 @@ def test_an_open_history_and_open_evidence_disclosures_leave_every_fields_place_
     again = al.measure(advisor_probe.page, al.FIELD_OFFSETS_JS, _line_spec())
     assert again["violations"] == [], again["violations"]
     assert advisor_probe.page_errors == [], advisor_probe.page_errors
+
+
+# ---------------------------------------------------------------------------
+# PM ruling R2-1: an opened history's columns take the width their text needs
+# ---------------------------------------------------------------------------
+
+# An invented display name far wider than the Symphony column's cap, with short words so a wrapped
+# line ends close to the cap. It matches no live symphony, so the table prints it as stored.
+_LONG_SYMPHONY_NAME = (
+    "Quiet Harbour Rotation With A Deliberately Long Display Name That Has To Wrap Inside Its "
+    "Column More Than Once Because It Is Far Wider Than The Cap Of The Column"
+)
+# The Symphony column's cap (PM ruling R2-1), in rem.
+_SYMPHONY_CAP_REM = 28
+_CONTENT_WIDTH_COLUMNS = ("Time", "Subject", "Verdict")
+
+
+def _open_every_history(probe, width: int) -> None:
+    """The Overview at ``width`` with every producer's History opened."""
+    _open_lines(probe, width)
+    probe.page.evaluate(
+        "() => document.querySelectorAll('details.obs-history').forEach((d) => { d.open = true; })"
+    )
+    probe.page.wait_for_timeout(250)
+
+
+def _fit_of_the_histories(probe) -> dict:
+    spec = al.spec_of(al.TABLE_GROUPS["observation_histories"], name="observation_histories")
+    read = al.measure(probe.page, al.COLUMN_FIT_JS, spec)
+    assert read["found"] >= 2, f"premise: {read['found']} open history tables"
+    return read
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_an_open_history_leaves_no_gap_wider_than_48_px_between_adjacent_columns(
+    advisor_probe, width
+):
+    """PM ruling R2-1 (the gap rule of AC-1). Rejects columns at fixed percentages of the table, which
+    left 220, 284 and 324 px between the text of adjacent columns at 1920, and auto columns that
+    share a wide table's spare width among all of them."""
+    _seed_lines()
+    _open_every_history(advisor_probe, width)
+    spec = al.spec_of(
+        al.TABLE_GROUPS["observation_histories"],
+        name="observation_histories",
+        max_gap=al.MAX_COLUMN_GAP_PX,
+    )
+    read = al.measure(advisor_probe.page, al.COLUMN_GAPS_JS, spec)
+    assert read["found"] >= 2, f"premise: {read['found']} open history tables"
+    assert read["violations"] == [], read["violations"]
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_an_open_historys_header_cells_sit_over_their_columns_at_every_width(advisor_probe, width):
+    """PM ruling R2-1: a header cell starts where the text of its column starts. Rejects a column
+    layout that gives a header and its cells different edges."""
+    _seed_lines()
+    _open_every_history(advisor_probe, width)
+    table = al.spec_of(al.TABLE_GROUPS["observation_histories"], name="observation_histories")
+    read = al.measure(advisor_probe.page, al.COLUMN_EDGES_JS, table)
+    assert read["found"] >= 2, f"premise: {read['found']} open history tables"
+    assert read["violations"] == [], read["violations"]
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_time_subject_and_verdict_take_their_content_width_and_summary_takes_the_rest(
+    advisor_probe, width
+):
+    """PM ruling R2-1. A column of Time, Subject or Verdict is as wide as its widest text and the
+    padding after it, no more; Summary is what is left of the table, so it is at least the table
+    less those three and a Symphony column at its cap. Rejects percentage widths (Summary was 19
+    percent of the table and every summary was cut), and a table that shares its spare width."""
+    _seed_lines()
+    _open_every_history(advisor_probe, width)
+    read = _fit_of_the_histories(advisor_probe)
+    cap = _SYMPHONY_CAP_REM * read["rem"]
+    problems = []
+    for instance in read["instances"]:
+        cols = {c["name"]: c for c in instance["columns"]}
+        assert set(cols) == {"Time", "Symphony", "Subject", "Verdict", "Summary"}, sorted(cols)
+        for name in _CONTENT_WIDTH_COLUMNS:
+            slack = cols[name]["width"] - cols[name]["pad"] - cols[name]["extent"]
+            if slack > al.TOLERANCE_PX:
+                problems.append(
+                    f"table {instance['index']}: {name} is {slack:.1f} px wider than its text"
+                )
+        needed = sum(cols[n]["extent"] + cols[n]["pad"] for n in _CONTENT_WIDTH_COLUMNS)
+        symphony = cols["Symphony"]
+        needed += min(symphony["extent"] + symphony["pad"], cap + symphony["pad"])
+        rest = instance["table"]["width"] - needed
+        if cols["Summary"]["width"] < rest - al.TOLERANCE_PX:
+            problems.append(
+                f"table {instance['index']}: Summary is {cols['Summary']['width']:.1f} px wide,"
+                f" less than the {rest:.1f} px the other columns leave"
+            )
+    assert not problems, "\n".join(problems)
+
+
+@pytest.mark.parametrize("width", [1440, 1920, 2560])
+def test_a_symphony_name_wider_than_the_cap_wraps_in_a_column_no_wider_than_28rem(
+    advisor_probe, width
+):
+    """PM ruling R2-1: the Symphony column is as wide as its widest name up to 28rem. Rejects a
+    column with no cap (a long name pushes every other column off) and a cap the column stops short
+    of, which wraps names that had room."""
+    _seed_lines()
+    store(
+        "guardrail_clear",
+        symphony_id=_LONG_SYMPHONY_NAME,
+        start=FIRST_MOMENT + timedelta(minutes=120),
+    )
+    _open_every_history(advisor_probe, width)
+    read = _fit_of_the_histories(advisor_probe)
+    cap = _SYMPHONY_CAP_REM * read["rem"]
+    wide = [
+        c
+        for i in read["instances"]
+        for c in i["columns"]
+        if c["name"] == "Symphony" and c["wrapped"]
+    ]
+    assert wide, "premise: the stored long name is printed and wraps in some history"
+    for column in wide:
+        assert column["width"] <= cap + column["pad"] + al.TOLERANCE_PX, (
+            f"Symphony is {column['width']:.1f} px wide, cap {cap:.0f}"
+        )
+        assert column["width"] >= cap - al.TOLERANCE_PX, (
+            f"a name wraps in a Symphony column of {column['width']:.1f} px, short of the cap {cap:.0f}"
+        )
+    for instance in read["instances"]:
+        cols = {c["name"]: c for c in instance["columns"]}
+        for name in _CONTENT_WIDTH_COLUMNS:
+            slack = cols[name]["width"] - cols[name]["pad"] - cols[name]["extent"]
+            assert slack <= al.TOLERANCE_PX, f"{name} is {slack:.1f} px wider than its text"
+
+
+def test_a_symphony_key_with_no_break_in_it_still_leaves_the_symphony_column_at_the_cap(
+    advisor_probe,
+):
+    """PM ruling R2-1: the cap holds for text that cannot wrap. A stored key of 100 characters with
+    no space is as wide as its words allow, not as wide as the column wants; rejects a column whose
+    minimum width is its longest unbroken word, so the key pushes every other column right."""
+    _seed_lines()
+    store(
+        "guardrail_clear",
+        symphony_id="quietharbourrotation" * 5,
+        start=FIRST_MOMENT + timedelta(minutes=120),
+    )
+    _open_every_history(advisor_probe, 1920)
+    read = _fit_of_the_histories(advisor_probe)
+    cap = _SYMPHONY_CAP_REM * read["rem"]
+    widths = [
+        c["width"] for i in read["instances"] for c in i["columns"] if c["name"] == "Symphony"
+    ]
+    assert widths and max(widths) >= cap - al.TOLERANCE_PX, (
+        f"premise: the key is wider than the cap in some history: {widths}"
+    )
+    assert max(widths) <= cap + 12 + al.TOLERANCE_PX, (
+        f"Symphony is {max(widths):.1f} px wide: {widths}"
+    )
+    # The key's text stays inside its cell, so it never runs into the Subject column next to it.
+    capped = [
+        c
+        for i in read["instances"]
+        for c in i["columns"]
+        if c["name"] == "Symphony" and c["width"] >= cap - al.TOLERANCE_PX
+    ]
+    for column in capped:
+        assert column["wrapped"], (
+            f"the unbroken key is not wrapped in its {column['width']:.1f} px cell"
+        )
+        assert column["extent"] <= column["width"] + al.TOLERANCE_PX, (
+            f"the key's text ends {column['extent'] - column['width']:.1f} px past its Symphony cell"
+        )
+
+
+@pytest.mark.parametrize("width", al.WIDTHS)
+def test_opening_every_history_moves_no_line_field_and_never_scrolls_the_page_sideways(
+    advisor_probe, width
+):
+    """PM ruling R2-1 (the field offsets of the observation lines do not move when the History
+    opens) and the table keeps the section's content edges at every width. Rejects content-sized
+    columns whose table widens the section's grid, moves the lines or the page's width, or runs
+    past the section edge at a narrow desktop width."""
+    _seed_lines()
+    _open_lines(advisor_probe, width)
+    closed = _offsets_of_the_lines(advisor_probe)
+    advisor_probe.page.evaluate(
+        "() => document.querySelectorAll('details.obs-history').forEach((d) => { d.open = true; })"
+    )
+    advisor_probe.page.wait_for_timeout(250)
+    opened = _offsets_of_the_lines(advisor_probe)
+    assert len(opened) == len(closed) == 4
+    for before, after in zip(closed, opened, strict=True):
+        for field in ("label", "verdict", "time", "last"):
+            if before[field] is None or after[field] is None:
+                assert before[field] is after[field] is None, (before["role"], field)
+                continue
+            assert abs(before[field] - after[field]) <= al.TOLERANCE_PX, (
+                f"{before['role']} {field} moved from {before[field]:.1f} to {after[field]:.1f}"
+            )
+    read = advisor_probe.page.evaluate(_HISTORY_FIT_JS)
+    assert abs(read["table"]["left"] - read["content"]["left"]) <= al.TOLERANCE_PX, read
+    assert abs(read["table"]["right"] - read["content"]["right"]) <= al.TOLERANCE_PX, read
+    scroll = advisor_probe.page.evaluate(
+        "() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]"
+    )
+    assert scroll[0] == scroll[1], f"the page scrolls sideways: {scroll}"
+    assert advisor_probe.page_errors == [], advisor_probe.page_errors

@@ -11,6 +11,11 @@ shared primitive rules to be a suffix of the sheet and ``.hp-more`` is not a pri
 rules go after the shared focus rule and before the first primitive rule; appending them at the
 end would break that pin. The declarations below are the ones History held, which is the contract
 of a move: nothing about the look changes.
+
+The disclosure no longer holds a definition list: History's reason descriptions were removed and
+the Glossary lines are paragraphs, so the shared rule styles the disclosure and its summary only
+(PM ruling R2-3). A rule for ``dl``, ``dt`` or ``dd`` inside it, and the comment that introduced
+the reason list, match nothing and leave a later reader trusting a rule no markup can test.
 """
 
 from __future__ import annotations
@@ -24,8 +29,8 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 LAYOUT = (REPO / "static" / "layout.css").read_text(encoding="utf-8")
 TEMPLATES = REPO / "templates"
 
-NARROW_CONTEXT = "@media (max-width: 700px)"
-# (context, selector) -> the declarations History held for it.
+# (context, selector) -> the declarations History held for it, less the definition-list rules that
+# match no markup after the reason descriptions were removed.
 MOVED_RULES = {
     ("", ".hp-more"): [
         ("margin-top", "12px"),
@@ -39,15 +44,6 @@ MOVED_RULES = {
         ("border-radius", "4px"),
     ],
     ("", ".hp-more summary:hover"): [("color", "var(--studio-ink)")],
-    ("", ".hp-more dl"): [
-        ("margin-top", "8px"),
-        ("display", "grid"),
-        ("grid-template-columns", "max-content 1fr"),
-        ("gap", "4px 16px"),
-    ],
-    ("", ".hp-more dt"): [("color", "var(--studio-ink)")],
-    (NARROW_CONTEXT, ".hp-more dl"): [("grid-template-columns", "1fr"), ("gap", "0")],
-    (NARROW_CONTEXT, ".hp-more dd"): [("margin-bottom", "8px")],
 }
 PAGE_TEMPLATES = ("index", "history", "performance", "settings", "ai_advisor")
 
@@ -72,6 +68,25 @@ def test_layout_css_defines_each_moved_rule_once_with_the_declarations_history_h
     for key, expected in MOVED_RULES.items():
         assert len(found[key]) == 1, f"{key} is defined {len(found[key])} times"
         assert found[key][0] == expected, f"{key}: {found[key][0]} != {expected}"
+
+
+def test_the_shared_rule_styles_no_definition_list_and_no_markup_builds_one():
+    """PM ruling R2-3. Rejects keeping the ``.hp-more dl``, ``dt`` and ``dd`` rules (and the comment
+    for the reason list) after the only definition list inside a ``.hp-more`` was removed."""
+    styled = [
+        s
+        for _c, sels, _d in _rules()
+        for s in sels
+        if ".hp-more" in s and re.search(r"(?<![\w-])(dl|dt|dd)(?![\w-])", s)
+    ]
+    assert styled == [], f"layout.css still styles a definition list in .hp-more: {styled}"
+    assert "what each reason means" not in LAYOUT.lower(), "the reason-list comment is still there"
+    built = [
+        path.name
+        for path in [*TEMPLATES.glob("*.html"), *(REPO / "static").glob("*.js")]
+        if re.search(r"<d[ltd][\s>]|createElement\(['\"]d[ltd]['\"]\)", path.read_text("utf-8"))
+    ]
+    assert built == [], f"premise: no template or script builds a definition list; {built} do"
 
 
 def test_the_moved_rules_use_tokens_and_no_raw_colour():

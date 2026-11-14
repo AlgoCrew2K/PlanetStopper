@@ -175,6 +175,98 @@ def test_no_selector_names_a_class_id_or_testid_the_page_carried_and_no_longer_m
     assert not dead, f"{page}.html styles markup that is gone:\n" + "\n".join(dead)
 
 
+# ---------------------------------------------------------------------------
+# PM ruling R2-3: the shared stylesheet and the repeated declarations
+# ---------------------------------------------------------------------------
+
+# A type selector in a rule needs an element of that type somewhere: a template tag, or a script that
+# builds one. ``html`` and ``body`` are the document's own.
+_TYPE_IN_SELECTOR = re.compile(r"(?:^|[\s>+~(])([a-z][a-z0-9]*)(?=[\s.:#>+~\[]|$)")
+_DOCUMENT_TYPES = {"html", "body"}
+
+
+def _type_tokens_of_selector(selector: str) -> set[str]:
+    selector = re.sub(r":not\([^)]*\)", "", selector)
+    selector = re.sub(r"\[[^\]]*\]", "", selector)
+    return set(_TYPE_IN_SELECTOR.findall(selector)) - _DOCUMENT_TYPES
+
+
+def _unbuilt_types(css: str, text: str) -> list[str]:
+    """Each rule of ``css`` whose type selector names an element no ``text`` builds."""
+    dead = []
+    for selector in _selectors_of(css):
+        for tag in sorted(_type_tokens_of_selector(selector)):
+            built = re.search(rf"<{tag}[\s>/]|createElement\(['\"]{tag}['\"]\)", text)
+            if not built:
+                dead.append(f"{selector!r} needs a <{tag}> element")
+    return dead
+
+
+def _markup_and_scripts() -> str:
+    """Every template (its style blocks left out) and every page script: what can build an element."""
+    parts = [_STYLE.sub("", _read(path)) for path in sorted(TEMPLATES.glob("*.html"))]
+    parts += [_read(path) for path in sorted(STATIC.glob("*.js"))]
+    return "\n".join(parts)
+
+
+def test_the_type_selector_scan_reports_a_planted_rule_and_spares_a_built_element():
+    """A scan that cannot fail proves nothing: a rule for an element type nothing builds is reported
+    (a media rule included); one for a type a template or a script builds, and the document's own
+    html and body, are not."""
+    css = (
+        ".box dl { margin: 0; } .box summary { cursor: pointer; } body { margin: 0; }"
+        " @media (max-width: 700px) { .box dd { margin: 0; } } .box:not(dt) { top: 0; }"
+        ' .box [data-x="dl"] { left: 0; }'
+    )
+    text = "<details><summary>x</summary></details> el = document.createElement('p')"
+    assert _unbuilt_types(css, text) == [
+        "'.box dl' needs a <dl> element",
+        "'.box dd' needs a <dd> element",
+    ]
+
+
+def test_the_shared_stylesheet_styles_no_element_type_that_no_template_or_script_builds():
+    """PM ruling R2-3. Rejects a rule of ``static/layout.css`` kept after the markup it styled was
+    removed (the ``.hp-more dl``, ``dt`` and ``dd`` rules, once the reason descriptions went); the
+    sweep covers the shared sheet, which the per-page sweeps above do not read."""
+    dead = _unbuilt_types(_read(STATIC / "layout.css"), _markup_and_scripts())
+    assert not dead, "static/layout.css styles markup that is gone:\n" + "\n".join(dead)
+
+
+def test_no_history_table_column_is_a_fixed_share_of_its_table():
+    """PM ruling R2-1: the opened observation history's columns are content-sized, so no rule sets a
+    percentage width on a cell or header of ``.obs-table`` (the table itself fills its box). Rejects
+    the 19, 22, 20 and 20 percent columns, whether in the base block or under a media query."""
+    from tests.ui import _dashboard_primitives_capture as cap
+
+    shares = [
+        (context, selector, value)
+        for context, selectors, declarations in cap.iter_rules(_style_of("ai_advisor"))
+        for selector in selectors
+        if ".obs-table" in selector and re.search(r"\b(th|td)\b|nth-child", selector)
+        for prop, value in declarations
+        if prop in ("width", "min-width", "max-width", "flex-basis") and value.endswith("%")
+    ]
+    assert shares == [], f"a history column is a share of the table: {shares}"
+
+
+@pytest.mark.parametrize("page", ["history", "performance"])
+def test_the_toolbar_note_margin_is_reset_by_one_rule_and_not_repeated(page):
+    """PM ruling R2-3. The toolbar's note has its left margin reset to zero in a rule of its own;
+    repeating the declaration for the data-stamp note (it is the same element class) in the base
+    block and again under the narrow width changes nothing. Rejects the repeats that remain."""
+    from tests.ui import _dashboard_primitives_capture as cap
+
+    resets = [
+        (context, selectors)
+        for context, selectors, declarations in cap.iter_rules(_style_of(page))
+        if ("margin-left", "0") in declarations and any(".hp-note" in s for s in selectors)
+    ]
+    assert len(resets) == 1, (
+        f"{page}.html resets a note's left margin {len(resets)} times: {resets}"
+    )
+
+
 @pytest.mark.parametrize("page", PAGES)
 def test_no_grid_template_areas_names_an_area_no_rule_assigns(page):
     """Rejects an area row left behind when the element that filled it was removed."""

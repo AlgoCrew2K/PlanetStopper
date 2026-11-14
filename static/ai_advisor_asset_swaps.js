@@ -396,6 +396,7 @@
         }
 
         resultsArea.innerHTML = html;
+        if (window.syncStackedStatsGrids) { window.syncStackedStatsGrids(); }
     }
 
     function renderError(msg) {
