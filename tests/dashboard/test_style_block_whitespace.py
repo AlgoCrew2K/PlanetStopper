@@ -46,7 +46,9 @@ _REFERENCE_DIGESTS = {
     # width and the symphony key wrap were added, and three rules no test could tell from the defaults
     # (the stacked block's max-width and justify-content, the nowrap of three history columns) were
     # deleted; the diff is those style rules and nothing else.
-    "ai_advisor.html": "07d5fbdd86b04df68f24ffdfe58184b6a09414facc47e4b24ca846c62c9b042e",
+    # Re-pinned after fix round R3 took the history table's verdict-dot hang out and put the
+    # history's grid rules under a 1001 px media query; the diff is that one rule and that wrapper.
+    "ai_advisor.html": "dce7a8974367dee299452d7988072144285a895547fe6054f4857745422fe4a6",
     # Without its .hp-more rules, which moved to static/layout.css (shared disclosure look).
     # Re-pinned after the Performance and History explainers, relabels and density layout were
     # added, and settings.html after the Settings explainers and density change (each diff
