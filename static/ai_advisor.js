@@ -1225,6 +1225,8 @@
             }
         });
         if (name === 'overview') { refreshPrismLensClamp(); }
+        // A tab that was hidden through a resize has grids still marked for the old width.
+        syncStackedStatsGrids();
         updateTabCues();
     }
 

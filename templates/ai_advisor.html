@@ -768,8 +768,8 @@
             .stats-grid .stat-value { text-align: right; }
             /* Blocks that sit one under the other (the script marks the grid) share one label track
                and one value track, so their labels start at one x and their values end at one x. */
-            .stats-grid--stacked { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content); justify-content: start; gap: 6px 12px; }
-            .stats-grid--stacked > div { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; max-width: none; }
+            .stats-grid--stacked { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, max-content); gap: 6px 12px; }
+            .stats-grid--stacked > div { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
         }
         .stat-pos { color: var(--studio-pos); }
         .stat-neg { color: var(--studio-neg); }
@@ -1251,9 +1251,7 @@
         .obs-table { display: grid; grid-template-columns: max-content fit-content(28rem) max-content max-content minmax(0, 1fr); }
         .obs-table thead, .obs-table tbody, .obs-table tr { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
         .obs-table th, .obs-table td { min-width: 0; }
-        .obs-table th:nth-child(1), .obs-table td:nth-child(1),
-        .obs-table th:nth-child(3), .obs-table td:nth-child(3),
-        .obs-table th:nth-child(4), .obs-table td:nth-child(4) { white-space: nowrap; }
+        .obs-table td.obs-symphony { overflow-wrap: anywhere; }
 
         /* A narrower page: the panels give up some padding. */
         @media (max-width: 700px) {
