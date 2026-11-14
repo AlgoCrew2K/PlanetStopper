@@ -176,15 +176,16 @@ elements on four pages, so the element set or computed style of 28 comparison ca
 - sha256 of `baseline.json` (LF line ends): `a2dc6dceb9c5744b7915d29d5318c2c86968e03b67575bd07da81933c1bddfe3`.
 - PM sign-off: not needed (producer output; the only differences are the fix round's own re-arranged elements).
 
-## Revision: re-recorded at the aligned-tables-and-quiet-copy fix round R2 head
+## Revision: re-recorded at the aligned-tables-and-quiet-copy fix rounds R2 and R3 head
 
-The final fix round (observation history columns, stacked result-card tracks, dead shared rules removed) changed
-`templates/ai_advisor.html`, `history.html`, `performance.html`, `static/layout.css` and `static/ai_advisor.js`, so
-`baseline.json` was written again to pin the record to the production state it is read against.
+The final fix rounds (R2: observation history columns, stacked result-card tracks, dead shared rules removed; R3: the
+observation history's verdict dot gap and its table below 1001 px) changed `templates/ai_advisor.html`,
+`history.html`, `performance.html`, `static/layout.css` and `static/ai_advisor.js`, so `baseline.json` was written
+again to pin the record to the production state it is read against.
 
 - `base_sha` in the file, `BASE_SHA` in the producer and the producer's refusal now name
-  `08e28b452ba6d3d2396c57873c26b29de380d21a`, the last commit that touched `static`, `templates` or `app.py` (the
-  producer ran at the merge head `b442890f8997e28b08fd441af952df82f1dd966c`, whose `static`, `templates` and `app.py`
+  `f4fc216fbb97c48abd91e08d3709d68346ef3833`, the last commit that touched `static`, `templates` or `app.py` (the
+  producer ran at the merge head `3b20e4fda47916253e1e479108f4e5b7b1e778ee`, whose `static`, `templates` and `app.py`
   equal that commit and are clean). The worktree holds a `.env`; the producer removes the credential variables and
   the module values the import set, so the record does not read it. Run twice in separate processes: the two records
   were equal apart from `captured_at_utc`.
@@ -193,7 +194,7 @@ The final fix round (observation history columns, stacked result-card tracks, de
   text, margin or style digest; only `base_sha` and `captured_at_utc` changed. No heading was lost and the shared
   rule's margins are equal in every view. The round's changes lie in elements this record does not read (the opened
   observation History table, the result cards, the dead rules).
-- sha256 of `baseline.json` (LF line ends): `0e549263af97c2c4cda46e207490219777489c6ec23024685333fed2c1cfc877`.
+- sha256 of `baseline.json` (LF line ends): `179ce0a16944cccc0c3413056ccd3204e70b800d6d93a0919902d9568d2f8552`.
 - PM sign-off: not needed (producer output; no element differs).
 
 ## Regenerating
