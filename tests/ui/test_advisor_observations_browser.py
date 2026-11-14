@@ -605,6 +605,18 @@ def test_a_symphony_key_with_no_break_in_it_still_leaves_the_symphony_column_at_
     assert max(widths) <= cap + 12 + al.TOLERANCE_PX, (
         f"Symphony is {max(widths):.1f} px wide: {widths}"
     )
+    # The key's text stays inside its cell, so it never runs into the Subject column next to it.
+    capped = [
+        c
+        for i in read["instances"]
+        for c in i["columns"]
+        if c["name"] == "Symphony" and c["width"] >= cap - al.TOLERANCE_PX
+    ]
+    for column in capped:
+        assert column["wrapped"], f"the unbroken key is not wrapped in its {column['width']:.1f} px cell"
+        assert column["extent"] <= column["width"] + al.TOLERANCE_PX, (
+            f"the key's text ends {column['extent'] - column['width']:.1f} px past its Symphony cell"
+        )
 
 
 @pytest.mark.parametrize("width", al.WIDTHS)
