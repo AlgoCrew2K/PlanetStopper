@@ -11789,3 +11789,56 @@ Many tests fake `advisors.correlation_diagnostic` with `patch.dict("sys.modules"
 ### Reference
 
 Commit `d74379b8`.
+
+## aligned-tables-and-quiet-copy: aligned column tables, one Glossary per page and quiet status copy (2026-11-13)
+
+Source: `feature-plans/aligned-tables-and-quiet-copy.md` and `feature-plans/approach/aligned-tables-and-quiet-copy.md` (rulings G-1 to G-59, decisions D-1 to D-16). Base `c0760e70` (origin/main), slice head `8c63e1d0`. Display only: `git diff c0760e70...8c63e1d0` shows no change to `alpha_bot_execution.py`, `math_engine.py`, `database.py`, `advisors/`, `analytics.py`, `reporting.py` or the migrations. The rulings below are [PM-ASSUMED] where the plan marks them so.
+
+### Defect
+
+After the page-explainers slice the pages still misaligned and repeated themselves: tables whose headers did not sit over their cells (the autotune rows, the observation lines, the tenure evidence cells, repeated card figures), text and status words placed beside the Advisor tab bar or at a toolbar's far end to fill space, a description plus a per-section "What the terms mean" disclosure plus hints that said the same thing, an autotune "Same for every run" line and N/A columns that read as noise, and a tenure card that named every symphony a comparison could not decide. Review also found figures clipped in the dashboard comparison rows and the swap and logic-change result cards, and a header that could widen a page.
+
+### Fix
+
+- Columns primitive in `static/layout.css` (`.cols-table`, `.cols-row`, `.cols-num`, one `--cols` count, `subgrid` rows) from 1001 px up; below 1001 px each table keeps its stacked form (AC-8). Hosts: the autotune table and the Overview observation lines. Tenure evidence cells keep one visible order in one six-track grid.
+- One closed Glossary per host (`templates/_glossary.html`, `static/glossary.js`), replacing every per-section "What the terms mean" disclosure and History's exit reasons disclosure. A label that names a term shows its Glossary line as its title; the script writes attributes only.
+- One description sentence of at most 25 words per section; hints, captions and run notes that restated one are removed. The Retirement pointer leaves the Overview toolbar and becomes the Retirement row of the observation lines (`_build_retirement_pointer` returns `{"status": ...}` only).
+- Status lines: the autotune sentence replaces "Same for every run" (only run time and outcome are ever lifted); a score or Sel t-stat column that reads N/A in every row is omitted; `_build_verification_count_line(summary, verdict)` omits zero counts and the verified count the pill already states; the older-runs summary reads "{n} older runs from the {limit} most recent".
+- Tenure cards: each missing item is named once; one fleet line under the tenure run line states the too-few-days fact ("Redundancy not decided for {k} of {n} symphonies ...; {N} are needed"), N printed by `_copy_redundancy_needs_days` from the review's own derivation, never typed. The undecided-peer list appears once, inside the Redundancy cell's disclosure. Classification is the `tenure_redundancy_missing` template filter.
+- Rulings recorded here because the plan text does not carry them:
+  - G-36 (plan text): from 1001 px the dashboard dollar summary's lead sentence reads with normal word spacing, its basis meta on the line under it, and the three other figure lines stack in one column 32 to 48 px from the lead block, no figure broken across lines.
+  - Status-dot column edge (the PM's brief files it under G-36; the plan's G-36 is the dollar summary above, so the dot ruling's own text is not in the plan): the status dot keeps its own column edge in a row.
+  - Dashboard headline fit (C5): the headline holds its figure on one line from 320 px, with the window picker reachable and not overlapping it; the dollar line keeps `white-space: nowrap`.
+  - R2-4: a result card stacked Variant under Baseline shares one label track and one value track; the 48 px gap runs from the label track to the widest value (`syncStackedStatsGrids`, `stats-grid--stacked`).
+  - R2-5 to R2-7 (final-round rulings G-56 to G-58): an opened observation history spans the section but its columns take content width (Time, Subject and Verdict their own width, Symphony up to 28rem, Summary the rest, never a percentage track); rules left matching nothing are deleted and the shared-rule test pins only the rules kept (D-16). Also in the R2 fix: stacked result cards are re-read when a tab is shown or the window resizes, and a symphony key with no break wraps inside its cell.
+  - R3-1: no status dot hangs outside the cell in the history table.
+  - R3-2: the history grid applies only from 1001 px; below it the table is an ordinary table.
+  - QA-3: "(frozen-eval not evaluated)" stays as the adopted-outcome clause (S-5.20).
+  - QA-4: "Click Run tenure review again." stands as the not-sent text.
+  - QA-R1-2: accepted as recorded in the review.
+- Header: between 1401 and 1500 px the gaps and padding tighten so the clock and chip stay on and the header never makes a page scroll sideways. The header test substitutes a wide font by ruling; the real-font check stays with the PM.
+- Removed with the slice: `refreshRetirementPair` and its constants, `REASON_DESCRIPTIONS`, `renderReasonDescriptions`, `ensureSymphonyTerms`, `_termsDisclosure`.
+
+### Tests
+
+New and re-pinned browser, copy-fixture and route tests under `tests/ui/`, `tests/app/` and `tests/fixtures/`; the final census at `8c63e1d0` ran 83 files, 6118 passed, 0 failed (review-ledger close exit 0), as the brief supplies.
+
+### Review
+
+Verdict files under `.claude/review/9413e49140db/`: code-reviewer PASS (rounds r1 to r2 and the final), flask PASS, qa PASS at `dd13f760` after earlier FAILs at `9413e491`, `f869256c` and `b442890f` were fixed, ux-expert PASS at `dd13f760`. Coverage record `.claude/review/8c63e1d0d0d2/records/coverage.json`.
+
+### Backlog (NB-14, not criteria)
+
+CR-5 (the Glossary script rescans the whole document per change; measure on the dashboard and Overview polls first), CR-3 (accepted: the producer's floor and reason format are restated at render, pinned by drift tests), CR1-2 (templates branch on another function's wording, the "not decided" prefix and the stripped ", fleet-normalized"; a structured return value would be safer), CR1-1 (closed in R2), CR2-1 (ARIA roles on the grid history table), UX-17, UX-20, UX-22, UX-25, UX-26, UX-29 (no narrow scroll cue), Flask A1 (the no-number form when N cannot be read) and A2 (a private producer name read across modules), and the dead `.mini-stat-note` rule.
+
+### Not verified here
+
+How the pages read at 1920, 1440 and 390 px on the operator's browser is the PM's deploy-gate check (AC-9), not confirmable from code.
+
+### Files changed
+
+`app.py`, `static/ai_advisor.js`, `static/ai_advisor_asset_swaps.js`, `static/ai_advisor_logic_changes.js`, `static/glossary.js`, `static/history.js`, `static/index.js`, `static/layout.css`, `static/performance.js`, `static/settings-modal.js`, `static/settings.js`, `templates/_chrome.html`, `templates/_glossary.html`, `templates/ai_advisor.html`, `templates/history.html`, `templates/index.html`, `templates/performance.html`, `templates/settings.html`; docs: `docs/generated/page_explainers.md`, `docs/generated/static_glossary_js.md`, `docs/generated/static_ai_advisor_js.md`, `docs/generated/static_history_js.md`, `docs/generated/static_index_js.md`, `docs/generated/static_performance_js.md`, `docs/generated/app.md`, `docs/generated/INDEX.md`, `.claude/CLAUDE.md` (Key Files rows).
+
+### Reference
+
+`feature-plans/aligned-tables-and-quiet-copy.md`.

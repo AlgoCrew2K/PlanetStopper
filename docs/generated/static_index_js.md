@@ -194,7 +194,7 @@ See [refresh_timing.md](refresh_timing.md) and [ux_overhaul.md](ux_overhaul.md).
 
 ## Page copy and layout
 
-`verdictText(ga)` returns "Exit matched holding" when the magnitude rounds to `0.0`, else "Exit beat holding by {m} pts" or "Exit trailed holding by {m} pts" (m = `Math.abs(ga).toFixed(1)`, guard alpha in percentage points); `app._first_paint_verdict` renders the same text. The timeline exit chip for a VWAP exit reads "VWAP breakdown". While the market is open the hero legend reads "If held · live".
+`verdictText(ga)` returns "Exit matched holding" when the magnitude rounds to `0.0`, else "Exit beat holding by {m} pts" or "Exit trailed holding by {m} pts" (m = `Math.abs(ga).toFixed(1)`, guard alpha in percentage points); `app._first_paint_verdict` renders the same text. The timeline exit chip for a VWAP exit reads "VWAP breakdown". While the market is open the hero legend reads "If held · live". The account all-time label carries `data-glossary="D05"`, so `static/glossary.js` shows its Glossary line as the title.
 
 See [page_explainers.md](page_explainers.md).
 

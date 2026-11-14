@@ -93,7 +93,7 @@ History opens on a 30 day window (`currentWindow = '30'`) and `GET /api/history/
 
 ## Page copy and layout
 
-`REASON_DISPLAY` and `reasonDisplayName(reason)` map the four canonical reason keys to the names shown ("Take-profit", "Trailing stop", "VWAP breakdown", "VWAP bleed"); the keys stay as the API and stored exits spell them, and an unmapped raw reason is shown as it is. `REASON_DESCRIPTIONS` now holds sentences that follow the reason name in the closed "What the exit reasons mean" list. The reason-card count column is labelled "Exits".
+`REASON_DISPLAY` and `reasonDisplayName(reason)` map the four canonical reason keys to the names shown ("Take-profit", "Trailing stop", "VWAP breakdown", "VWAP bleed"); the keys stay as the API and stored exits spell them, and an unmapped raw reason is shown as it is. `REASON_DESCRIPTIONS` and `renderReasonDescriptions` are removed with the exit reasons disclosure; the reasons are defined in the page's one Glossary (`templates/history.html`). The reason-card count column is labelled "Exits".
 
 See [page_explainers.md](page_explainers.md).
 

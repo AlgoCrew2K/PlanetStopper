@@ -149,7 +149,7 @@ Each panel renders independently (`drawPanel(name, render, payload)`), so a fail
 
 ## Page copy and layout
 
-The chart series are labelled "If held" and "Bot (shadow)", and the `win_rate` metric row reads "Up days". The exit-turnover cells (`turnoverWindowCell`, the drag cell) no longer set an inline right alignment; the stylesheet aligns them.
+The chart series are labelled "If held" and "Bot (shadow)", and the `win_rate` metric row reads "Up days". The exit-turnover cells (`turnoverWindowCell`, the drag cell) no longer set an inline right alignment; the stylesheet aligns them. Each risk metric row label carries a Glossary key from `METRIC_GLOSSARY_KEY` (`F15a` to `F15g`), and `preconditionChipEl(verdict)` sets `data-glossary` from `PRECOND_VERDICT_GLOSSARY_KEY` (`F19a` to `F19e`, `F19e` for an unknown verdict); `static/glossary.js` turns each into a title.
 
 See [page_explainers.md](page_explainers.md).
 
