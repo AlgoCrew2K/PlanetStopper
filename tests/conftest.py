@@ -4,6 +4,7 @@ Pytest configuration and shared fixtures for Planet Stopper test suite.
 
 import os
 import pathlib
+import sys
 import tempfile
 import warnings
 from unittest.mock import patch
@@ -565,6 +566,25 @@ def _reset_closed_market_holds(monkeypatch):
     yield
     _drain_warmups()
     _app_module._CLOSED_HOLD.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_if_held_replay_store():
+    """Start and end every test with nothing held by the preconditions route's replay store.
+
+    The store (autotuner._IF_HELD_REPLAY_STORE) keeps one file identity's derived series between
+    requests, so a series held by one test would be served to the next as its own. The fixture
+    only clears a store that already exists and never imports autotuner itself.
+    """
+
+    def _clear():
+        store = getattr(sys.modules.get("autotuner"), "_IF_HELD_REPLAY_STORE", None)
+        if store is not None:
+            store.clear()
+
+    _clear()
+    yield
+    _clear()
 
 
 @pytest.fixture(autouse=True)

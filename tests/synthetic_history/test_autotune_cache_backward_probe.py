@@ -81,6 +81,29 @@ class TestNamedConstant:
 
 
 class TestBackwardProbeFindsAgedHit:
+    def test_the_writer_returns_an_existing_valid_file_and_fetches_nothing(
+        self, tmp_path, monkeypatch
+    ):
+        """The autotune's own read of a valid file at its real key stays as it was: the decoded
+        dict comes back and no bar is fetched."""
+        monkeypatch.chdir(tmp_path)
+        content = {"sym-backward-probe-001": {_ANCHOR: [{"return": 1.5}]}}
+        _write_cache_file(_BOT_STATE, _ANCHOR, content)
+        fetch_calls: list = []
+
+        def _tracking_fetch_bars(*args, **kwargs):
+            fetch_calls.append((args, kwargs))
+            return []
+
+        monkeypatch.setattr(synthetic_history, "fetch_bars", _tracking_fetch_bars)
+
+        result = synthetic_history.generate_synthetic_history(_BOT_STATE, _ANCHOR)
+
+        assert result == content, f"Expected the file's decoded content, got {result!r}."
+        assert fetch_calls == [], (
+            f"fetch_bars was called {len(fetch_calls)} time(s) although a valid file exists."
+        )
+
     def test_finds_a_hit_several_trading_days_back_when_today_is_cold(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         aged_date = _n_business_days_before(_ANCHOR, 3)

@@ -418,6 +418,12 @@ class TestReadOnlyScope:
             f"{_ROUTE} must be GET-only (read-only advisory surface), got methods={rule.methods!r}"
         )
 
+    def test_a_post_is_refused_with_405(self, client):
+        resp = client.post(_ROUTE)
+        assert resp.status_code == 405, (
+            f"POST {_ROUTE} must be refused as a wrong method (405), got {resp.status_code}."
+        )
+
     def test_route_source_never_references_live_execution(self):
         src = inspect.getsource(app_module.guard_alpha_preconditions)
         assert "LIVE_EXECUTION" not in src, (
