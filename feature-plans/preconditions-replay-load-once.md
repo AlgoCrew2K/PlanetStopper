@@ -189,8 +189,10 @@ Rule: When a request's backward probe passes only missing candidates or remember
 | S-2.18 | N6 | a request read corrupt F (newer) and logged its WARNING, then decoded the older valid G; F and G are unchanged | the next GET, and three 60 s polls after it | no cache file is read; no WARNING is logged; every body is byte-identical to the first request's (replay rows from G) |
 | S-2.19 | N6 | as S-2.18, then F is rewritten with valid content (its size or modification time changes) | GET | F is decoded once; the replay rows come from F |
 | S-2.20 | N6 | the only file in the window, F, is corrupt; a request has read it and logged its WARNING; F is unchanged | the next GET | F is not read; no WARNING; every `replay` is the degraded row, as at base |
+| S-2.21 | N6 | the newest file F in the window cannot be opened (an OSError such as permission denied), and an older valid file E is in the window | GET, then F is made readable without changing its size or modification time, then GET | the first GET's replay rows come from E and it logs base's WARNING for F once; the second GET decodes F once and its replay rows come from F |
+| S-2.22 | N6 | F cannot be opened (an OSError), F is unchanged, and no other file is in the window | two successive GETs | each GET attempts F once and logs base's WARNING once (once per request, never per symphony); neither GET remembers the failure; both bodies are the degraded-replay body |
 
-Negative coverage: N1 S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.14, S-2.16, S-2.17 · N2 n/a: the route takes no parameters and refuses nothing · N3 S-2.10 · N4 covered by AC-8 (S-8.5) · N5 S-2.2, S-2.15 · N6 S-2.11, S-2.18, S-2.19, S-2.20 · N7 S-2.13 · N8 S-2.12
+Negative coverage: N1 S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.14, S-2.16, S-2.17 · N2 n/a: the route takes no parameters and refuses nothing · N3 S-2.10 · N4 covered by AC-8 (S-8.5) · N5 S-2.2, S-2.15 · N6 S-2.11, S-2.18, S-2.19, S-2.20, S-2.21, S-2.22 · N7 S-2.13 · N8 S-2.12
 Questions: Q-2, Q-5, Q-6
 
 ### AC-3: The answer is byte-identical to base
@@ -230,8 +232,9 @@ Rule: While one request is decoding a cache file, a second request that reaches 
 | S-4.5 | N1 | request A is decoding F; F is then rewritten with a different size | request B starts | B does not answer from A's result for the old F; B's replay rows come from the new content |
 | S-4.6 | N7 | a cold preconditions GET is decoding | a concurrent `GET /api/performance?scope=aggregate&days=60d` completes | its body equals its body when run alone |
 | S-4.7 | N3 | no file in the window | two GETs start together | no decode; both bodies are the degraded-replay body, byte-equal to base; no fetch is made |
+| S-4.8 | N6 | request A's decode of F ends in an exception that is not an Exception subclass (a BaseException) while request B waits on it | B resumes | B's replay rows are degraded, as for any other non-decode failure; nothing is remembered; the next GET decodes F again |
 
-Negative coverage: N1 S-4.5 · N2 n/a: the route takes no parameters and refuses nothing · N3 S-4.7 · N4 covered by AC-8 (S-8.5) · N5 S-4.1, S-4.2 · N6 S-4.3, S-4.4 · N7 S-4.6 · N8 covered by AC-2 (S-2.12)
+Negative coverage: N1 S-4.5 · N2 n/a: the route takes no parameters and refuses nothing · N3 S-4.7 · N4 covered by AC-8 (S-8.5) · N5 S-4.1, S-4.2 · N6 S-4.3, S-4.4, S-4.8 · N7 S-4.6 · N8 covered by AC-2 (S-2.12)
 Questions: Q-1
 
 ### AC-5: A measured latency bound holds on a production-sized fixture
@@ -280,7 +283,7 @@ Rule: While no preconditions request is in flight, the daemon shall hold none of
 |---|---|---|---|---|
 | S-7.1 | B | a production-shaped state and file | a cold GET completes and garbage is collected | the traced memory retained against before the request is under 5% of the traced peak during the request |
 | S-7.2 | N1 | three different files decoded by successive requests (F replaced twice) | the third request completes and garbage is collected | the retained memory is still under 5% of one request's traced peak |
-| S-7.3 | N5 | no earlier decode | two cold GETs run together | the traced peak during the pair is at most 1.25 times the traced peak of one cold GET alone |
+| S-7.3 | N5 | no earlier decode | two cold GETs run together, and the first request's decode is held until the second request has reached the shared decode | one decode in total; the traced peak during the pair is at most 1.25 times the traced peak of one cold GET alone |
 | S-7.4 | N3 | no file in the window | a GET completes and garbage is collected | the retained memory is under the S-7.1 bound |
 | S-7.5 | N6 | the decode fails (corrupt file) | a GET completes and garbage is collected | nothing from the failed decode is retained beyond the file's identity (the S-7.1 bound holds) |
 | S-7.6 | N1 | warm | 20 warm GETs complete and garbage is collected | the retained memory does not grow beyond the S-7.1 bound across the 20 |
@@ -411,9 +414,9 @@ none: no visible element, template or client script changes (NB-11, NB-14); the 
 | AC | Scenarios | Test level | Real-entrypoint test |
 |---|---|---|---|
 | AC-1 | S-1.1, S-1.2, S-1.3, S-1.4, S-1.5, S-1.6, S-1.7, S-1.8, S-1.9, S-1.10 | route test through the Flask test client, real files in a temporary `cache` directory, decodes counted | `GET /api/guard-alpha-preconditions` |
-| AC-2 | S-2.1, S-2.2, S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.10, S-2.11, S-2.12, S-2.13, S-2.14, S-2.15, S-2.16, S-2.17, S-2.18, S-2.19, S-2.20 | route test, files rewritten, deleted, aged and replaced between requests | `GET /api/guard-alpha-preconditions` |
+| AC-2 | S-2.1, S-2.2, S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.10, S-2.11, S-2.12, S-2.13, S-2.14, S-2.15, S-2.16, S-2.17, S-2.18, S-2.19, S-2.20, S-2.21, S-2.22 | route test, files rewritten, deleted, aged and replaced between requests | `GET /api/guard-alpha-preconditions` |
 | AC-3 | S-3.1, S-3.2, S-3.3, S-3.4, S-3.5, S-3.6, S-3.7, S-3.8, S-3.9, S-3.10, S-3.11, S-3.12, S-3.13, S-3.14 | route test comparing the head's bytes with the golden bodies produced by base for each state | `GET /api/guard-alpha-preconditions` |
-| AC-4 | S-4.1, S-4.2, S-4.3, S-4.4, S-4.5, S-4.6, S-4.7 | route test with concurrent requests from threads | `GET /api/guard-alpha-preconditions` on the threaded server |
+| AC-4 | S-4.1, S-4.2, S-4.3, S-4.4, S-4.5, S-4.6, S-4.7, S-4.8 | route test with concurrent requests from threads | `GET /api/guard-alpha-preconditions` on the threaded server |
 | AC-5 | S-5.1, S-5.2, S-5.3, S-5.4, S-5.5, S-5.6, S-5.7 | timing test on the production-sized fixture, in the default suite and CI: decode counts asserted first, wall-clock bounds second, one decode of the fixture file timed alone in the same run | the real threaded server on localhost |
 | AC-6 | S-6.1, S-6.2, S-6.3, S-6.4, S-6.5, S-6.6, S-6.7, S-6.8, S-6.9, S-6.10, S-6.11 | timing test in the default suite and CI for S-6.1, S-6.2, S-6.3, S-6.4, S-6.7, S-6.8, S-6.9, S-6.10, S-6.11; browser evidence for S-6.5, S-6.6 | the real threaded server; `/performance` in a browser |
 | AC-7 | S-7.1, S-7.2, S-7.3, S-7.4, S-7.5, S-7.6, S-7.7 | route test with `tracemalloc` | `GET /api/guard-alpha-preconditions` |
@@ -467,9 +470,10 @@ Fixture provenance: one real record per case.
 |---|---|---|
 | D-1 | The source's clause that the route competes with the minute scheduler during market hours is corrected, and no criterion rests on it (PM ruling) | The key hashes drifting allocations, so no file resolves in session (Trigger fact 10); the saved source stays verbatim |
 | D-2 | Warm means the probe reaches the held identity past only missing candidates or remembered failures; one identity's results are held, and no warmth is claimed across A, then B, then A (PM ruling) | A holdings change resolves a different file or none, so a single-entry store is enough |
-| D-3 | A corrupt or unreadable file's failure is remembered under its identity; its WARNING is logged once and repeat lines stop (PM ruling) | Re-decoding a truncated 70 MB file on every poll would keep the contention; the first WARNING keeps base's wording |
+| D-3 | A corrupt or unreadable file's failure is remembered under its identity; its WARNING is logged once and repeat lines stop (PM ruling) (narrowed by D-6: decode errors only) | Re-decoding a truncated 70 MB file on every poll would keep the contention; the first WARNING keeps base's wording |
 | D-4 | A request waiting on a failed decode gets base's unreadable-file answer (PM ruling) | The answer stays the one base gives for that file |
 | D-5 | The expected bodies are golden JSON from the unchanged aafe476d route with the ET date frozen; decode counts are the primary latency assertion; wall-clock bounds are secondary, generous for CI, and the cold bound is stated against one decode (PM ruling) | Counts are deterministic; the goldens fix base without running it in every test |
+| D-6 | A read failure is remembered under the file identity only when it is a decode error: the file was opened and read, but its content is not valid JSON or not decodable text (JSONDecodeError, ValueError, UnicodeDecodeError). An OSError while opening or reading (permission denied, too many open files, I/O error) is not remembered. That request gets base's answer (the walk moves to the next older candidate), and the next request reads the file again and logs base's WARNING again, once per request. Where D-3 conflicts, D-6 supersedes it. | PM ruling, review round 1 (code-reviewer decision item). synthetic_history.py:274 catches OSError together with decode errors; chmod changes neither size nor mtime, so a remembered permission error would hide the newest valid file until the weekly rewrite; Defect Class DC-4 forbids remembering a transient error. |
 
 ## Docs to Update
 - `docs/generated/`: one file per touched module (among `app.md`, `autotuner.md`, `synthetic_history.md`), and `docs/generated/INDEX.md`.
