@@ -1,5 +1,5 @@
 # Feature: The preconditions route reads its replay cache file once
-Status: gate-1
+Status: ready
 Story: none: the PM's timing finding of 2026-11-15, saved verbatim with the intake answers in feature-plans/preconditions-replay-load-once.source.md
 Type: perf
 Suite: none
@@ -324,29 +324,29 @@ Questions: Q-6
 
 ## Not Building
 Non-goals:
-- NB-1: No change to the preconditions statistics, verdicts, thresholds (`N_MIN_OBS`) or the shadow sample (R-27; proposed).
-- NB-2: No change to the 60 s poll in `static/performance.js` (`static/performance.js:1093-1097`) (R-28; proposed).
-- NB-3: No speed-up of `/api/performance` itself (R-29; proposed).
-- NB-4: No change to the cache file format or its writer `generate_synthetic_history`, including its fetch on a miss (R-30; proposed).
-- NB-5: No change to the autotuner's walk-forward replay (R-31; proposed).
-- NB-6: No wire, schema, migration or config change; no new environment key (R-24; proposed).
-- NB-7: No workflow file is created for `/performance` (R-23; proposed).
-- NB-8: The exhaustive UI/UX review and the droplet deploy are the PM's deploy gate, not criteria of this plan (narrows R-1; proposed).
+- NB-1: No change to the preconditions statistics, verdicts, thresholds (`N_MIN_OBS`) or the shadow sample (R-27; approved [PM-ASSUMED]).
+- NB-2: No change to the 60 s poll in `static/performance.js` (`static/performance.js:1093-1097`) (R-28; approved [PM-ASSUMED]).
+- NB-3: No speed-up of `/api/performance` itself (R-29; approved [PM-ASSUMED]).
+- NB-4: No change to the cache file format or its writer `generate_synthetic_history`, including its fetch on a miss (R-30; approved [PM-ASSUMED]).
+- NB-5: No change to the autotuner's walk-forward replay (R-31; approved [PM-ASSUMED]).
+- NB-6: No wire, schema, migration or config change; no new environment key (R-24; approved [PM-ASSUMED]).
+- NB-7: No workflow file is created for `/performance` (R-23; approved [PM-ASSUMED]).
+- NB-8: The exhaustive UI/UX review and the droplet deploy are the PM's deploy gate, not criteria of this plan (narrows R-1; approved [PM-ASSUMED]).
 
 Behavior that stays exactly as it is:
-- NB-9: The route's JSON for the same state and cache file, its cache-hit-only read, the backward probe up to `AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS`, the INFO miss summary and corrupt-file WARNING wording, and the degraded-row copy (tested by AC-3 and AC-8; proposed).
-- NB-10: The structural symphony filter (`app.py:6499-6515`) and the shared no-longer-held rule (`app.py:6604`) (tested by S-1.3, S-1.8, S-3.11; proposed).
-- NB-11: The Performance panel's rendering, copy, display names and cold-replay note (`static/performance.js:874-924`) (proposed).
+- NB-9: The route's JSON for the same state and cache file, its cache-hit-only read, the backward probe up to `AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS`, the INFO miss summary and corrupt-file WARNING wording, and the degraded-row copy (tested by AC-3 and AC-8; approved [PM-ASSUMED]).
+- NB-10: The structural symphony filter (`app.py:6499-6515`) and the shared no-longer-held rule (`app.py:6604`) (tested by S-1.3, S-1.8, S-3.11; approved [PM-ASSUMED]).
+- NB-11: The Performance panel's rendering, copy, display names and cold-replay note (`static/performance.js:874-924`) (approved [PM-ASSUMED]).
 
 Deferred:
-- NB-12: GIL contention from any other slow route (R-33; proposed). The source names "the NB-14 backlog"; no entry at the ref names it (Known-Unconfirmed item 9), so the follow-up line is recorded at ship (Q-8).
-- NB-17: The replay sample is unavailable on weekdays because the cache key hashes the drifting `allocation` floats (Trigger fact 10); the key derivation and that weekday unavailability are not changed here, a pre-existing gap deferred to the NB-14 backlog alongside NB-12 (Q-8) (excludes R-35, which rested on the corrected market-hours clause; proposed by the PM's ruling).
+- NB-12: GIL contention from any other slow route (R-33; approved [PM-ASSUMED]). The source names "the NB-14 backlog"; no entry at the ref names it (Known-Unconfirmed item 9), so the follow-up line is recorded at ship (Q-8).
+- NB-17: The replay sample is unavailable on weekdays because the cache key hashes the drifting `allocation` floats (Trigger fact 10); the key derivation and that weekday unavailability are not changed here, a pre-existing gap deferred to the NB-14 backlog alongside NB-12 (Q-8) (excludes R-35, which rested on the corrected market-hours clause; approved [PM-ASSUMED]).
 
 Protected surfaces this consumes but does not change:
-- NB-13: `alpha_bot_execution.py` and `math_engine.py`, the 1-minute engine (R-13; proposed; S-8.7).
-- NB-14: The synthetic_history cache files and `generate_synthetic_history`, `database.load_state`, `guard_preconditions.py`, `analytics.get_shadow_current_return_daily_series`, `static/performance.js` and `templates/performance.html` (R-34; proposed; S-8.7).
-- NB-15: Dashboard sessions: no logout generation bump, `SECRET_KEY` stable, migrations 040/041 and the session lifetime untouched, so no deploy of this change forces a re-login (R-2; proposed).
-- NB-16: No other repository changes and nothing must land first (R-25; proposed).
+- NB-13: `alpha_bot_execution.py` and `math_engine.py`, the 1-minute engine (R-13; approved [PM-ASSUMED]; S-8.7).
+- NB-14: The synthetic_history cache files and `generate_synthetic_history`, `database.load_state`, `guard_preconditions.py`, `analytics.get_shadow_current_return_daily_series`, `static/performance.js` and `templates/performance.html` (R-34; approved [PM-ASSUMED]; S-8.7).
+- NB-15: Dashboard sessions: no logout generation bump, `SECRET_KEY` stable, migrations 040/041 and the session lifetime untouched, so no deploy of this change forces a re-login (R-2; approved [PM-ASSUMED]).
+- NB-16: No other repository changes and nothing must land first (R-25; approved [PM-ASSUMED]).
 
 ## Defect Classes
 | DC-n | Class (what goes wrong) | Trigger (B or N1-N8) | Sibling search (tool, query, scope) | Scenarios | Raised in review as |
@@ -453,14 +453,14 @@ Fixture provenance: one real record per case.
 ## Open Questions
 | Q-n | Question | Blocks (AC ids or "plan") | Proposed default | Answer |
 |---|---|---|---|---|
-| Q-1 | May two concurrent requests both parse the file? (G-25) | AC-4 | No. Concurrent requests for the same file share one decode; a second request waits for the first instead of parsing again (G-25, G-26) | |
-| Q-2 | What identifies an unchanged cache file? (G-27) | AC-2 | The resolved file path plus its size and modification time, re-checked on every request with no time-based expiry (G-27) | |
-| Q-3 | What is the latency bound? (G-28 to G-30) | AC-5, AC-6 | Decode counts are the primary assertion: cold at most 1 decode per request, warm 0. Wall-clock bounds are secondary and generous enough for CI, on a fixture of at least 11 symphonies and a file of at least 70 MB: a warm request under 0.5 s; a cold request within one decode of the fixture file plus 1.0 s; a concurrent `/api/performance`, `/api/header-status` or `/api/candidate-alert` during a warm request within 0.5 s of its alone time. The source's "1/5 of the current per-symphony cost" means one fifth of one decode (about 0.4 s on the droplet), which no cold path that decodes the whole file once at today's decode speed can meet; the default bound is looser and R-9 is marked narrowed (PM ruling). Choosing the literal bound would require a faster decode or no whole-file decode, and would change the approach | |
-| Q-4 | What may be kept in memory? (G-31) | AC-7 | Between requests only the derived per-symphony daily return lists for one file identity, plus the identities (no content) of remembered corrupt files, never the parsed history (G-31) | |
-| Q-5 | What does "unchanged state" mean for the no-re-parse rule (G-7)? | AC-2 | The state matters only through which file the backward probe resolves (holdings and date); a write that changes returns or values without changing holdings still reuses the held identity. During market hours the holdings' allocations drift, so no file resolves and nothing is decoded, at base and after alike (Trigger fact 10) | |
-| Q-6 | How many probe log lines does a request emit, and does a corrupt candidate get read again? | AC-1, AC-2, AC-5, AC-6, AC-8 | At most one INFO miss summary per request, in the existing wording, instead of one per held symphony. A corrupt or unreadable file is not re-decoded on every poll: its failure is remembered under its file identity until that identity changes, and its WARNING is logged once, on the first failed read, byte-identical in wording to base's; repeat WARNING lines for the same unchanged file stop, where base logs one per held symphony on every poll, so R-12, R-16 and R-32 are narrowed (PM ruling). A transient error that base does not classify as corrupt or unreadable is not remembered (S-4.4) | |
-| Q-7 | Are the wall-clock bounds asserted in CI? | AC-5, AC-6 | Yes, secondary to the decode counts: they run in the default suite and CI with bounds generous enough for a shared runner (PM ruling), with the measured numbers recorded; the PM's live checks add the droplet numbers | |
-| Q-8 | Where are the deferred items NB-12 (GIL contention from other routes) and NB-17 (weekday replay unavailability) tracked? | plan | The slice's doc-gen adds one `feature-plans/BACKLOG.md` line for each at ship, since no NB-14 entry at the ref names either | |
+| Q-1 | May two concurrent requests both parse the file? (G-25) | AC-4 | No. Concurrent requests for the same file share one decode; a second request waits for the first instead of parsing again (G-25, G-26) | default approved [PM-ASSUMED] |
+| Q-2 | What identifies an unchanged cache file? (G-27) | AC-2 | The resolved file path plus its size and modification time, re-checked on every request with no time-based expiry (G-27) | default approved [PM-ASSUMED] |
+| Q-3 | What is the latency bound? (G-28 to G-30) | AC-5, AC-6 | Decode counts are the primary assertion: cold at most 1 decode per request, warm 0. Wall-clock bounds are secondary and generous enough for CI, on a fixture of at least 11 symphonies and a file of at least 70 MB: a warm request under 0.5 s; a cold request within one decode of the fixture file plus 1.0 s; a concurrent `/api/performance`, `/api/header-status` or `/api/candidate-alert` during a warm request within 0.5 s of its alone time. The source's "1/5 of the current per-symphony cost" means one fifth of one decode (about 0.4 s on the droplet), which no cold path that decodes the whole file once at today's decode speed can meet; the default bound is looser and R-9 is marked narrowed (PM ruling). Choosing the literal bound would require a faster decode or no whole-file decode, and would change the approach | default approved [PM-ASSUMED] |
+| Q-4 | What may be kept in memory? (G-31) | AC-7 | Between requests only the derived per-symphony daily return lists for one file identity, plus the identities (no content) of remembered corrupt files, never the parsed history (G-31) | default approved [PM-ASSUMED]; AC-7 is measured on a production-shaped 6.3 MB generated file, within "production-shaped" (approach raised item b) |
+| Q-5 | What does "unchanged state" mean for the no-re-parse rule (G-7)? | AC-2 | The state matters only through which file the backward probe resolves (holdings and date); a write that changes returns or values without changing holdings still reuses the held identity. During market hours the holdings' allocations drift, so no file resolves and nothing is decoded, at base and after alike (Trigger fact 10) | default approved [PM-ASSUMED] |
+| Q-6 | How many probe log lines does a request emit, and does a corrupt candidate get read again? | AC-1, AC-2, AC-5, AC-6, AC-8 | At most one INFO miss summary per request, in the existing wording, instead of one per held symphony. A corrupt or unreadable file is not re-decoded on every poll: its failure is remembered under its file identity until that identity changes, and its WARNING is logged once, on the first failed read, byte-identical in wording to base's; repeat WARNING lines for the same unchanged file stop, where base logs one per held symphony on every poll, so R-12, R-16 and R-32 are narrowed (PM ruling). A transient error that base does not classify as corrupt or unreadable is not remembered (S-4.4) | default approved [PM-ASSUMED]; the S-4.4 narrowing is accepted: a shared decode's non-decode fault degrades every replay row of the requests it serves and is not remembered, so the next request retries (Known-Unconfirmed item 5) |
+| Q-7 | Are the wall-clock bounds asserted in CI? | AC-5, AC-6 | Yes, secondary to the decode counts: they run in the default suite and CI with bounds generous enough for a shared runner (PM ruling), with the measured numbers recorded; the PM's live checks add the droplet numbers | default approved [PM-ASSUMED]; S-6.5 and S-6.6 are carried by a browser-marked test the PM runs at the merge gate plus the PM's live check, with no capturer (approach raised item a) |
+| Q-8 | Where are the deferred items NB-12 (GIL contention from other routes) and NB-17 (weekday replay unavailability) tracked? | plan | The slice's doc-gen adds one `feature-plans/BACKLOG.md` line for each at ship, since no NB-14 entry at the ref names either | default approved [PM-ASSUMED]: doc-gen adds the `feature-plans/BACKLOG.md` lines for NB-12 (GIL contention from other routes) and NB-17 (weekday replay-sample unavailability, the cache key hashes drifting allocations) |
 
 ## Decisions
 | ID | Decision | Rationale |
