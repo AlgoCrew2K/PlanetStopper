@@ -703,7 +703,7 @@ class DecodeCounter:
                 self.reads.append(os.path.abspath(name))
         return self._real_json_load(fp, *args, **kwargs)
 
-    def loader(self, cache_file):
+    def loader(self, cache_file, *args, **kwargs):
         with self._lock:
             self.loader_calls.append(os.path.abspath(cache_file))
             gate, self._gate = self._gate, None
@@ -712,7 +712,7 @@ class DecodeCounter:
         if gate is not None and gate.fail:
             fault = gate.fail if isinstance(gate.fail, type) else RuntimeError
             raise fault("simulated fault inside the decode")
-        result = self._real_loader(cache_file)
+        result = self._real_loader(cache_file, *args, **kwargs)
         if gate is not None and gate.after_read:
             gate.hold()
         return result
