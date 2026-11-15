@@ -110,6 +110,21 @@ def expected_chip_texts(body: dict) -> list[str]:
     return texts
 
 
+def expected_dashes(body: dict) -> list[bool]:
+    """Which of the four headline figures the page draws as "--" for ``body``: the page needs a
+    number on both the live and the shadow side of each figure (guard effect from the total
+    return, then Sharpe, Max DD and Sortino), in the order of the cells."""
+    live, shadow = body.get("live_metrics") or {}, body.get("shadow_metrics") or {}
+
+    def number(value) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    def both(key: str) -> bool:
+        return number(live.get(key)) and number(shadow.get(key))
+
+    return [not both(key) for key in ("total_return", "sharpe", "max_drawdown", "sortino")]
+
+
 def wait_for_panel(page, body: dict) -> None:
     rows = len(expected_chip_texts(body))
     page.wait_for_function(
@@ -141,8 +156,11 @@ def test_the_headline_and_the_panel_fill_while_the_preconditions_request_is_warm
         f"{alone:.2f} s"
     )
     read = page.evaluate(READ_PANEL)
-    if not performance_body.get("insufficient_history"):
-        assert "--" not in read["headline"], f"a headline figure is not drawn: {read['headline']}"
+    drawn_as_dash = [cell == "--" for cell in read["headline"]]
+    assert drawn_as_dash == expected_dashes(performance_body), (
+        f"a headline figure is not drawn as the answer says: {read['headline']}"
+    )
+    assert any(not dash for dash in drawn_as_dash), "the fixture world draws no headline figure"
     assert read["verdicts"] == expected_chip_texts(body), "the panel differs from the route's body"
 
 

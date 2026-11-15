@@ -38,17 +38,20 @@ GUARDED = (
 OUT = Path(__file__).resolve().parent / "goldens"
 
 
-def _git(*args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True
-    ).stdout.strip()
-
-
 def main() -> None:
-    differing = _git("diff", "--name-only", BASE_SHA, "--", *GUARDED).split()
-    if differing:
-        raise SystemExit(f"refusing to capture: {differing} differ from the base {BASE_SHA[:8]}")
-    head = _git("rev-parse", "HEAD")
+    diff = subprocess.run(
+        ["git", "-C", str(REPO), "diff", "--name-only", BASE_SHA, "--", *GUARDED],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    if diff.stdout.split():
+        raise SystemExit(
+            f"refusing to capture: {diff.stdout.split()} differ from the base {BASE_SHA[:8]}"
+        )
+    head = subprocess.run(
+        ["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
 
     scratch = Path(tempfile.mkdtemp(prefix="preconditions-goldens-"))
     os.environ["DB_PATH"] = str(scratch / "boot.db")

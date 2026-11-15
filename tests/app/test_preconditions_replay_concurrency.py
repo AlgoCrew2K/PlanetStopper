@@ -122,7 +122,8 @@ def test_a_corrupt_file_is_read_once_in_total_and_both_requests_move_to_the_olde
     (second,) = start_while_held(server, gate, arrivals, 1)
     gate.release.set()
     join_all([first, second])
-    assert counter.reads_of(corrupt) == 1, f"the corrupt file was read {counter.reads} times"
+    reads_of_corrupt = counter.reads_of(corrupt)
+    assert reads_of_corrupt == 1, f"the corrupt file was read {reads_of_corrupt} times"
     assert counter.reads_of(older) == 1, "the older valid file must be decoded once in total"
     assert_decodes(counter, (0, 0), 2, "corrupt newest plus valid older, two requests")
     warnings = [
@@ -154,7 +155,7 @@ def test_a_failed_shared_decode_degrades_both_requests_and_the_next_request_reco
     join_all([first, second])
     assert not gate.timed_out
     assert len(counter.loader_calls) == 1, (
-        f"the waiting request read the file itself: {counter.loader_calls}"
+        f"the waiting request read the file itself: {len(counter.loader_calls)} loader calls"
     )
     for request in (first, second):
         assert request.fetched.status == 200, "a failed shared decode must never be a 500"

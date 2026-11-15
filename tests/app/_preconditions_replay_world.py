@@ -54,6 +54,9 @@ from tests.ui._browser_server import running_server
 ET = ZoneInfo("America/New_York")
 ROUTE = "/api/guard-alpha-preconditions"
 
+# The real state reader, captured at import (collection), before any test's stand-in.
+_REAL_LOAD_STATE = database.load_state
+
 # Sunday 2026-11-15 noon ET: the most recent completed session is Friday 2026-11-13, the day the
 # excerpt's cache file is dated, so the file sits one trading day back from the probe's start.
 FROZEN_INSTANT = datetime(2026, 11, 15, 12, 0, tzinfo=ET)
@@ -469,6 +472,10 @@ def standard(
     ``file`` is false, the excerpt's history written at the real key for ``FILE_DATE``."""
     freeze(monkeypatch, instant)
     app_module.app.config["TESTING"] = True
+    # tests/ui stubs database.load_state for every test; this world reads the real one. Bound
+    # directly, never through monkeypatch: monkeypatch would save the stub as the value to
+    # restore and write it back after the stub's own undo, leaving it on the module.
+    database.load_state = _REAL_LOAD_STATE
     state = bot_state(ids, metadata=metadata)
     history = history_of(ids) if file_history is None else file_history
     world = World(monkeypatch, app_module.app.test_client(), state, history, now=instant)
@@ -740,7 +747,11 @@ def install_counter(monkeypatch) -> DecodeCounter:
 def assert_decodes(counter: DecodeCounter, mark: tuple[int, int], expected: int, what: str) -> None:
     """Both counters agree with ``expected``: the loader seam and the raw ``json.load`` seam."""
     reads, loads = counter.reads_since(mark), counter.loader_since(mark)
-    paths = dict(counter.read_paths_since(mark))
+    start = len(CACHE_MARKER)  # the file's date: the part of its name that tells two files apart
+    paths = {
+        os.path.basename(p)[start : start + 10]: n
+        for p, n in counter.read_paths_since(mark).items()
+    }
     assert reads == expected, (
         f"{what}: {reads} cache-file decodes (json.load), expected {expected}: {paths}"
     )
@@ -822,7 +833,15 @@ class NetworkSpy:
 
 @pytest.fixture
 def server():
+    """The app on a real threaded loopback server, proved to answer before a test uses it."""
     with running_server() as running:
+        host = running.base_url.removeprefix("http://")
+        conn = http.client.HTTPConnection(host, timeout=30)
+        try:
+            conn.request("GET", "/api/csrf-token")
+            assert conn.getresponse().status == 200, "the test server does not answer"
+        finally:
+            conn.close()
         yield running
 
 
@@ -920,16 +939,26 @@ def generate_file(path: str | Path, *, target_bytes: int | None = None, ticks_pe
     12 symphonies, 250 dates each (a date's record is the excerpt's real record of the same
     symphony, taken in turn, so the last tick, the one the route reads, is always real). Padding
     ticks repeat the record's first tick. ``target_bytes`` picks the tick count per date that
-    reaches that size. The file is streamed, so the parsed history is never built here.
+    reaches that size (re-written with a corrected count until it does). The file is streamed,
+    so the parsed history is never built here.
     """
+    if target_bytes is None:
+        return _write_generated(path, ticks_per_date)
+    ticks_per_date = 2
+    for _ in range(4):
+        size = _write_generated(path, ticks_per_date)
+        if size >= target_bytes:
+            assert ticks_per_date <= 456, "beyond the recorded 1 to 456 ticks per date"
+            return size
+        scaled = math.ceil(ticks_per_date * target_bytes / size * 1.02)
+        ticks_per_date = max(ticks_per_date + 1, scaled)
+    raise AssertionError(f"no tick count reached {target_bytes} bytes (last: {ticks_per_date})")
+
+
+def _write_generated(path: str | Path, ticks_per_date: int) -> int:
     hist = excerpt()["history"]
     sessions = sessions_back(date.fromisoformat(FILE_DATE), 250)[::-1]
     sids = sorted(hist)
-    if target_bytes is not None:
-        sample_first = json.dumps(hist[sids[0]][sorted(hist[sids[0]])[0]][0])
-        per_tick = len(sample_first) + 2
-        ticks_per_date = max(2, math.ceil(target_bytes / (len(sids) * len(sessions) * per_tick)))
-        assert ticks_per_date <= 456, "beyond the recorded 1 to 456 ticks per date"
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("{")
         for i, sid in enumerate(sids):
@@ -942,7 +971,4 @@ def generate_file(path: str | Path, *, target_bytes: int | None = None, ticks_pe
                 handle.write(("" if j == 0 else ", ") + json.dumps(day) + ": " + tick_list)
             handle.write("}")
         handle.write("}")
-    size = os.path.getsize(path)
-    if target_bytes is not None:
-        assert size >= target_bytes, f"generated {size} bytes, wanted at least {target_bytes}"
-    return size
+    return os.path.getsize(path)

@@ -12,6 +12,7 @@ request on a state with no symphony runs first, so lazy imports fall outside the
 from __future__ import annotations
 
 import gc
+import logging
 import os
 import tracemalloc
 
@@ -149,7 +150,13 @@ def test_a_failed_decode_retains_nothing_beyond_the_file_identity(
     world = warmed_world(monkeypatch, shaped_files[0])
     peak, _ = cold_reference(world)
     world.place_file(FILE_DATE, truncated_shaped_file)
-    retained, _ = traced(lambda: request_ok(world))
+    # The suite's log capture keeps every record, and a corrupt-file record carries the decode
+    # error, whose text is the file's: that retention is the harness's, never the route's.
+    logging.disable(logging.CRITICAL)
+    try:
+        retained, _ = traced(lambda: request_ok(world))
+    finally:
+        logging.disable(logging.NOTSET)
     assert retained < RETAINED_SHARE * peak, (
         f"{retained} bytes retained after a corrupt file's decode failed (a request peak is {peak})"
     )
