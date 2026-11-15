@@ -11842,3 +11842,61 @@ How the pages read at 1920, 1440 and 390 px on the operator's browser is the PM'
 ### Reference
 
 `feature-plans/aligned-tables-and-quiet-copy.md`.
+
+## preconditions-replay-load-once: the preconditions route decodes the replay cache once (2026-11-15)
+
+Source: `feature-plans/preconditions-replay-load-once.md` (amendment R2 at `0539a255`, decisions D-1 to D-6, questions Q-1 to Q-8 answered by default, [PM-ASSUMED]) and `feature-plans/approach/preconditions-replay-load-once.md`. Base `aafe476d`, slice head `60bd4848`. `git diff aafe476d 60bd4848 -- alpha_bot_execution.py math_engine.py` is empty. Not run by this doc pass: `tests/test_mdd_window_truth_zero_diff_guard.py`.
+
+### Defect
+
+The PM's post-deploy timing check on the droplet (2026-11-15, at `aafe476d`) measured `GET /api/guard-alpha-preconditions` at about 22 s, with 93% of py-spy samples inside the JSON decode of one synthetic-history cache file (newest file 71 MB, 19 files 1.1 GB in the cache directory). A concurrent `/api/performance` went from about 1.2 s alone to about 18 s. Cause: the cache key hashes every holding into one portfolio-wide file name, so every held symphony resolved the same file and `build_if_held_replay_series` decoded it once per symphony (11 decodes per request), under a threaded server that shares one GIL with the other polls.
+
+### Fix
+
+- `autotuner.if_held_replay_request(bot_state)` scopes the route's symphony loop: inside it `build_if_held_replay_series` answers from the request's own `bot_state` and the cache window is probed, logged and decoded once per request.
+- `autotuner._IF_HELD_REPLAY_STORE` (`_IfHeldReplayStore`) is passed to `synthetic_history.get_cached_synthetic_history_only` through its new keyword `load`. It holds the derived if-held series of one file identity (abspath, size, `st_mtime_ns`), never the parsed history; series are handed out as fresh lists from stored tuples; concurrent requests share one in-flight decode.
+- `synthetic_history.load_cached_history` gains keyword-only `on_error`, called with the caught exception after the unchanged WARNING, so the store can tell an `OSError` from a decode error. Without `on_error` its return value and WARNING are unchanged.
+- The route's response body, degraded-row contract, per-symphony isolation and cache-hit-only contract are unchanged (goldens captured from the unchanged `aafe476d` route).
+- Measured (slice tests and PM reads): warm request about 0.06 s; `/api/performance` beside a warm preconditions request 0.061 s against 0.028 s alone. The droplet's post-deploy figure is unconfirmed; the read-only check is a timed `GET /api/guard-alpha-preconditions` on a weekend, with `py-spy dump` if it is slow.
+
+### Decisions
+
+- D-1: the source's clause that the route competes with the minute scheduler during market hours is corrected. The key hashes the drifting `allocation` floats, which the engine rewrites each cycle, so during the session every backward-probe candidate misses, no file is decoded and the replay rows degrade (at base and after this change alike). The slow path ran only from the Friday autotune (about 19:50 ET) through the weekend until Monday's first cycle. No criterion rests on the market-hours clause.
+- D-2: warm means the probe reaches the held identity past only missing candidates or remembered failures; one identity is held, and a return to an earlier file after another (A, B, A) is cold.
+- D-3: a corrupt file's failure is remembered under its identity and its WARNING is logged once per file identity (narrowed by D-6).
+- D-4: a request waiting on a failed decode gets base's unreadable-file answer for that file.
+- D-5: expected bodies are golden JSON from the unchanged route with the ET date frozen; decode counts are the primary latency assertion, wall-clock bounds are secondary and generous for CI, and the cold bound is stated against one decode.
+- D-6 (supersedes D-3 where they conflict; a code-reviewer decision item in round 1): only a decode error (`JSONDecodeError`, `ValueError`, `UnicodeDecodeError`) is remembered. An `OSError` while opening or reading is never remembered: that request gets base's answer, and the next request reads the file again and logs the WARNING again, once per request. Reason: `chmod` changes neither size nor mtime, so a remembered permission error would hide the newest valid file until the weekly rewrite.
+
+Narrowings accepted against the plan text:
+- The repeat corrupt-file WARNING is logged once per file identity, not once per request.
+- A shared decode's non-decode fault (any exception from the owner, `BaseException` included) degrades the replay rows of every request that shared it, and nothing is remembered.
+- AC-7 (memory) is measured on a production-shaped 6.3 MB file, not on the droplet's 71 MB file.
+- The cold latency bound is stated against one decode, not an absolute time.
+
+### Review rulings
+
+- QA-1 (round 1, WEAK-TEST, AC-7): the overlap test let the fault "a request that finds a decode in flight decodes itself" survive because the pair never overlapped at the store; fixed in round 2 so the two cold requests overlap before measuring, and the assertion reports decodes and the peak ratio together.
+- QA-6 (round 2, INTENT-GAP, AC-2): the round-2 store inferred an `OSError` by re-opening the file after `load_cached_history` returned `None`, so an error that had cleared by the re-open was remembered. Fixed in round 3 (`f57d2e0d`): the store classifies from the exception `load_cached_history` caught, through `on_error`, and the re-open heuristic is gone. Closed at `60bd4848`.
+- CR decision item (round 1) became D-6 above.
+- CR-1: the remembered-failure cap is derived, `AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS + 1`, replacing a literal 16, so a fully corrupt probe window stays remembered.
+- CR-2: annotations added to the new signatures and a docstring on `clear()`.
+- CR-3: the route docstring and the `build_if_held_replay_series` docstring now state the request scope and the store.
+- CR-4: an owner that ends on a `BaseException` records the exception type name, so waiters degrade instead of walking on to an older file; the exception is re-raised unswallowed.
+- CR-5: inside a scope the seam reads the request's `bot_state` instead of loading state once per symphony, and identity uses `os.path.abspath`.
+- QA-3 (ACCEPT): a file that vanishes before the store's stat returns `None` with no WARNING; the response body equals base's either way. The `get_cached_synthetic_history_only` comment was reworded to describe what each reader does.
+- QA-5: the latency test's default timing output directory is under `.claude/review/`, which is not gitignored; the timings file is test output and is never staged.
+- CI stale content pins: the pins on `autotuner.py` and `synthetic_history.py` in `tests/test_hygiene_protected_surfaces.py` and `tests/test_regime_label_protected_files.py` were re-taken, each with a provenance comment, and `tests/test_preconditions_replay_protected_scope.py` now pins every byte of the two files outside the listed edit nodes against `aafe476d`.
+- Reviews: qa PASS at `60bd4848`, code-reviewer PASS at `c8209cc2` (the PM reviewed the later 39-line production delta `f57d2e0d` directly), api-expert PASS at `22e088bd`.
+
+### Backlog
+
+Recorded in `feature-plans/BACKLOG.md`: NB-12 (GIL contention from any other slow route), NB-17 (the replay sample is unavailable on weekdays because the cache key hashes drifting allocations), QA-2 (no re-stat after the decode, so a race costs one extra cold decode and never a stale answer), the QA-3 remainder (the store reader gives `None` with no WARNING for a file that vanishes between the probe's existence check and the store's stat), QA-7 (the scope pin no longer holds `load_cached_history`'s WARNING text; the `WARNING_TEMPLATE` tests pin the wording) and PRL-API-2 (the remembered-failure set clears in full when it fills).
+
+### Files changed
+
+`app.py`, `autotuner.py`, `synthetic_history.py`; tests under `tests/app/`, `tests/synthetic_history/`, `tests/ui/` and `tests/` (scope pin, re-taken pins), `tests/conftest.py`, `tests/fixtures/preconditions_replay/`; docs: `docs/generated/autotuner.md`, `docs/generated/synthetic_history.md`, `docs/generated/app.md`, `docs/generated/INDEX.md`, `feature-plans/BACKLOG.md`, `.claude/CLAUDE.md` (Key Files rows for `app.py`, `autotuner.py`, `synthetic_history.py`).
+
+### Reference
+
+`feature-plans/preconditions-replay-load-once.md`.

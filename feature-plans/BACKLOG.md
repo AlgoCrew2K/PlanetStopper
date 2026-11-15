@@ -316,6 +316,14 @@ re-derive every `app.py:N` citation in this section (and audit the rest of `app.
 same drift pattern -- this section is unlikely to be the only one). Tier 1; cosmetic, no
 functional impact -- the doc content itself is accurate, only the line pointers are stale.
 
+### Preconditions replay load-once follow-ups (recorded 2026-11-15, `preconditions-replay-load-once`, see `DECISIONS.md`)
+- **NB-12: GIL contention from any other slow route.** The route's replay decode is now once per request and skipped for an unchanged file, but any other slow handler in the threaded daemon still holds the GIL against the polls. Not addressed.
+- **NB-17: the replay sample is unavailable on weekdays.** The synthetic-history cache key hashes each holding's drifting `allocation` float, so during the session no cache file matches and the replay rows degrade. The key derivation is unchanged; a fix would change what the writer and reader hash.
+- **QA-2: no re-stat after the decode.** `_IfHeldReplayStore` stores the identity taken before the decode. A file rewritten during the decode costs one extra cold decode later, never a stale answer.
+- **QA-3 remainder.** With the store as reader, a file that vanishes between the probe's existence check and the store's stat gives `None` with no WARNING. The response body equals the old one either way.
+- **QA-7: the scope pin no longer holds `load_cached_history`'s WARNING text.** `load_cached_history` is a listed edit in `tests/test_preconditions_replay_protected_scope.py`; the `WARNING_TEMPLATE` tests in `tests/app/test_preconditions_replay_load_once.py` pin the wording.
+- **PRL-API-2: the remembered-failure set clears in full when it fills.** Previously remembered corrupt files are then each read and logged once more. Bounded: one extra read per identity.
+
 ---
 
 ## Deployment follow-on
