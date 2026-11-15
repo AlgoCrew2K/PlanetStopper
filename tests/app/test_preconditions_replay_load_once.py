@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
+import database
 import market_calendar
 import synthetic_history
 from tests.app._preconditions_replay_world import (
@@ -45,12 +46,14 @@ from tests.app._preconditions_replay_world import (
     golden,
     history_of,
     install_counter,
+    make_unreadable,
     nth_trading_day_after,
     replay_of,
     replay_rows,
     restart_daemon,
     run_together,
     server,  # noqa: F401  (fixture)
+    sessions_back,
     shadow_of,
     standard,
     symphony_ids,
@@ -585,6 +588,103 @@ def test_an_unchanged_corrupt_only_file_is_not_read_again_and_degrades_as_at_bas
     assert corrupt_warnings(caplog) == []
     assert second.data == golden("only_corrupt")
     assert all_degraded(second.get_json())
+
+
+def test_a_window_of_corrupt_files_is_read_once_per_file_and_never_again(
+    monkeypatch, counter, caplog
+):
+    """Every candidate of the window is corrupt: each is remembered, so the next request reads
+    none of them (a bound on the remembered failures below the window would forget some)."""
+    world = standard(monkeypatch, file=False)
+    days = [NEWEST_DATE, *sessions_back(date.fromisoformat(FILE_DATE), WINDOW)]
+    assert len(days) == WINDOW + 1, "the window holds the start date and WINDOW sessions"
+    paths = [world.write_corrupt(day) for day in days]
+    mark = counter.mark()
+    first = world.get()
+    reads = counter.read_paths_since(mark)
+    assert all(reads[path] == 1 for path in paths), f"reads per file: {sorted(reads.values())}"
+    assert len(corrupt_warnings(caplog)) == len(paths)
+    assert all_degraded(first.get_json())
+    caplog.clear()
+    world.advance(POLL_SECONDS)
+    mark = counter.mark()
+    second = world.get()
+    assert_decodes(counter, mark, 0, "a second request over a window of unchanged corrupt files")
+    assert corrupt_warnings(caplog) == []
+    assert second.data == first.data
+
+
+def test_a_file_that_cannot_be_opened_is_not_remembered_and_is_read_again_once_readable(
+    monkeypatch, counter, caplog
+):
+    world = standard(monkeypatch, file=False)
+    older_history = with_one_return_changed(world.history)
+    older = world.write_file(OLDER_DATE, older_history)
+    newest = world.write_file(FILE_DATE)
+    unreadable = make_unreadable(monkeypatch, newest)
+    mark = counter.mark()
+    first = world.get()
+    assert first.status_code == 200
+    warnings = corrupt_warnings(caplog)
+    assert len(warnings) == 1, f"{len(warnings)} warnings for the unopenable file, expected 1"
+    assert os.path.basename(warnings[0].args[0]) == os.path.basename(newest)
+    assert counter.loader_since(mark) == 2, "the unopenable file, then the older one"
+    assert counter.reads_of(older, mark) == 1
+    assert replay_of(first.get_json()) == replay_rows(older_history, symphony_ids())
+    # The file becomes readable with the same size and modification time: nothing was kept.
+    unreadable.make_readable()
+    caplog.clear()
+    mark = counter.mark()
+    second = world.get()
+    assert counter.reads_of(newest, mark) == 1
+    assert_decodes(counter, mark, 1, "the file that is readable again")
+    assert corrupt_warnings(caplog) == []
+    assert replay_of(second.get_json()) == replay_rows(world.history, symphony_ids())
+
+
+def test_an_unopenable_file_is_attempted_once_per_request_and_nothing_is_remembered(
+    monkeypatch, counter, caplog
+):
+    world = standard(monkeypatch, file=False)
+    path = world.write_file(FILE_DATE)
+    unreadable = make_unreadable(monkeypatch, path)
+    for attempt in (1, 2):
+        caplog.clear()
+        mark = counter.mark()
+        resp = world.get()
+        attempts = Counter(counter.loader_calls[mark[1] :])
+        assert attempts[path] == 1, f"request {attempt} attempted the file {attempts[path]} times"
+        assert len(corrupt_warnings(caplog)) == 1, f"request {attempt} did not warn exactly once"
+        assert resp.data == golden("only_corrupt")
+        world.advance(POLL_SECONDS)
+    unreadable.make_readable()
+    mark = counter.mark()
+    resp = world.get()
+    assert counter.reads_of(path, mark) == 1, "an unopenable file was remembered as failed"
+    assert replay_of(resp.get_json()) == replay_rows(world.history, symphony_ids())
+
+
+def test_the_bot_state_is_read_once_for_the_whole_request(monkeypatch):
+    """Reading the state is a fixed cost of a request, not one read per symphony."""
+    world = standard(monkeypatch)
+    full_state = world.loaded_state()
+    real_load_state = database.load_state
+    reads: list[int] = []
+
+    def counting_load_state():
+        reads.append(1)
+        return real_load_state()
+
+    monkeypatch.setattr(database, "load_state", counting_load_state)
+    world.save_state(bot_state(ids=[], metadata=True))
+    assert world.get().status_code == 200
+    fixed_cost = len(reads)
+    reads.clear()
+    world.save_state(full_state)
+    assert world.get().status_code == 200
+    assert len(reads) == fixed_cost, (
+        f"{len(reads)} state reads for 12 symphonies, {fixed_cost} for none"
+    )
 
 
 # ---------------------------------------------------------------------------

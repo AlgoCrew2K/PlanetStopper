@@ -14,6 +14,7 @@ from __future__ import annotations
 import gc
 import logging
 import os
+import time
 import tracemalloc
 
 import pytest
@@ -21,17 +22,21 @@ import pytest
 from tests.app._preconditions_replay_world import (
     FILE_DATE,
     REPO,
-    ROUTE,
+    SETTLE_SECONDS,
+    Request,
+    assert_decodes,
     bot_state,
     chdir_to_tmp,  # noqa: F401  (fixture)
     fetch,
     generate_file,
+    install_counter,
+    join_all,
     link_or_copy,
     restart_daemon,
-    run_together,
     server,  # noqa: F401  (fixture)
     standard,
     truncate_copy,
+    watch_arrivals,
 )
 
 pytestmark = pytest.mark.usefixtures("chdir_to_tmp")
@@ -127,10 +132,35 @@ def test_a_third_file_decoded_in_turn_still_retains_under_five_percent(monkeypat
 def test_two_cold_requests_together_peak_at_most_a_quarter_above_one(
     monkeypatch, shaped_files, server
 ):
+    """The pair provably overlaps: the first request's decode is finished and held (its parsed
+    history alive) until the second request has reached the same file. A second request that
+    decodes for itself then holds a second parsed copy at the same time."""
     warmed_world(monkeypatch, shaped_files[0])
+    counter = install_counter(monkeypatch)
+    arrivals = watch_arrivals(monkeypatch)
     _, single_peak = traced(lambda: fetch(server))
+
     restart_daemon()
-    _, pair_peak = traced(lambda: run_together(server, [ROUTE, ROUTE]))
+    mark = counter.mark()
+    gate = counter.hold_first_decode(after_read=True)
+
+    def overlapping_pair() -> None:
+        first = Request(server)
+        first.start()
+        assert gate.entered.wait(30), "the first request never finished its decode"
+        arrivals.reset()
+        second = Request(server)
+        second.start()
+        assert arrivals.wait_for_threads_besides(gate.owner, 1, timeout=30), (
+            "the second request never reached the cache file"
+        )
+        time.sleep(SETTLE_SECONDS)
+        gate.release.set()
+        join_all([first, second])
+
+    _, pair_peak = traced(overlapping_pair)
+    assert not gate.timed_out
+    assert_decodes(counter, mark, 1, "two requests overlapping a held decode")
     assert pair_peak <= PAIR_PEAK_RATIO * single_peak, (
         f"two overlapping cold requests peaked at {pair_peak}, one alone at {single_peak}"
     )

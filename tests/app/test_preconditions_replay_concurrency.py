@@ -24,6 +24,7 @@ from tests.app._preconditions_replay_world import (
     ROUTE,
     SETTLE_SECONDS,
     WARNING_TEMPLATE,
+    ClientRequest,
     NetworkSpy,
     Request,
     all_degraded,
@@ -41,6 +42,7 @@ from tests.app._preconditions_replay_world import (
     symphony_ids,
     watch_arrivals,
     with_dates_trimmed,
+    with_one_return_changed,
 )
 
 pytestmark = pytest.mark.usefixtures("chdir_to_tmp")
@@ -169,6 +171,45 @@ def test_a_failed_shared_decode_degrades_both_requests_and_the_next_request_reco
     assert_decodes(counter, mark, 1, "the request after the failed decode")
     assert counter.reads_of(world.files[FILE_DATE]) == 1
     assert recovered.data == golden("full")
+
+
+class DecodeAborted(BaseException):
+    """Stands for an exit that is not an ``Exception`` (SystemExit, KeyboardInterrupt) ending a
+    decode: no handler of ``Exception`` sees it."""
+
+
+def test_an_owner_ended_by_a_non_exception_degrades_the_waiter_and_nothing_is_remembered(
+    monkeypatch, counter, arrivals
+):
+    world = standard(monkeypatch, file=False)
+    world.write_file(OLDER_DATE, with_one_return_changed(world.history))  # a file to fall back to
+    newest = world.write_file(FILE_DATE)
+    gate = counter.hold_first_decode(fail=DecodeAborted)
+    first = ClientRequest()
+    first.start()
+    assert gate.entered.wait(10), "the first request never reached its decode"
+    arrivals.reset()
+    second = ClientRequest()
+    second.start()
+    assert arrivals.wait_for_threads_besides(gate.owner, 1), "the second request never arrived"
+    time.sleep(SETTLE_SECONDS)
+    waiting_still = not second.finished
+    gate.release.set()
+    join_all([first, second], allow_errors=True)
+    assert waiting_still, "the second request answered while the first decode was held"
+    assert isinstance(first.error, DecodeAborted), f"the owner's request ended with {first.error!r}"
+    assert second.error is None and second.response.status_code == 200
+    assert len(counter.loader_calls) == 1, (
+        f"the waiting request read a file itself: {len(counter.loader_calls)} loader calls"
+    )
+    assert all_degraded(second.response.get_json()), (
+        "the waiter must degrade as for any non-decode failure, not fall back to the older file"
+    )
+    mark = counter.mark()
+    recovered = world.get()
+    assert counter.reads_of(newest, mark) == 1
+    assert_decodes(counter, mark, 1, "the request after the aborted decode")
+    assert recovered.data == golden("full"), "nothing about the aborted decode was remembered"
 
 
 def test_a_request_that_finds_the_file_changed_never_answers_from_the_old_decode(

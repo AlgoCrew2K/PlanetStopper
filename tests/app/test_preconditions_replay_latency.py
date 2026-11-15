@@ -10,8 +10,8 @@ request within one decode of the file (timed alone here) plus one second, and a 
 plus half a second (plus the decode time a cold request legitimately spends). The server is the
 real threaded one, so the decode's hold on the interpreter lock is what is measured.
 
-The measured numbers are written to ``<repo>/.claude/review/preconditions-replay-load-once/
-timings-<worker>.json`` (override with ``PRL_TIMING_DIR``) for the review folder.
+The measured numbers are written to ``timings-<worker>.json`` under pytest's temporary directory,
+or under ``PRL_TIMING_DIR`` when that names a directory; nothing is written into the repository.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from tests.app._preconditions_replay_world import (
     FILE_DATE,
     MEGABYTE,
     OLDER_DATE,
-    REPO,
     ROUTE,
     assert_decodes,
     chdir_to_tmp,  # noqa: F401  (fixture)
@@ -62,13 +61,11 @@ def record(name: str, **numbers) -> None:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _write_recorded_numbers():
+def _write_recorded_numbers(tmp_path_factory):
+    """The measured numbers go under pytest's temporary directory, so a run leaves nothing in
+    the repository; ``PRL_TIMING_DIR`` names a directory when a reviewer wants them kept."""
     yield
-    target = Path(
-        os.environ.get(
-            "PRL_TIMING_DIR", REPO / ".claude" / "review" / "preconditions-replay-load-once"
-        )
-    )
+    target = Path(os.environ.get("PRL_TIMING_DIR") or tmp_path_factory.mktemp("timings"))
     target.mkdir(parents=True, exist_ok=True)
     worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
     (target / f"timings-{worker}.json").write_text(json.dumps(NUMBERS, indent=1), encoding="utf-8")

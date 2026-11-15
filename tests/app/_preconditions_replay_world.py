@@ -661,10 +661,13 @@ GOLDEN_NAMES = (
 class Gate:
     """Holds one decode until the test releases it; ``timed_out`` records a release never given."""
 
-    def __init__(self, *, after_read: bool = False, fail: bool = False) -> None:
+    def __init__(
+        self, *, after_read: bool = False, fail: bool | type[BaseException] = False
+    ) -> None:
         self.entered = threading.Event()
         self.release = threading.Event()
         self.after_read = after_read
+        # True raises RuntimeError after the release; an exception class raises that instead.
         self.fail = fail
         self.owner: int | None = None
         self.timed_out = False
@@ -707,14 +710,17 @@ class DecodeCounter:
         if gate is not None and not gate.after_read:
             gate.hold()
         if gate is not None and gate.fail:
-            raise RuntimeError("simulated transient fault inside the decode")
+            fault = gate.fail if isinstance(gate.fail, type) else RuntimeError
+            raise fault("simulated fault inside the decode")
         result = self._real_loader(cache_file)
         if gate is not None and gate.after_read:
             gate.hold()
         return result
 
     # -- the test's view -----------------------------------------------------------
-    def hold_first_decode(self, *, after_read: bool = False, fail: bool = False) -> Gate:
+    def hold_first_decode(
+        self, *, after_read: bool = False, fail: bool | type[BaseException] = False
+    ) -> Gate:
         gate = Gate(after_read=after_read, fail=fail)
         with self._lock:
             self._gate = gate
@@ -893,14 +899,65 @@ class Request(threading.Thread):
         return self.fetched is not None or self.error is not None
 
 
-def join_all(requests: list[Request], timeout: float = JOIN_SECONDS) -> None:
+class ClientRequest(threading.Thread):
+    """One GET through the Flask test client on its own thread. Unlike a server thread it hands
+    back any exception, a ``BaseException`` included, in ``error``."""
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True)
+        self.response = None
+        self.error: BaseException | None = None
+
+    def run(self) -> None:
+        try:
+            self.response = app_module.app.test_client().get(ROUTE)
+        except BaseException as exc:  # noqa: BLE001 -- the test reads it from `error`
+            self.error = exc
+
+    @property
+    def finished(self) -> bool:
+        return self.response is not None or self.error is not None
+
+
+def join_all(requests: list, timeout: float = JOIN_SECONDS, *, allow_errors: bool = False) -> None:
     deadline = time.monotonic() + timeout
     for request in requests:
         request.join(max(0.0, deadline - time.monotonic()))
     hung = [r for r in requests if r.is_alive()]
     assert not hung, f"{len(hung)} request(s) still running after {timeout} s: a hang"
-    for request in requests:
-        assert request.error is None, f"a request raised: {request.error!r}"
+    if not allow_errors:
+        for request in requests:
+            assert request.error is None, f"a request raised: {request.error!r}"
+
+
+class Unreadable:
+    """One file that cannot be opened for reading: ``PermissionError`` on any read-mode open of
+    its path, whatever the platform (a chmod does not make a file unreadable on Windows). The
+    file's size and modification time stay as they are; ``make_readable`` lifts it."""
+
+    def __init__(self, path: str, real_open) -> None:
+        self._target = os.path.abspath(path)
+        self._real_open = real_open
+        self.active = True
+        self.attempts = 0
+
+    def __call__(self, file, mode="r", *args, **kwargs):
+        if self.active and isinstance(file, (str, os.PathLike)) and "r" in mode:
+            if os.path.abspath(os.fspath(file)) == self._target:
+                self.attempts += 1
+                raise PermissionError(13, "Permission denied", os.fspath(file))
+        return self._real_open(file, mode, *args, **kwargs)
+
+    def make_readable(self) -> None:
+        self.active = False
+
+
+def make_unreadable(monkeypatch, path: str) -> Unreadable:
+    import builtins
+
+    unreadable = Unreadable(path, builtins.open)
+    monkeypatch.setattr(builtins, "open", unreadable)
+    return unreadable
 
 
 def run_together(server, paths: list[str]) -> list[Request]:
