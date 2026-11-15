@@ -157,7 +157,7 @@ def other_during(server, counter, other: str, *, expected_reads: int) -> float:
 
 
 # ---------------------------------------------------------------------------
-# AC-5: the route's own latency
+# The route's own latency
 # ---------------------------------------------------------------------------
 
 
@@ -249,7 +249,7 @@ def test_once_a_corrupt_file_is_remembered_the_next_request_reads_nothing(
 
 
 # ---------------------------------------------------------------------------
-# AC-6: other requests are not held up
+# Other requests are not held up
 # ---------------------------------------------------------------------------
 
 

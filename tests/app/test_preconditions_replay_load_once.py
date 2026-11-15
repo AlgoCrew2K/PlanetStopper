@@ -124,7 +124,7 @@ def untouched_by_engine_cycle(world) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-1: each cache file is decoded at most once per request
+# Each cache file is decoded at most once per request
 # ---------------------------------------------------------------------------
 
 
@@ -249,7 +249,7 @@ def test_two_requests_started_together_decode_the_file_once_in_total(monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# AC-2: an unchanged file is reused, a changed one never
+# An unchanged file is reused, a changed one never
 # ---------------------------------------------------------------------------
 
 
@@ -588,7 +588,7 @@ def test_an_unchanged_corrupt_only_file_is_not_read_again_and_degrades_as_at_bas
 
 
 # ---------------------------------------------------------------------------
-# AC-8: the probe's log lines and the cache-hit-only contract
+# The probe's log lines and the cache-hit-only contract
 # ---------------------------------------------------------------------------
 
 MISS_PATTERN = re.compile(
