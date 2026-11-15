@@ -36,8 +36,10 @@ _ENGINE = _REPO_ROOT / "alpha_bot_execution.py"
 _PINNED_HASHES = {
     "math_engine.py": "343d303c29ee9aa4c9f390791603a12f3130eec456fe589b3959732cd4477f79",
     "regime_classifier.py": "04f8e1aa174c1802b8a4981522ce57d0fe9b801f7782323c298b719e3d9c1d52",
-    "autotuner.py": "9f2fe9455fe13521061308fbe932e5b1b62551f0d2e8e5a12ced01fe47ed9a4f",
-    "synthetic_history.py": "7a7df0162e0895649e42e8915c98653f6336118ca5a3379ca09d6d4561bb2883",
+    # re-taken at 8fa6d0b9 for preconditions-replay-load-once (request-scoped replay read); the slice's scope pin tests/test_preconditions_replay_protected_scope.py proves the change stays inside its listed edits.
+    "autotuner.py": "26ccf3c63d02fbb49076601e860282aff83ffc0f710ed130aa58d6cec44ceb14",
+    # re-taken at 8fa6d0b9 for preconditions-replay-load-once (request-scoped replay read); the slice's scope pin tests/test_preconditions_replay_protected_scope.py proves the change stays inside its listed edits.
+    "synthetic_history.py": "dce856f8fea31d25bbcb90caa6db41111cd362cda499721a32e8d4f1ebcecae2",
     "migrations/027_regime_label_cache.sql": (
         "46b63e476670db9eb57afcccb6a15e8e78b8a9ddc08d7ca50680d6c2a26fe8d2"
     ),
