@@ -262,12 +262,14 @@ def fetch_daily_bars_with_floor(fetch_fn, end_date=None):
     )
 
 
-def load_cached_history(cache_file):
+def load_cached_history(cache_file, *, on_error: Callable[[BaseException], None] | None = None):
     """Load a parsed synthetic-history cache file, or None on a corrupt/missing one.
 
     A corrupt or unreadable cache is a recoverable miss — the caller regenerates
     the history — so this never raises. On failure it logs a WARNING naming the
-    cache file and the exception detail, then returns None.
+    cache file and the exception detail, then returns None. ``on_error``, when
+    given, is called with the caught exception after that WARNING, so a caller
+    can tell an unreadable file (OSError) from content that does not decode.
     """
     try:
         with open(cache_file) as f:
@@ -278,6 +280,8 @@ def load_cached_history(cache_file):
             cache_file,
             e,
         )
+        if on_error is not None:
+            on_error(e)
         return None
 
 
@@ -644,11 +648,11 @@ def get_cached_synthetic_history_only(
                 # the ENOENT it can't distinguish from real corruption).
                 missed_dates.append(candidate_date_str)
             else:
-                # File exists: any failure here is genuine corruption, and
-                # load_cached_history's existing WARNING path is untouched.
-                # (A file that vanishes between the existence check and the
-                # read is not a miss: load_cached_history logs its WARNING
-                # for the OSError and the walk moves on to the next date.)
+                # File exists: a failure to read or decode it makes
+                # load_cached_history log its existing WARNING and return
+                # None, and the walk moves on to the next older date. That
+                # covers corrupt content and a file that vanishes between
+                # the existence check and the read.
                 history_data = (load or load_cached_history)(cache_file)
                 if history_data is not None:
                     _log_cache_miss_summary(missed_dates, current_date_str)

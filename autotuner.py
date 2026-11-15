@@ -1586,19 +1586,6 @@ class _IfHeldReplayStore:
             self._failed: set = set()
             self._in_flight: dict = {}
 
-    @staticmethod
-    def _is_transient_read_failure(cache_file: str) -> bool:
-        """True when load_cached_history's None came from a file that cannot be opened and read
-        (a transient OS failure), not from content that does not decode."""
-        try:
-            with open(cache_file) as fp:
-                fp.read(1)
-        except OSError:
-            return True
-        except ValueError:
-            return False  # undecodable bytes are a content failure
-        return False
-
     def load(self, cache_file: str) -> "dict | None":
         """Reader for get_cached_synthetic_history_only: the derived series of an existing cache
         file (None = unreadable, try the next older one), decoded at most once per file identity
@@ -1623,9 +1610,11 @@ class _IfHeldReplayStore:
                 raise RuntimeError(f"shared replay decode failed: {flight.failure_type}")
             return flight.derived
         try:
-            history = synthetic_history.load_cached_history(cache_file)
-            if history is None and self._is_transient_read_failure(cache_file):
-                return None  # nothing wrong with the content, so nothing is remembered
+            errors: list = []
+            history = synthetic_history.load_cached_history(cache_file, on_error=errors.append)
+            if history is None and any(isinstance(e, OSError) for e in errors):
+                return None  # a read error may clear, so nothing is remembered
+            del errors
             flight.derived = None if history is None else _derive_if_held_series(history)
             del history
             with self._lock:
