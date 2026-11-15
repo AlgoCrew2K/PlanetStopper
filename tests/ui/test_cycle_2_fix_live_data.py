@@ -2332,32 +2332,47 @@ def test_advisor_js_render_suggestions_emits_four_gates_badges():
 # ---------------------------------------------------------------------------
 
 
-def test_history_js_render_reason_cards_emits_description_text():
-    """history.js renderReasonCards must emit a description sentence per reason card.
+def _reason_display_names() -> list[str]:
+    """The names history.js shows for the exit reasons, read from its REASON_DISPLAY map."""
+    src = (_STATIC_DIR / "history.js").read_text(encoding="utf-8")
+    match = re.search(r"var REASON_DISPLAY = \{(.*?)\};", src, re.S)
+    assert match, "history.js must define a REASON_DISPLAY map"
+    return re.findall(r":\s*'([^']+)'", match.group(1))
 
-    Parity audit (2026-05-19) found 0 description text elements in reason cards.
-    history.jsx design shows a description sentence per exit mechanism, e.g.:
-      TP: 'Take-profit target reached — locked-in gains above VWAP'
-      Stop: 'Trailing stop triggered — drawdown exceeded threshold'
-      VWAP Breakdown: 'VWAP structural breakdown — mean reversion risk'
-      Bleed Cut: 'Slow bleed cut — cumulative loss exceeded patience threshold'
 
-    This test asserts renderReasonCards emits a description element per card.
+def _glossary_line_for(html: str, name: str) -> str:
+    """The body of the History Glossary line that starts "<name>:", or "" when there is none."""
+    from bs4 import BeautifulSoup
+
+    page = BeautifulSoup(html, "html.parser")
+    glossary = page.select_one('details[data-terms="glossary"][data-glossary-host="History"]')
+    assert glossary is not None, "the History page must end with its Glossary"
+    for line in glossary.select("p[data-term]"):
+        lead, _, body = " ".join(line.get_text().split()).partition(":")
+        if lead.strip().lower() == name.lower():
+            return body.strip()
+    return ""
+
+
+def test_history_page_glossary_defines_every_exit_reason_name_the_script_shows(client):
+    """Each exit reason history.js displays has a one-sentence definition in the History Glossary.
+
+    The definitions left the script: the page's closed Glossary (data-term lines written by the
+    glossary macro) holds them and static/glossary.js shows each as its label's title. The
+    contract is the operator can read what each exit reason means, so the names come from the
+    script's own REASON_DISPLAY map and the lines from the rendered page.
     """
-    hist_js = _STATIC_DIR / "history.js"
-    src = hist_js.read_text(encoding="utf-8")
+    names = _reason_display_names()
+    assert len(names) == 4, f"history.js maps {len(names)} exit reasons, expected the four: {names}"
 
-    match = re.search(
-        r"function renderReasonCards\b.*?(?=\nfunction |\nwindow\.|\nvar |\Z)", src, re.S
-    )
-    assert match, "history.js must define a renderReasonCards function"
-    fn_body = match.group(0)
+    resp = client.get("/history")
+    assert resp.status_code == 200, f"/history returned {resp.status_code}"
+    html = resp.get_data(as_text=True)
 
-    assert re.search(r"reason.desc|description|reasonDesc|reason_desc", fn_body, re.I), (
-        "renderReasonCards in history.js must emit a description text element per card. "
-        "Design (history.jsx): each exit reason has a one-sentence explanation. "
-        "Add a data-testid='reason-description' element with the per-reason description string. "
-        "Use a static lookup map keyed by the reason name (TP/Stop/VWAP Breakdown/Bleed Cut)."
+    missing = [n for n in names if not _glossary_line_for(html, n)]
+    assert not missing, (
+        f"the History Glossary has no non-empty definition line for the exit reasons {missing}; "
+        "each name history.js shows (REASON_DISPLAY) must lead a 'Name: definition' data-term line"
     )
 
 

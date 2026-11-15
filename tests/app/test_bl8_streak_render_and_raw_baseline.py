@@ -430,10 +430,31 @@ class TestAutotuneRunCardRender:
         remainder = re.sub(r"Best (CRRA-EU|Sortino|objective) score", "", text)
         assert "Sortino" not in remainder and "Sharpe" not in remainder, text
 
-    def test_null_naive_score_reads_na_under_the_generic_label(self, client):
-        run_id = _save_legacy_null_row()
-        card = _card_for(_rows(client), run_id)
-        assert re.search(r"Best objective score\s*N/A", card.text), card.text
+    def test_null_naive_score_reads_na_in_the_score_column_beside_a_scored_row(self, client):
+        scored_id = save_run("scored-sym", None, naive_sharpe=1.2345678)
+        null_id = _save_legacy_null_row()
+        rows = _rows(client)
+        assert _row(rows, null_id)["naive_sharpe"] is None, "self-guard: the route sends null"
+        scored_card = _card_for(rows, scored_id)
+        null_card = _card_for(rows, null_id)
+        assert re.search(r"Best objective score\s*1\.2346", scored_card.text), scored_card.text
+        cell = null_card.find(cls="autotune-run-score")
+        assert cell is not None, "a column another row fills gives the null row a score cell too"
+        assert re.search(r"Best objective score\s*N/A", cell.text), cell.text
+        assert not re.search(r"\d", cell.text), (
+            f"a null score shows no number, not even 0: {cell.text}"
+        )
+
+    def test_null_naive_score_alone_leaves_no_score_column_and_shows_no_number(self, client):
+        null_id = _save_legacy_null_row()
+        rows = _rows(client)
+        assert _row(rows, null_id)["naive_sharpe"] is None, "self-guard: the route sends null"
+        html = render_autotune_list({_ROUTE_URL: rows})[0]
+        card = _card_for(rows, null_id)
+        assert card.find(cls="autotune-run-score") is None, "no cell for a column that is all N/A"
+        assert parse_html(html).find(cls="autotune-run-score") is None, "no header for it either"
+        assert not re.search(r"Best objective score", card.text), card.text
+        assert not re.search(r"Best objective score\s*0", card.text), "never a fabricated 0"
 
     def test_zero_naive_score_is_a_number_never_na(self, client):
         run_id = save_run("zero-sym", None, naive_sharpe=0.0)
