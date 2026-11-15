@@ -160,9 +160,11 @@ def test_two_cold_requests_together_peak_at_most_a_quarter_above_one(
 
     _, pair_peak = traced(overlapping_pair)
     assert not gate.timed_out
-    assert_decodes(counter, mark, 1, "two requests overlapping a held decode")
-    assert pair_peak <= PAIR_PEAK_RATIO * single_peak, (
-        f"two overlapping cold requests peaked at {pair_peak}, one alone at {single_peak}"
+    decodes = (counter.reads_since(mark), counter.loader_since(mark))
+    assert decodes == (1, 1) and pair_peak <= PAIR_PEAK_RATIO * single_peak, (
+        f"two overlapping cold requests: (json.load, loader) decodes {decodes}, expected one; "
+        f"traced peak {pair_peak} against {single_peak} for one alone "
+        f"(ratio {pair_peak / single_peak:.2f}, allowed {PAIR_PEAK_RATIO})"
     )
 
 
