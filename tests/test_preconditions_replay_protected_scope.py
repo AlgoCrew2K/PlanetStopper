@@ -25,7 +25,6 @@ slice may touch. The full-file pins of these two files are re-taken only once th
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 import pytest
 
@@ -33,12 +32,11 @@ from tests.test_hygiene_protected_surfaces import (
     Selector,
     _module_import_of,
     _module_level_functions,
+    _read,
     _union,
     cut_text,
     scope_digest,
 )
-
-_REPO = Path(__file__).resolve().parents[1]
 
 _AUTOTUNER_FUNCTIONS = (
     "build_if_held_replay_series",
@@ -116,10 +114,6 @@ _PINNED_SCOPE_DIGESTS = {
     "autotuner.py": "19f7be1a52a6d0f7f7e017754b9609f220cc97bea6e9abe0f3bda17b36e2735a",
     "synthetic_history.py": "8f4411d9dce10b6644ae246992f6ec912a209ceb382af87fd42a6cfa70349f09",
 }
-
-
-def _read(rel: str) -> str:
-    return (_REPO / rel).read_bytes().decode("utf-8").replace("\r\n", "\n")
 
 
 class TestTheFilesHoldOnlyTheListedEdits:
