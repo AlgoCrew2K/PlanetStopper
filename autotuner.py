@@ -10,6 +10,7 @@ import os
 import statistics
 import threading
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -1570,17 +1571,33 @@ class _IfHeldReplayStore:
     newest decoded cache file (one identity), the identities of files that failed to decode, and
     the decodes in flight. The parsed history itself is never kept, only the derived tuples."""
 
-    _MAX_REMEMBERED_FAILURES = 16
+    # A fully corrupt window (every candidate date's file unreadable) must stay remembered:
+    # the probe visits the start date plus AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS earlier sessions.
+    _MAX_REMEMBERED_FAILURES = synthetic_history.AUTOTUNE_CACHE_MAX_AGE_TRADING_DAYS + 1
 
     def __init__(self) -> None:
         self._lock = threading.Lock()  # never held across a decode
         self.clear()
 
     def clear(self) -> None:
+        """Forget the held series, the remembered failures and the decodes in flight."""
         with self._lock:
             self._held: tuple | None = None  # (identity, {symphony_id: tuple of returns})
             self._failed: set = set()
             self._in_flight: dict = {}
+
+    @staticmethod
+    def _is_transient_read_failure(cache_file: str) -> bool:
+        """True when load_cached_history's None came from a file that cannot be opened and read
+        (a transient OS failure), not from content that does not decode."""
+        try:
+            with open(cache_file) as fp:
+                fp.read(1)
+        except OSError:
+            return True
+        except ValueError:
+            return False  # undecodable bytes are a content failure
+        return False
 
     def load(self, cache_file: str) -> "dict | None":
         """Reader for get_cached_synthetic_history_only: the derived series of an existing cache
@@ -1590,7 +1607,7 @@ class _IfHeldReplayStore:
             stat = os.stat(cache_file)
         except OSError:
             return None
-        identity = (cache_file, stat.st_size, stat.st_mtime_ns)
+        identity = (os.path.abspath(cache_file), stat.st_size, stat.st_mtime_ns)
         with self._lock:
             if self._held is not None and self._held[0] == identity:
                 return self._held[1]
@@ -1607,6 +1624,8 @@ class _IfHeldReplayStore:
             return flight.derived
         try:
             history = synthetic_history.load_cached_history(cache_file)
+            if history is None and self._is_transient_read_failure(cache_file):
+                return None  # nothing wrong with the content, so nothing is remembered
             flight.derived = None if history is None else _derive_if_held_series(history)
             del history
             with self._lock:
@@ -1617,7 +1636,7 @@ class _IfHeldReplayStore:
                 else:
                     self._held = (identity, flight.derived)
             return flight.derived
-        except Exception as exc:
+        except BaseException as exc:  # waiters degrade on any ended owner, never hang
             flight.failure_type = type(exc).__name__
             raise
         finally:
@@ -1626,7 +1645,7 @@ class _IfHeldReplayStore:
             flight.done.set()
 
 
-def _derive_if_held_series(history_data) -> dict:
+def _derive_if_held_series(history_data: object) -> dict:
     """{symphony_id: tuple of if-held daily returns} for every symphony in a decoded history."""
     if not isinstance(history_data, dict):
         return {}
@@ -1648,11 +1667,11 @@ _IF_HELD_REPLAY_REQUEST: contextvars.ContextVar = contextvars.ContextVar(
 
 
 @contextlib.contextmanager
-def if_held_replay_request():
-    """Within the block every build_if_held_replay_series call shares ONE probe of the cache
-    window: the file is looked up, decoded (or reused from the store) and logged once per request
+def if_held_replay_request(bot_state: dict) -> Iterator[None]:
+    """Within the block every build_if_held_replay_series call answers from the request's own
+    bot_state and shares ONE probe of the cache window: the file is looked up, decoded (or reused from the store) and logged once per request
     instead of once per symphony."""
-    token = _IF_HELD_REPLAY_REQUEST.set({})
+    token = _IF_HELD_REPLAY_REQUEST.set({"bot_state": bot_state})
     try:
         yield
     finally:
@@ -1708,12 +1727,19 @@ def build_if_held_replay_series(symphony_id: str) -> "list | None":
     never re-derives that key independently, so it cannot silently drift
     from the writer and permanently miss a genuine same-day, same-holdings
     cache hit (PM hard requirement, 2026-07-23).
+
+    REQUEST SCOPE: inside autotuner.if_held_replay_request(bot_state) (the preconditions route
+    wraps its symphony loop in it) the request's own bot_state is used instead of a load per
+    symphony, and the cache window is probed, logged and decoded once for the whole request.
+    The decode is also reused by later requests while the file's identity (path, size, mtime)
+    is unchanged, through _IF_HELD_REPLAY_STORE, which keeps only the derived if-held series
+    of one file, never the parsed history. Outside a scope every call probes for itself.
     """
-    bot_state = database.load_state()
+    scope = _IF_HELD_REPLAY_REQUEST.get()
+    bot_state = scope["bot_state"] if scope is not None else database.load_state()
     if symphony_id not in bot_state:
         return None
 
-    scope = _IF_HELD_REPLAY_REQUEST.get()
     if scope is not None:
         series = _scoped_if_held_replay_probe(scope, bot_state).get(symphony_id)
         return list(series) if series else None

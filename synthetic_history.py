@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from json import JSONDecodeError
 from zoneinfo import ZoneInfo
@@ -575,7 +576,10 @@ def _log_cache_miss_summary(missed_dates: list, current_date_str: str) -> None:
 
 
 def get_cached_synthetic_history_only(
-    bot_state: dict, current_date_str: str, *, load=None
+    bot_state: dict,
+    current_date_str: str,
+    *,
+    load: Callable[[str], dict | None] | None = None,
 ) -> "dict | None":
     """CACHE-ONLY read of the synthetic-history file cache -- NEVER triggers
     a live fetch (contrast with generate_synthetic_history, which fetches on
@@ -642,8 +646,9 @@ def get_cached_synthetic_history_only(
             else:
                 # File exists: any failure here is genuine corruption, and
                 # load_cached_history's existing WARNING path is untouched.
-                # (A vanish-between-check-and-read race degrades to that
-                # same WARNING -- acceptable, not worth defending against.)
+                # (A file that vanishes between the existence check and the
+                # read is not a miss: load_cached_history logs its WARNING
+                # for the OSError and the walk moves on to the next date.)
                 history_data = (load or load_cached_history)(cache_file)
                 if history_data is not None:
                     _log_cache_miss_summary(missed_dates, current_date_str)

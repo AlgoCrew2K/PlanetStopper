@@ -6542,7 +6542,9 @@ def guard_alpha_preconditions():
     triggers a network fetch or 250-day history assembly to backfill a cold
     cache -- autotuner.build_if_held_replay_series may serve from its local
     file-cache CPU-only, but a cache miss degrades per the contract above
-    rather than fetching.
+    rather than fetching. The symphony loop runs inside autotuner.if_held_replay_request, so the
+    replay cache is probed, logged and decoded once per request, and _IF_HELD_REPLAY_STORE
+    reuses an unchanged file's derived series across requests.
 
     Read-only -- no SQL in this route; database.load_state, the two sample
     accessors, and the math layer are the only calls made. Auth via the
@@ -6603,7 +6605,7 @@ def guard_alpha_preconditions():
     # shared rule, and the page's "replay samples unavailable N of M" counts the ids returned here.
     no_longer_held = _no_longer_held_ids(bot_state_dict, None, datetime.now(_ET))
 
-    with autotuner.if_held_replay_request():
+    with autotuner.if_held_replay_request(bot_state_dict):
         for sym_id, sym_data in bot_state_dict.items():
             if not _is_symphony_state_entry(sym_data) or sym_id in no_longer_held:
                 continue
