@@ -1,0 +1,21 @@
+{
+  "spec_audit": "feature-plans/preconditions-replay-load-once.md",
+  "tier": "feature",
+  "round": 4,
+  "round_note": "Final check the PM authorized, limited to R3-1 to R3-3. Nothing else was re-audited; the earlier closures stand as recorded in rounds 2 and 3.",
+  "verified_against": "PlanetStopper @ aafe476d6240 ## feat/preconditions-replay-load-once (clean; plan, source, this file and tests/fixtures/preconditions_replay/ untracked)",
+  "checklist": ".claude/agents/_refs/spec-review-checklist.md (project copy)",
+  "scripts": {
+    "plan-trace check --stage gate-1": "clean",
+    "plan-trace self-contained": "0 findings",
+    "angle-bracket instruction grep": "no hits"
+  },
+  "result": "0 CONFIRMED, 0 QUESTION open",
+  "verdict": "READY",
+  "dispositions": {
+    "R3-1": "closed: AC-4's rule says the waiter does not re-read the file. On an error load_cached_history catches (OSError, JSONDecodeError, ValueError, UnicodeDecodeError) the probe moves to the next older candidate, or gives the degraded row when none is left; on any other exception it gives the degraded row. This matches synthetic_history.py:274 and app.py:6610-6618. S-4.4 agrees and notes the per-symphony vs whole-request scope against base under KU 5.",
+    "R3-2": "closed: the Definition of Done names frozen_datetime_class (tests/app/_refresh_timing_state_world.py:119-129, applied at :366) and patches the same instant into app.datetime (app.py:6604) and autotuner.datetime (autotuner.py:1601) at base, and into the head's clock module that the architect names, for both the golden capture and the head comparison.",
+    "R3-3": "closed: every fixture derives from tests/fixtures/preconditions_replay/cache_excerpt_2026-11-13.json. The bot state comes from its bot_state_current_holdings and bot_state_names, whose md5 recomputes here to 6c47627672bb88f5bc75964c5586676f, the source file-name hash. The cache-file name comes from the real _resolve_history_cache_key. Case files come from stated edits. The perf file is replicated to the recorded source shape. bot_state_positions.json is no longer used. Prerequisites name the fixture, and KU 1 is removed."
+  },
+  "findings": []
+}
