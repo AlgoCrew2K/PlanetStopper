@@ -642,6 +642,36 @@ def test_a_file_that_cannot_be_opened_is_not_remembered_and_is_read_again_once_r
     assert replay_of(second.get_json()) == replay_rows(world.history, symphony_ids())
 
 
+@pytest.mark.parametrize("at", ["open", "read"])
+def test_a_read_error_that_clears_is_not_remembered_and_the_next_request_decodes_the_file(
+    monkeypatch, counter, caplog, at
+):
+    """The error happens once inside ``load_cached_history`` (at the open, or partway through the
+    read) and is gone for any later attempt, as a descriptor shortage or an I/O hiccup is. Only a
+    classification made from the error itself can tell it from corrupt content: a store that
+    looks at the file again afterwards finds it readable and would remember a failure."""
+    world = standard(monkeypatch, file=False)
+    older_history = with_one_return_changed(world.history)
+    older = world.write_file(OLDER_DATE, older_history)
+    newest = world.write_file(FILE_DATE)
+    flaky = make_unreadable(monkeypatch, newest, at=at, times=1)
+    mark = counter.mark()
+    first = world.get()
+    assert first.status_code == 200
+    assert flaky.attempts == 1, "the error must have happened exactly once, inside the request"
+    warnings = corrupt_warnings(caplog)
+    assert len(warnings) == 1, f"{len(warnings)} warnings for the failed read, expected 1"
+    assert os.path.basename(warnings[0].args[0]) == os.path.basename(newest)
+    assert counter.reads_of(older, mark) == 1
+    assert replay_of(first.get_json()) == replay_rows(older_history, symphony_ids())
+    caplog.clear()
+    mark = counter.mark()
+    second = world.get()
+    assert counter.reads_of(newest, mark) == 1, "the file whose read failed once was remembered"
+    assert corrupt_warnings(caplog) == []
+    assert replay_of(second.get_json()) == replay_rows(world.history, symphony_ids())
+
+
 def test_an_unopenable_file_is_attempted_once_per_request_and_nothing_is_remembered(
     monkeypatch, counter, caplog
 ):

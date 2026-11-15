@@ -930,32 +930,70 @@ def join_all(requests: list, timeout: float = JOIN_SECONDS, *, allow_errors: boo
             assert request.error is None, f"a request raised: {request.error!r}"
 
 
-class Unreadable:
-    """One file that cannot be opened for reading: ``PermissionError`` on any read-mode open of
-    its path, whatever the platform (a chmod does not make a file unreadable on Windows). The
-    file's size and modification time stay as they are; ``make_readable`` lifts it."""
+class _FailsOnFirstRead:
+    """A file object whose first ``read`` raises ``OSError`` (an I/O error partway through)."""
 
-    def __init__(self, path: str, real_open) -> None:
+    def __init__(self, handle) -> None:
+        self._handle = handle
+        self._failed = False
+
+    def read(self, *args, **kwargs):
+        if not self._failed:
+            self._failed = True
+            raise OSError(5, "Input/output error")
+        return self._handle.read(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return self._handle.__exit__(*exc_info)
+
+    def __iter__(self):
+        return iter(self._handle)
+
+
+class Unreadable:
+    """One file that cannot be read: an ``OSError`` on read-mode opens of its path, whatever the
+    platform (a chmod does not make a file unreadable on Windows). ``at="open"`` raises
+    ``PermissionError`` when the file is opened, ``at="read"`` opens it and raises an I/O error
+    on the first read. ``times`` limits how many opens fail (None: every one, until
+    ``make_readable``); an open after the budget is spent is an ordinary one, so the error has
+    "cleared" for any later attempt. The file's size and modification time never change."""
+
+    def __init__(self, path: str, real_open, *, at: str = "open", times: int | None = None):
         self._target = os.path.abspath(path)
         self._real_open = real_open
+        self._at = at
+        self._remaining = times
         self.active = True
         self.attempts = 0
 
     def __call__(self, file, mode="r", *args, **kwargs):
         if self.active and isinstance(file, (str, os.PathLike)) and "r" in mode:
-            if os.path.abspath(os.fspath(file)) == self._target:
+            budget_left = self._remaining is None or self._remaining > 0
+            if budget_left and os.path.abspath(os.fspath(file)) == self._target:
                 self.attempts += 1
-                raise PermissionError(13, "Permission denied", os.fspath(file))
+                if self._remaining is not None:
+                    self._remaining -= 1
+                if self._at == "open":
+                    raise PermissionError(13, "Permission denied", os.fspath(file))
+                return _FailsOnFirstRead(self._real_open(file, mode, *args, **kwargs))
         return self._real_open(file, mode, *args, **kwargs)
 
     def make_readable(self) -> None:
         self.active = False
 
 
-def make_unreadable(monkeypatch, path: str) -> Unreadable:
+def make_unreadable(
+    monkeypatch, path: str, *, at: str = "open", times: int | None = None
+) -> Unreadable:
     import builtins
 
-    unreadable = Unreadable(path, builtins.open)
+    unreadable = Unreadable(path, builtins.open, at=at, times=times)
     monkeypatch.setattr(builtins, "open", unreadable)
     return unreadable
 
