@@ -1,3 +1,5 @@
+import contextlib
+import contextvars
 import functools
 import glob
 import itertools
@@ -6,6 +8,7 @@ import logging
 import math
 import os
 import statistics
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -1553,6 +1556,126 @@ def collect_if_held_daily_returns(history_data: dict, sym_id: str) -> list:
     return result
 
 
+class _SharedDecode:
+    """One decode in flight: the request that started it fills the outcome; others wait on it."""
+
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.derived: dict | None = None
+        self.failure_type: str | None = None  # the type name only, never the exception
+
+
+class _IfHeldReplayStore:
+    """What the preconditions route keeps between requests: the if-held series derived from the
+    newest decoded cache file (one identity), the identities of files that failed to decode, and
+    the decodes in flight. The parsed history itself is never kept, only the derived tuples."""
+
+    _MAX_REMEMBERED_FAILURES = 16
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()  # never held across a decode
+        self.clear()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._held: tuple | None = None  # (identity, {symphony_id: tuple of returns})
+            self._failed: set = set()
+            self._in_flight: dict = {}
+
+    def load(self, cache_file: str) -> "dict | None":
+        """Reader for get_cached_synthetic_history_only: the derived series of an existing cache
+        file (None = unreadable, try the next older one), decoded at most once per file identity
+        across concurrent and later requests."""
+        try:
+            stat = os.stat(cache_file)
+        except OSError:
+            return None
+        identity = (cache_file, stat.st_size, stat.st_mtime_ns)
+        with self._lock:
+            if self._held is not None and self._held[0] == identity:
+                return self._held[1]
+            if identity in self._failed:
+                return None
+            flight = self._in_flight.get(identity)
+            owner = flight is None
+            if owner:
+                flight = self._in_flight[identity] = _SharedDecode()
+        if not owner:
+            flight.done.wait()
+            if flight.failure_type is not None:
+                raise RuntimeError(f"shared replay decode failed: {flight.failure_type}")
+            return flight.derived
+        try:
+            history = synthetic_history.load_cached_history(cache_file)
+            flight.derived = None if history is None else _derive_if_held_series(history)
+            del history
+            with self._lock:
+                if flight.derived is None:
+                    if len(self._failed) >= self._MAX_REMEMBERED_FAILURES:
+                        self._failed.clear()
+                    self._failed.add(identity)
+                else:
+                    self._held = (identity, flight.derived)
+            return flight.derived
+        except Exception as exc:
+            flight.failure_type = type(exc).__name__
+            raise
+        finally:
+            with self._lock:
+                self._in_flight.pop(identity, None)
+            flight.done.set()
+
+
+def _derive_if_held_series(history_data) -> dict:
+    """{symphony_id: tuple of if-held daily returns} for every symphony in a decoded history."""
+    if not isinstance(history_data, dict):
+        return {}
+    derived = {}
+    for sym_id in history_data:
+        try:
+            derived[sym_id] = tuple(collect_if_held_daily_returns(history_data, sym_id))
+        except Exception:
+            continue  # one malformed symphony degrades alone, as a per-symphony decode would
+    return derived
+
+
+_IF_HELD_REPLAY_STORE = _IfHeldReplayStore()
+
+# The probe's outcome for the request being served (a dict), None outside one.
+_IF_HELD_REPLAY_REQUEST: contextvars.ContextVar = contextvars.ContextVar(
+    "autotuner_if_held_replay_request", default=None
+)
+
+
+@contextlib.contextmanager
+def if_held_replay_request():
+    """Within the block every build_if_held_replay_series call shares ONE probe of the cache
+    window: the file is looked up, decoded (or reused from the store) and logged once per request
+    instead of once per symphony."""
+    token = _IF_HELD_REPLAY_REQUEST.set({})
+    try:
+        yield
+    finally:
+        _IF_HELD_REPLAY_REQUEST.reset(token)
+
+
+def _scoped_if_held_replay_probe(scope: dict, bot_state: dict) -> dict:
+    """The request's derived series ({} when nothing usable), probed on first use only."""
+    if "derived" not in scope:
+        current_date_str = synthetic_history.utc_to_eastern(datetime.now(UTC)).strftime("%Y-%m-%d")
+        try:
+            scope["derived"] = (
+                synthetic_history.get_cached_synthetic_history_only(
+                    bot_state, current_date_str, load=_IF_HELD_REPLAY_STORE.load
+                )
+                or {}
+            )
+        except Exception as exc:
+            logging.debug("if-held replay probe failed: %s", type(exc).__name__)
+            scope["derived"] = {}
+    return scope["derived"]
+
+
 def build_if_held_replay_series(symphony_id: str) -> "list | None":
     """ROUTE-FACING ORCHESTRATION SEAM. PM-RULED CONTRACT (2026-07-23, resolves
     the data-sourcing open question flagged during RED-writing): CACHE-HIT-ONLY.
@@ -1589,6 +1712,11 @@ def build_if_held_replay_series(symphony_id: str) -> "list | None":
     bot_state = database.load_state()
     if symphony_id not in bot_state:
         return None
+
+    scope = _IF_HELD_REPLAY_REQUEST.get()
+    if scope is not None:
+        series = _scoped_if_held_replay_probe(scope, bot_state).get(symphony_id)
+        return list(series) if series else None
 
     # ET "today" via synthetic_history.utc_to_eastern -- the SAME DST-aware
     # conversion generate_synthetic_history itself uses to resolve "today"

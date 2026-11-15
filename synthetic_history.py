@@ -574,7 +574,9 @@ def _log_cache_miss_summary(missed_dates: list, current_date_str: str) -> None:
     )
 
 
-def get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) -> "dict | None":
+def get_cached_synthetic_history_only(
+    bot_state: dict, current_date_str: str, *, load=None
+) -> "dict | None":
     """CACHE-ONLY read of the synthetic-history file cache -- NEVER triggers
     a live fetch (contrast with generate_synthetic_history, which fetches on
     a cache miss). Uses the IDENTICAL cache-key derivation as
@@ -616,6 +618,11 @@ def get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) ->
     the backward window missing or corrupt/unreadable (see
     load_cached_history, which never raises).
 
+    ``load`` replaces load_cached_history for an existing file (same contract:
+    the content, or None to move on to the next older candidate); a caller
+    that holds what it decoded earlier passes its own reader. Default is
+    load_cached_history, resolved at call time.
+
     Sole consumer: autotuner.build_if_held_replay_series (the guard-alpha-
     preconditions dashboard route's cache-hit-only replay seam -- off the
     execution path, must never drive Alpaca fetch volume from a GET).
@@ -637,7 +644,7 @@ def get_cached_synthetic_history_only(bot_state: dict, current_date_str: str) ->
                 # load_cached_history's existing WARNING path is untouched.
                 # (A vanish-between-check-and-read race degrades to that
                 # same WARNING -- acceptable, not worth defending against.)
-                history_data = load_cached_history(cache_file)
+                history_data = (load or load_cached_history)(cache_file)
                 if history_data is not None:
                     _log_cache_miss_summary(missed_dates, current_date_str)
                     return history_data

@@ -6603,51 +6603,54 @@ def guard_alpha_preconditions():
     # shared rule, and the page's "replay samples unavailable N of M" counts the ids returned here.
     no_longer_held = _no_longer_held_ids(bot_state_dict, None, datetime.now(_ET))
 
-    for sym_id, sym_data in bot_state_dict.items():
-        if not _is_symphony_state_entry(sym_data) or sym_id in no_longer_held:
-            continue
-        try:
+    with autotuner.if_held_replay_request():
+        for sym_id, sym_data in bot_state_dict.items():
+            if not _is_symphony_state_entry(sym_data) or sym_id in no_longer_held:
+                continue
             try:
-                replay_series = autotuner.build_if_held_replay_series(sym_id)
+                try:
+                    replay_series = autotuner.build_if_held_replay_series(sym_id)
+                except Exception:
+                    _daemon_log.debug(
+                        "guard_alpha_preconditions: replay series failed for %s",
+                        sym_id,
+                        exc_info=True,
+                    )
+                    replay_series = None
+
+                replay_row = (
+                    _sample_row(replay_series, "if_held_replay")
+                    if replay_series
+                    else _degraded_row("if_held_replay")
+                )
+
+                try:
+                    shadow_series = analytics.get_shadow_current_return_daily_series(
+                        sym_id, db_file
+                    )
+                except Exception:
+                    _daemon_log.debug(
+                        "guard_alpha_preconditions: shadow series failed for %s",
+                        sym_id,
+                        exc_info=True,
+                    )
+                    shadow_series = None
+
+                shadow_row = (
+                    _sample_row(shadow_series, "shadow_history")
+                    if shadow_series
+                    else _degraded_row("shadow_history")
+                )
+
+                symphonies_out[sym_id] = {"replay": replay_row, "shadow": shadow_row}
             except Exception:
+                # AC-6: one symphony's failure must never 500 the whole route --
+                # skip this entry entirely rather than surface a half-built one.
                 _daemon_log.debug(
-                    "guard_alpha_preconditions: replay series failed for %s",
+                    "guard_alpha_preconditions: symphony %s degraded entirely",
                     sym_id,
                     exc_info=True,
                 )
-                replay_series = None
-
-            replay_row = (
-                _sample_row(replay_series, "if_held_replay")
-                if replay_series
-                else _degraded_row("if_held_replay")
-            )
-
-            try:
-                shadow_series = analytics.get_shadow_current_return_daily_series(sym_id, db_file)
-            except Exception:
-                _daemon_log.debug(
-                    "guard_alpha_preconditions: shadow series failed for %s",
-                    sym_id,
-                    exc_info=True,
-                )
-                shadow_series = None
-
-            shadow_row = (
-                _sample_row(shadow_series, "shadow_history")
-                if shadow_series
-                else _degraded_row("shadow_history")
-            )
-
-            symphonies_out[sym_id] = {"replay": replay_row, "shadow": shadow_row}
-        except Exception:
-            # AC-6: one symphony's failure must never 500 the whole route --
-            # skip this entry entirely rather than surface a half-built one.
-            _daemon_log.debug(
-                "guard_alpha_preconditions: symphony %s degraded entirely",
-                sym_id,
-                exc_info=True,
-            )
 
     return jsonify({"symphonies": symphonies_out})
 
