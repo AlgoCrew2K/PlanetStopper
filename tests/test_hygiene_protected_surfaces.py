@@ -193,8 +193,8 @@ _SCOPE = {
 _PINNED_SCOPE_DIGESTS = {
     "alpha_bot_execution.py": "2d555aacd952b4848483db6ba5fdbb44fe898442fa0b30d91009ca7c498e9a7e",
     "math_engine.py": "de998d4bb0f7b57c98c06b15b9f48850b92c5fd58426b0b98ed0141765b6ac3e",
-    # re-taken at 8fa6d0b9 for preconditions-replay-load-once (request-scoped replay read); the slice's scope pin tests/test_preconditions_replay_protected_scope.py proves the change stays inside its listed edits.
-    "autotuner.py": "1a1c497a02921c2218bd07c02f8e3be695e82e78a232e550e37c5505c1394ec3",
+    # re-taken at f57d2e0d for preconditions-replay-load-once (request-scoped replay read); the slice's scope pin tests/test_preconditions_replay_protected_scope.py proves the change stays inside its listed edits.
+    "autotuner.py": "21dcdb8ea205c0ae1a70a16360cbea4f8630db9bb6b09f5262c5eebeeb062238",
     "regime_classifier.py": "7a5fc8dae2c3d1c88d4c84513b4f9b8a20b00ab133b29a75d0986340964e7693",
 }
 
@@ -295,8 +295,8 @@ _REPLAY_DIGESTS = {
 _CLASSIFIER_WITHOUT_DOCSTRING = "eb99455e68ce97d2cda3df55159afaf01c6b1bcad988fc8e15d9cad06597a304"
 _M3_DIGEST = "f7eb4d4f85f7d6510471cf7dcfe8db3a28b6b139f5f3c6255297d7e7e2179a7f"
 _UNTOUCHED_FILE_DIGESTS = {
-    # re-taken at 8fa6d0b9 for preconditions-replay-load-once (request-scoped replay read); the slice's scope pin tests/test_preconditions_replay_protected_scope.py proves the change stays inside its listed edits.
-    "synthetic_history.py": "dce856f8fea31d25bbcb90caa6db41111cd362cda499721a32e8d4f1ebcecae2",
+    # re-taken at f57d2e0d for preconditions-replay-load-once (request-scoped replay read); the slice's scope pin tests/test_preconditions_replay_protected_scope.py proves the change stays inside its listed edits.
+    "synthetic_history.py": "71a5736d157733d459b1bd58b4fb652fb3a25945264bb6f2022d09318b629e2c",
     "migrations/027_regime_label_cache.sql": (
         "46b63e476670db9eb57afcccb6a15e8e78b8a9ddc08d7ca50680d6c2a26fe8d2"
     ),

@@ -6,8 +6,10 @@ The slice edits two files that other pins hold byte for byte:
   store, request-scope and shared-decode symbols (``_SharedDecode``, ``_IfHeldReplayStore``,
   ``_derive_if_held_series``, ``_IF_HELD_REPLAY_STORE``, ``_IF_HELD_REPLAY_REQUEST``,
   ``if_held_replay_request``, ``_scoped_if_held_replay_probe``) and the imports they need.
-* ``synthetic_history.py`` -- ``get_cached_synthetic_history_only`` and the one import its
-  ``load`` annotation needs (``from collections.abc import Callable``).
+* ``synthetic_history.py`` -- ``get_cached_synthetic_history_only``, ``load_cached_history``
+  (a keyword-only ``on_error`` that reports the caught exception; its warning and its return
+  are unchanged) and the one import their annotations need (``from collections.abc import
+  Callable``).
 
 A full-file pin cannot tell "only the listed edits" from "something else too", so each file is
 pinned with its listed edit nodes CUT, by AST, with the cut helpers of
@@ -99,7 +101,7 @@ _AUTOTUNER_EDITS = _union(
     _module_from_import("collections.abc", "Iterator"),
 )
 _SYNTHETIC_HISTORY_EDITS = _union(
-    _module_level_functions("get_cached_synthetic_history_only"),
+    _module_level_functions("get_cached_synthetic_history_only", "load_cached_history"),
     _module_from_import("collections.abc", "Callable"),
 )
 
@@ -112,7 +114,7 @@ _SCOPE = {
 # computed from `git show aafe476d:<path>`; equal to the file at the slice head.
 _PINNED_SCOPE_DIGESTS = {
     "autotuner.py": "19f7be1a52a6d0f7f7e017754b9609f220cc97bea6e9abe0f3bda17b36e2735a",
-    "synthetic_history.py": "8f4411d9dce10b6644ae246992f6ec912a209ceb382af87fd42a6cfa70349f09",
+    "synthetic_history.py": "1b284b587a208f354732fb6d5836c46dbd99fc7530a8c8946db047b3a957d6ad",
 }
 
 
@@ -153,7 +155,6 @@ class TestTheFilesHoldOnlyTheListedEdits:
             assert f"def {name}(" in cut_text(autotuner, _AUTOTUNER_EDITS)
         for name in (
             "generate_synthetic_history",
-            "load_cached_history",
             "_resolve_history_cache_key",
         ):
             assert f"def {name}(" in cut_text(synthetic, _SYNTHETIC_HISTORY_EDITS)
