@@ -1,5 +1,5 @@
 # Feature: Flag dead tickers in live symphony trees
-Status: draft
+Status: gate-1
 Story: none: an operator remark of 2026-11-16 on a PM report, saved verbatim with the PM's intake answers in feature-plans/live-tree-ticker-health.source.md
 Type: feat
 Suite: none
@@ -23,7 +23,7 @@ When a ticker that a live symphony's current Composer tree buys or reads in a co
 - One Discord message per newly found symphony and ticker pair, never repeated until it clears (AC-5); a fixed ticker's warning clears (AC-6).
 - The check makes no Composer request while the market is open or while another in-process off-hours Composer reader runs, never runs twice at once, and leaves no partial result (AC-7).
 - The check runs every calendar night and catches up a missed night at the next daemon start outside market hours (AC-10).
-- Terms used throughout: a run **ends** when it stops for any reason (finished, skipped, unavailable, failed or stopped by the daemon); a run **completes** when it ends after reading at least one account's roster and obtaining Alpaca's answer for at least one ticker, and a completed run may still leave symphonies or tickers not checked; a symphony is **judged** by a run that read its tree, and a ticker is **judged** by a run that read Alpaca's answer for it. Checked times and staleness count completed runs only (D-6).
+- Terms used throughout: a run **ends** when it stops for any reason (finished, skipped, unavailable, failed or stopped by the daemon); a run **completes** when it ends after reading at least one account's roster and, where at least one ticker needed Alpaca's answer, obtaining Alpaca's answer for at least one of them; a run with no ticker to ask (the rosters list no symphony, no live tree names a ticker, or every tree is of an asset class the check does not cover) completes, a run that needed Alpaca and got no answer at all does not, and a completed run may still leave symphonies or tickers not checked; a symphony is **judged** by a run that read its tree, and a ticker is **judged** by a run that read Alpaca's answer for it. Checked times and staleness count completed runs only (D-6).
 - The engine, Composer write paths, the tenure review, `/health`, the header and the Strategy Builder's tradeable set stay as at the ref (AC-8); credentials and names stay out of logs, markup and mentions (AC-9).
 
 ## Requirements as Given
@@ -149,7 +149,7 @@ Rule: When the nightly check reads a live symphony's current tree from Composer'
 | S-1.7 | N1 | T named only inside an inner condition of a compound condition nested in another compound condition | the nightly check completes | T is judged |
 | S-1.8 | N1 | T bought by 25 asset nodes and read by one if-child that compares two of T's own indicators (T on both sides) | the nightly check completes and Alpaca reports T inactive | one warning line for that symphony and T, reading "Used by 25 asset nodes and 1 condition." (a condition naming T on both sides counts once); T is judged once in the run |
 | S-1.9 | N1 | a live tree with no asset node and no condition | the nightly check completes | the symphony is counted as checked; no warning line and no notice for it |
-| S-1.10 | N1 | a live tree whose `asset_class` is present and is not `EQUITIES` | the nightly check completes | none of its tickers is sent to Alpaca; the notice names the symphony as not checked with the reason "asset class not covered by the check" |
+| S-1.10 | N1 | a live tree whose `asset_class` is present and is not `EQUITIES` | the nightly check completes | none of its tickers is sent to Alpaca; the notice names the symphony as not checked with the reason "asset class not covered by the check"; when every live tree is of such a class, the run still completes and the page shows this notice, never "Ticker check unavailable" and never the stale notice |
 | S-1.11 | N7 | the trees the asset swap engine, the community loader, the plan compiler and the weekly suggestions scheduler read (callers at `advisors/asset_swap_engine.py:878`, `:1167`, `advisors/community_strats.py:349`, `advisors/plan_tree_compiler.py:549`, `advisors/weekly_suggestions_scheduler.py:378`) | each reads the tickers of a tree containing legacy operands | each receives the same ticker set as at the ref |
 
 Negative coverage: N1 S-1.3, S-1.4, S-1.5, S-1.6, S-1.7, S-1.8, S-1.9, S-1.10 · N2 n/a: the check refuses no tree; a tree it cannot cover is reported not checked (S-1.10) · N3 covered by AC-4 (S-4.1 to S-4.5) · N4 n/a: a nightly job with no caller to authorize · N5 covered by AC-7 (S-7.4) · N6 covered by AC-4 (S-4.1 to S-4.5) · N7 S-1.11 · N8 n/a: each tree is read once per run and no edit is held open
@@ -216,9 +216,9 @@ Rule: If the latest run ended without completing, left any live symphony or tick
 | S-4.4 | N6 | the score read for Y answers 200 with a body that is not a tree | the run completes | the notice reads "Not checked: Y (definition unreadable)." |
 | S-4.5 | N6 | the roster read for one configured account answers 5xx or times out, and the other accounts' rosters are read | the run completes | the notice reads "Not checked: symphonies of the {account label} account (Composer unavailable)."; the other accounts' symphonies are judged |
 | S-4.6 | N3 | Y had a warning for T from the previous run, and the latest run did not judge Y | the operator opens `/` | the line for Y and T still shows, followed by "(from the check at" and the previous run's time; no Discord message is sent about it |
-| S-4.7 | N6 | the latest run ended without completing because it read no roster or no Alpaca answer | the operator opens `/` | the notice reads "Ticker check unavailable: {reason}. Last completed check YYYY-MM-DD HH:MM ET." (or "No completed check yet." in place of the last sentence when none exists); earlier warnings show as in S-4.6 |
+| S-4.7 | N6 | the latest run ended without completing because it read no roster, or needed Alpaca's answer for at least one ticker and got none | the operator opens `/` | the notice reads "Ticker check unavailable: {reason}. Last completed check YYYY-MM-DD HH:MM ET." (or "No completed check yet." in place of the last sentence when none exists); earlier warnings show as in S-4.6 |
 | S-4.8 | N3 | Alpaca left k tickers of X unanswered (S-2.11) | the operator opens `/` | the notice reads "k tickers in X could not be checked (Alpaca rate limit)." with k the count from that run |
-| S-4.9 | N3 | no check run has ever completed | the operator opens `/` | the notice reads "No ticker check has run yet." |
+| S-4.9 | N3 | no check run has ever completed | the operator opens `/` | the notice reads "No ticker check has completed yet." |
 | S-4.10 | N3 | the newest completed check finished more than 36 hours before the page is rendered | the operator opens `/` | the notice reads "No ticker check has completed since YYYY-MM-DD HH:MM ET." (Q-4); the stored warnings still show |
 | S-4.11 | N3 | no Composer account is configured | the run ends and the operator opens `/` | no request is sent; the notice reads "Ticker check unavailable: no Composer account configured." |
 | S-4.12 | N1 | the configured accounts' rosters are read and list no symphony | the run completes and the operator opens `/` | no warning and no notice of this feature appear |
@@ -536,7 +536,7 @@ Fixture provenance: Composer score bodies captured from the producer (the comple
 | D-3 | Node use is reported as two counts, asset nodes and conditions | A condition-only ticker has no asset node; one count would hide it |
 | D-4 | An announcement is keyed by the Composer hash id and the ticker | A rename must not re-announce (S-5.10); hash and display name do not join |
 | D-5 | Sensitive is marked security for AC-9 | The project's marking covers credentials, and the check is a new sender of two |
-| D-6 | A run "ends" for any stop and "completes" only after reading a roster and at least one Alpaca answer; checked times and staleness count completed runs | One word for two states let a night where everything failed reset the stale clock |
+| D-6 | A run "ends" for any stop; it "completes" when it read at least one roster and, where at least one ticker needed Alpaca's answer, obtained Alpaca's answer for at least one; a run with no ticker to ask completes; checked times and staleness count completed runs [PM-ASSUMED] | One word for two states let a night where everything failed reset the stale clock; the PM's ruling on audit finding 11 lets a fleet with nothing to ask Alpaca about complete instead of reading unavailable and stale every day |
 | D-7 | The check runs every calendar night and catches up at a daemon start outside market hours | The scheduler never re-runs a missed slot, and a per-session cadence would read stale every weekend |
 
 ## Docs to Update
