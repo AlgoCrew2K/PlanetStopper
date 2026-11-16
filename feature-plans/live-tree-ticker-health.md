@@ -1,5 +1,5 @@
 # Feature: Flag dead tickers in live symphony trees
-Status: gate-1
+Status: ready
 Story: none: an operator remark of 2026-11-16 on a PM report, saved verbatim with the PM's intake answers in feature-plans/live-tree-ticker-health.source.md
 Type: feat
 Suite: none
@@ -362,33 +362,33 @@ Questions: Q-4
 
 ## Not Building
 Non-goals:
-- NB-1: Any automatic edit of a live Composer symphony; the operator fixes the tree in Composer (excludes R-15; proposed).
-- NB-2: Suggesting a replacement ticker (excludes R-36; proposed).
-- NB-3: Intraday checks (excludes R-37; proposed).
-- NB-4: Checking non-live candidate trees: Strategy Builder survivors and frontrunner proposals (excludes R-38; proposed).
-- NB-5: Price-staleness detection for a ticker Alpaca lists as active and tradable, including "no daily bar for several sessions" (excludes R-39, narrows R-4 and R-9; proposed, Q-1).
-- NB-6: Running a Composer backtest to confirm that a ticker is dead (excludes R-5; proposed: Alpaca's asset status is the judge, and a backtest per tree is the heavy request the tenure review already spends).
-- NB-7: A Discord message when a warning clears (proposed).
-- NB-8: A Discord message about an unavailable or partial check (proposed, Q-5).
-- NB-9: A header indicator on the other pages, a header "Degraded" state or a `/health` degraded reason for dead tickers (narrows R-19; proposed, Q-3).
-- NB-10: A JSON route for the check's result, and updating the warning on the dashboard poll; a reload shows a new result (proposed).
-- NB-11: An on-demand "run the check now" control (proposed).
-- NB-12: Dismissing a warning without fixing the tree (proposed).
+- NB-1: Any automatic edit of a live Composer symphony; the operator fixes the tree in Composer (excludes R-15; approved).
+- NB-2: Suggesting a replacement ticker (excludes R-36; approved).
+- NB-3: Intraday checks (excludes R-37; approved).
+- NB-4: Checking non-live candidate trees: Strategy Builder survivors and frontrunner proposals (excludes R-38; approved).
+- NB-5: Price-staleness detection for a ticker Alpaca lists as active and tradable, including "no daily bar for several sessions" (excludes R-39, narrows R-4 and R-9; approved, Q-1).
+- NB-6: Running a Composer backtest to confirm that a ticker is dead (excludes R-5; approved: Alpaca's asset status is the judge, and a backtest per tree is the heavy request the tenure review already spends).
+- NB-7: A Discord message when a warning clears (approved).
+- NB-8: A Discord message about an unavailable or partial check (approved, Q-5).
+- NB-9: A header indicator on the other pages, a header "Degraded" state or a `/health` degraded reason for dead tickers (narrows R-19; approved, Q-3).
+- NB-10: A JSON route for the check's result, and updating the warning on the dashboard poll; a reload shows a new result (approved).
+- NB-11: An on-demand "run the check now" control (approved).
+- NB-12: Dismissing a warning without fixing the tree (approved).
 
 Behavior that stays exactly as it is:
-- NB-13: The tenure review's evidence, verdicts and stored records, including the backtest item that names no ticker (excludes R-17; proposed).
+- NB-13: The tenure review's evidence, verdicts and stored records, including the backtest item that names no ticker (excludes R-17; approved).
 - NB-14: The ticker sets that `extract_tickers` returns to its existing callers (S-1.11).
 - NB-15: The weekly-cached tradeable set the Strategy Builder and Asset Swaps read, and its refresh (S-2.13).
 - NB-16: The fleet and market-state banners, the header engine label and the `/health` and `/api/header-status` bodies (S-3.11, S-8.6).
 - NB-17: The engine's minute cycle, `alpha_bot_execution.py` and `math_engine.py` (S-7.8, S-8.3).
 
 Deferred:
-- NB-18: Covering legacy `lhs-val` and `rhs-val` operands in `extract_tickers` for its other callers (asset swaps, community loader, plan compiler, weekly suggestions) (proposed: one backlog line, Follow-Ups).
-- NB-19: Checking trees whose asset class is not `EQUITIES` (S-1.10; proposed).
-- NB-20: Reporting a failed Composer rebalance from the roster's own rebalance fields (proposed).
+- NB-18: Covering legacy `lhs-val` and `rhs-val` operands in `extract_tickers` for its other callers (asset swaps, community loader, plan compiler, weekly suggestions) (approved: one backlog line, Follow-Ups).
+- NB-19: Checking trees whose asset class is not `EQUITIES` (S-1.10; approved).
+- NB-20: Reporting a failed Composer rebalance from the roster's own rebalance fields (approved).
 
 Protected surfaces consumed, not changed:
-- NB-21: The read-only Composer client (`advisors/composer_portfolio_client.py:151-223`) as the tenure review uses it, the configured account keys (`advisors/tenure_review_runner.py:26-31`), `market_calendar.get_market_state` (`market_calendar.py:132`), `analytics.format_et_stamp` (`analytics.py:2524`) and the `DISCORD_WEBHOOK_URL` configuration key.
+- NB-21: The read-only Composer client (`advisors/composer_portfolio_client.py:151-223`) as the tenure review uses it, consumed unchanged except for one additive public helper, `is_plain_id`, which it may expose (approved amendment [PM-ASSUMED]), the configured account keys (`advisors/tenure_review_runner.py:26-31`), `market_calendar.get_market_state` (`market_calendar.py:132`), `analytics.format_et_stamp` (`analytics.py:2524`) and the `DISCORD_WEBHOOK_URL` configuration key.
 - NB-22: The no-trade boundary: the proposal-approve route is the only path to Composer symphony creation, the panic-sell route the only dashboard trade button, Managed Sleeves its own armed order path, and live trading needs both `LIVE_EXECUTION` and the symphony's `live_mode`; the check adds no path near any of them (S-8.1, S-8.2, S-8.8).
 
 ## Defect Classes
@@ -518,14 +518,14 @@ Fixture provenance: Composer score bodies captured from the producer (the comple
 
 | Q-n | Question | Blocks (AC ids or "plan") | Proposed default | Answer |
 |---|---|---|---|---|
-| Q-1 | What counts as "no price data" for a ticker Alpaca lists as active and tradable? | AC-2 | Nothing: that is price staleness, which intake answer 6 excludes; "no price data" is covered by "not listed at Alpaca" | |
-| Q-2 | Is a ticker Alpaca does not list at all reported as dead? | AC-2, AC-3 | Yes, with its own reason "not listed at Alpaca", so the operator can tell it from an inactive ticker | |
-| Q-3 | Should a dead ticker also turn the header engine label "Degraded" or add a `/health` degraded reason? | AC-3, AC-8 | No: both report the engine's health, a degraded reason outranks Live and Closed in the header (`static/chrome.js:373-375`), and an unfixed tree would hide the engine's real state for days; the dashboard warning and Discord carry it | |
-| Q-4 | After how long without a completed run does the dashboard say the check is stale? | AC-4, AC-10 | 36 hours; the check runs every calendar night (S-10.2), so weekends and holidays never read stale and one missed night does not either | |
-| Q-5 | Should an unavailable or partial check post to Discord? | AC-5 | No; the dashboard notice states it, and the stale notice appears after 36 hours | |
-| Q-6 | If the daemon stops after Discord accepted a message and before it was recorded, is one repeat acceptable? | AC-5 | Yes: a repeated message is preferred over a lost one | |
-| Q-7 | Which Composer readers does the check wait for? | AC-7 | The in-process off-hours readers it can see (the 03:30 incubation tick, the tenure review and the retirement run); an operator-started Run now, the out-of-process weekly suggestions job and the minute account refresh are neither blocked nor waited for, and the check stops on the first 429 and reports the rest not checked | |
-| Q-8 | Do T-1 and T-2 describe how you use the dashboard for this? No confirmed dashboard workflow file exists | AC-3, AC-4 | Yes, as written | |
+| Q-1 | What counts as "no price data" for a ticker Alpaca lists as active and tradable? | AC-2 | Nothing: that is price staleness, which intake answer 6 excludes; "no price data" is covered by "not listed at Alpaca" |Default approved [PM-ASSUMED] |
+| Q-2 | Is a ticker Alpaca does not list at all reported as dead? | AC-2, AC-3 | Yes, with its own reason "not listed at Alpaca", so the operator can tell it from an inactive ticker |Default approved [PM-ASSUMED] |
+| Q-3 | Should a dead ticker also turn the header engine label "Degraded" or add a `/health` degraded reason? | AC-3, AC-8 | No: both report the engine's health, a degraded reason outranks Live and Closed in the header (`static/chrome.js:373-375`), and an unfixed tree would hide the engine's real state for days; the dashboard warning and Discord carry it |Default approved [PM-ASSUMED] |
+| Q-4 | After how long without a completed run does the dashboard say the check is stale? | AC-4, AC-10 | 36 hours; the check runs every calendar night (S-10.2), so weekends and holidays never read stale and one missed night does not either |Default approved [PM-ASSUMED] |
+| Q-5 | Should an unavailable or partial check post to Discord? | AC-5 | No; the dashboard notice states it, and the stale notice appears after 36 hours |Default approved [PM-ASSUMED] |
+| Q-6 | If the daemon stops after Discord accepted a message and before it was recorded, is one repeat acceptable? | AC-5 | Yes: a repeated message is preferred over a lost one |Default approved [PM-ASSUMED] |
+| Q-7 | Which Composer readers does the check wait for? | AC-7 | The in-process off-hours readers it can see (the 03:30 incubation tick, the tenure review and the retirement run); an operator-started Run now, the out-of-process weekly suggestions job and the minute account refresh are neither blocked nor waited for, and the check stops on the first 429 and reports the rest not checked |[PM-ASSUMED] The check waits for the four in-process off-hours Composer jobs: the 03:30 incubation tick, the 03:45 tenure review and retirement tick, and their Run-now forms (the retirement Run now and the tenure review Run now); the Monday weekly suggestions job is a separate process and is avoided by the slot chosen; the on-demand advisor routes, end-of-day tasks and the every-minute account refresh are not waited for, and the first 429 stops the check; Composer reads only while the market is closed |
+| Q-8 | Do T-1 and T-2 describe how you use the dashboard for this? No confirmed dashboard workflow file exists | AC-3, AC-4 | Yes, as written |T-1 and T-2 approved as drafted [PM-ASSUMED] |
 
 ## Decisions
 
@@ -538,6 +538,7 @@ Fixture provenance: Composer score bodies captured from the producer (the comple
 | D-5 | Sensitive is marked security for AC-9 | The project's marking covers credentials, and the check is a new sender of two |
 | D-6 | A run "ends" for any stop; it "completes" when it read at least one account's roster, reached every live symphony on the rosters it read, each either judged or reported not checked with its cause, and, where at least one ticker needed Alpaca's answer, obtained Alpaca's answer for at least one; a run with no ticker to ask completes; a run stopped before it reached every symphony (daemon stop, crash or restart) does not complete, nor does a run that needed Alpaca and got no answer at all; checked times and staleness count completed runs [PM-ASSUMED] | One word for two states let a night where everything failed reset the stale clock; the PM's ruling on audit finding 11 lets a fleet with nothing to ask Alpaca about complete instead of reading unavailable and stale every day |
 | D-7 | The check runs every calendar night and catches up at a daemon start outside market hours | The scheduler never re-runs a missed slot, and a per-session cadence would read stale every weekend |
+| D-13 | Approval-stage rulings on the approach [PM-ASSUMED]: the scheduler digest pin at `tests/fixtures/page_explainers/ref_capture.json` is re-taken, test-only, after C2's GREEN, for the slot addition only; the architect's notice wording is accepted subject to the ux-expert review in C2; the two D-6 corner cases apply literally (every score read failing still completes with every symphony reported not checked; a missing Alpaca key or secret ends the run unavailable before any request); the Rule-by-Entry-Point Matrix gains no column for the shared run entry point; real-response fixtures are the PM's captures, handed to the build team outside the repository and committed as fixtures with their provenance (Alpaca asset records for an inactive ticker, two active tickers, a 404 and a 401; one live score body; a roster with holdings) | PM approval of the plan and the approach at 2673b182 under the project's standing autonomy directive |
 
 ## Docs to Update
 - `docs/generated/`: one file per touched module, including the check's module and `app.py`'s scheduler and dashboard sections.
