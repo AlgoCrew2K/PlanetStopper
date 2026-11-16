@@ -172,6 +172,8 @@ class _Run:
                 self.stop = _STOP_MARKET
             elif not self._other_reader_running():
                 return None
+            elif self.stop is not None:  # the wait check could not answer: no poll, no overwrite
+                break
             elif (self.clock() - self.started).total_seconds() >= GATE_WAIT_LIMIT_SECONDS:
                 self.stop = _STOP_OTHER_JOB
             else:
