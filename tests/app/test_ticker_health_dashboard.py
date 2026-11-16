@@ -266,6 +266,14 @@ def world(monkeypatch, tmp_path):
         yield World(router, client, monkeypatch)
 
 
+def assert_view_is_empty() -> None:
+    """The view handed to the template is the empty one; the clock is the one the page just
+    read (``world.page`` froze ``app.datetime`` first)."""
+    view = getattr(app_module, "_ticker_health_page_view", None)
+    assert view is not None, "app._ticker_health_page_view does not exist"
+    assert view() == {"warning": None, "notices": []}
+
+
 def only_the_warning(page: Page, expected_lines: list[str]) -> None:
     assert page.warning is not None, "the dead-ticker warning is not on the page"
     assert page.line_texts() == expected_lines
@@ -404,12 +412,14 @@ class TestWarning:
         assert page.warning is None and page.notice is None
         assert LEAD not in page.html and "Ticker check" not in page.html
         assert "No ticker check has completed" not in page.html
+        assert_view_is_empty()
 
     def test_a_roster_that_lists_no_symphony_shows_nothing_either(self, world):
         world.router.set_roster()
         world.run()
         page = world.page()
         assert page.warning is None and page.notice is None
+        assert_view_is_empty()
 
     def test_the_page_reads_stored_results_and_makes_no_request(self, world):
         roster(world.router, X)
@@ -634,6 +644,10 @@ class Case:
 
 SHNY_X = shny_line(X)
 SHNY_Y = shny_line(Y)
+# The derived tree the unanswered-ticker cases give X: SHNY on asset nodes only.
+SHNY_X_ASSET_ONLY = dead_line(
+    name_of(X), "SHNY", DEAD_SHNY, t.oracle_tree_uses(t.tree_with(assets=["SHNY"]))["SHNY"]
+)
 UNAVAILABLE_NONE = "Ticker check unavailable: {reason}. No completed check yet."
 
 
@@ -795,17 +809,17 @@ NOTICE_CASES = {
     "one_ticker_rate_limited": Case(
         _unanswered_setup(lambda: h.error_reply(429), 1),
         [f"1 ticker in {_name(X)} could not be checked (Alpaca rate limit)."],
-        [SHNY_X],
+        [SHNY_X_ASSET_ONLY],
     ),
     "two_tickers_rate_limited": Case(
         _unanswered_setup(lambda: h.error_reply(429), 2),
         [f"2 tickers in {_name(X)} could not be checked (Alpaca rate limit)."],
-        [SHNY_X],
+        [SHNY_X_ASSET_ONLY],
     ),
     "two_tickers_unavailable": Case(
         _unanswered_setup(lambda: alpaca_status(503), 2),
         [f"2 tickers in {_name(X)} could not be checked (Alpaca unavailable)."],
-        [SHNY_X],
+        [SHNY_X_ASSET_ONLY],
     ),
     "alpaca_unreachable": Case(
         _alpaca_unreachable_setup,
@@ -1215,6 +1229,7 @@ class TestSecurity:
     def test_no_session_means_a_redirect_to_login_and_no_check_result(self, world, auth_client):  # noqa: F811
         roster(world.router, X)
         world.run()
+        assert world.page().warning is not None, "the dead-ticker warning is not on the page"
         response = auth_client.get("/", follow_redirects=False)
         assert response.status_code == 302
         assert "/login" in response.headers["Location"]
@@ -1264,7 +1279,6 @@ class TestDesignSystemStyling:
         world.router.set_tree(Y, h.error_reply(503))
         world.run()
         page = world.page()
-        assert page.warning is not None, "the dead-ticker warning is not on the page"
         css = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", page.html, re.DOTALL))
         return css, page
 
