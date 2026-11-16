@@ -109,7 +109,12 @@ PAGE_DELAY = timedelta(hours=10)
 CLOSED_AFTERNOON = datetime(2026, 11, 16, 22, 0, tzinfo=UTC)
 
 NEVER_COMPLETED = "No ticker check has completed yet."
-LINE_REASONS = {"SHNY": DEAD_SHNY, "ZZZZQQ": NOT_LISTED, "AKAN": NOT_TRADABLE}
+LINE_REASONS = {
+    "SHNY": DEAD_SHNY,
+    "ZZZZQQ": NOT_LISTED,
+    "AAAAQQ": NOT_LISTED,
+    "AKAN": NOT_TRADABLE,
+}
 CREDENTIAL_KEYS = (
     "COMPOSER_KEY_ID",
     "COMPOSER_SECRET",
@@ -383,15 +388,20 @@ class TestWarning:
         assert "Used by 0 asset nodes and 1 condition." in joined
 
     def test_lines_run_in_display_name_then_ticker_order(self, world):
-        trees = {X: t.tree_with(assets=["ZZZZQQ"]), Y: t.tree_with(assets=["SHNY", "AKAN"])}
+        # X's ticker sorts before both of Y's while X's name sorts after Y's, so an order by
+        # ticker first and an order by name first give different pages.
+        trees = {X: t.tree_with(assets=["AAAAQQ"]), Y: t.tree_with(assets=["SHNY", "AKAN"])}
         for symphony_id, tree in trees.items():
             world.router.set_tree(symphony_id, tree)
-        world.router.set_alpaca("ZZZZQQ", t.not_found_reply())
+        world.router.set_alpaca("AAAAQQ", t.not_found_reply())
         world.router.set_alpaca("AKAN", t.active_not_tradable_reply())
         roster(world.router, X, Y)
         world.run()
-        pairs = [(X, "ZZZZQQ"), (Y, "SHNY"), (Y, "AKAN")]
+        pairs = [(X, "AAAAQQ"), (Y, "SHNY"), (Y, "AKAN")]
         ordered = sorted(pairs, key=lambda p: (name_of(p[0]).casefold(), p[0], p[1]))
+        assert ordered != sorted(pairs, key=lambda p: (p[1], p[0])), (
+            "fixture integrity: name order must differ from ticker order"
+        )
         expected = [
             dead_line(
                 name_of(sid),
@@ -409,17 +419,38 @@ class TestWarning:
         world.run()
         only_the_warning(world.page(), [shny_line(X, name=X)])
 
-    def test_a_symphony_listed_by_two_accounts_is_one_line_held_when_either_holds_it(self, world):
+    @pytest.mark.parametrize(
+        ("first_holds", "second_holds", "ending"),
+        [
+            pytest.param(True, False, HELD, id="held_only_in_the_account_read_first"),
+            pytest.param(False, True, HELD, id="held_only_in_the_account_read_second"),
+            pytest.param(True, True, HELD, id="held_in_both"),
+            pytest.param(False, False, NOT_HELD, id="held_in_neither"),
+        ],
+    )
+    def test_a_symphony_listed_by_two_accounts_is_one_line_held_when_either_holds_it(
+        self, world, first_holds, second_holds, ending
+    ):
+        """Dead ticker SHNY: the holdings of every account that lists the symphony count, so an
+        account read earlier is never dropped for a later one."""
         world.router.set_roster(
-            t.roster_entry(X, name="Name in the first account", holdings=holdings_of("BIL")),
+            t.roster_entry(
+                X,
+                name="Name in the first account",
+                holdings=holdings_of("BIL", *(["SHNY"] if first_holds else [])),
+            ),
             account=h.ACCOUNT_ID,
         )
         world.router.set_roster(
-            t.roster_entry(X, name="Name in the second account", holdings=holdings_of("SHNY")),
+            t.roster_entry(
+                X,
+                name="Name in the second account",
+                holdings=holdings_of("BIL", *(["SHNY"] if second_holds else [])),
+            ),
             account=h.SECOND_ACCOUNT_ID,
         )
         world.run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
-        only_the_warning(world.page(), [shny_line(X, HELD, name="Name in the first account")])
+        only_the_warning(world.page(), [shny_line(X, ending, name="Name in the first account")])
 
     def test_a_check_that_found_nothing_shows_neither_a_warning_nor_a_notice(self, world):
         world.router.set_alpaca("SHNY", t.healthy_reply("SHNY"))
