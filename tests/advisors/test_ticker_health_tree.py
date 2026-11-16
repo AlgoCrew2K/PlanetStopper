@@ -410,9 +410,6 @@ CAPTURED_TREES = [SCORE_PATH, CASE4_PATH, *FRONTRUNNER_PATHS]
 
 
 class TestCapturedTrees:
-    def test_the_eleven_trimmed_real_trees_are_found(self):
-        assert len(FRONTRUNNER_PATHS) == 11
-
     @pytest.mark.parametrize("path", CAPTURED_TREES)
     def test_every_ticker_and_both_counts_match_an_independent_reading(self, path):
         tree = load_tree(path)
@@ -543,6 +540,9 @@ def _digest(tickers: set) -> dict:
 
 class TestExistingTickerReadersUnchanged:
     """Behaviour present at the base: these pass before and after the change (a characterization)."""
+
+    def test_the_eleven_trimmed_real_trees_are_found_so_no_parametrization_shrinks_silently(self):
+        assert len(FRONTRUNNER_PATHS) == 11
 
     @pytest.mark.parametrize("path", CAPTURED_TREES)
     def test_both_existing_readers_return_what_they_returned_at_the_ref(self, path):

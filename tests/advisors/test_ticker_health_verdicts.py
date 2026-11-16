@@ -239,10 +239,11 @@ class TestTransportFailure:
 
 
 class TestVerdictRecord:
-    def test_a_verdict_is_a_frozen_record_with_state_and_reason(self):
+    def test_the_classifier_returns_a_frozen_verdict_record(self):
         import dataclasses
 
-        verdict = th.TickerVerdict(state="dead", reason=DEAD_BOTH)
+        verdict = th.classify_asset_answer(*capture("asset_SHNY_inactive_not_tradable.json"))
+        assert isinstance(verdict, th.TickerVerdict)
         assert (verdict.state, verdict.reason) == ("dead", DEAD_BOTH)
         with pytest.raises(dataclasses.FrozenInstanceError):
             verdict.state = "healthy"
