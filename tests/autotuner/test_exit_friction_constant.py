@@ -1,8 +1,8 @@
 """
 Pins for SIM_EXIT_FRICTION_PCT, the replay's simulated-exit cost.
 
-Placement: a named, module-scope constant in autotuner.py (NOT math_engine.py -- that file is
-imported by the live engine; this is a replay-environment parameter).
+Placement: a named, module-scope constant in autotuner.py (NOT math_engine.py, which the live
+engine imports; this is a replay-environment parameter).
 
 Value and units: 0.5 PERCENTAGE POINTS, in autotuner's percent-point convention
 (``autotuner.RETURN_PCT_TO_FRACTION`` == 100.0 converts percent to fraction). The subtraction
@@ -15,7 +15,7 @@ the gross-of-cost gap named in docs/research/methodology-validation-2026-07.md. 
 cost from the per-trade slippage Composer backtests assume for daily rebalancing, so nothing here
 derives it from the backtest client, and this module reads nothing from that client.
 
-Non-tunability: the constant must never be tunable -- absent from OPTUNA_SEARCH_SPACE_KEYS, never
+Non-tunability: the constant must never be tunable: absent from OPTUNA_SEARCH_SPACE_KEYS, never
 read from the per-trial params dict ``p``, never env-tunable. A tunable friction would let the
 optimizer game its own cost model.
 """
@@ -66,16 +66,15 @@ def test_sim_exit_friction_pct_exists_at_autotuner_module_scope():
 
 
 def test_sim_exit_friction_pct_not_defined_in_math_engine():
-    """The constant lives in autotuner.py, not math_engine.py -- math_engine is imported by the
+    """The constant lives in autotuner.py, not math_engine.py: math_engine is imported by the
     LIVE engine (alpha_bot_execution.py); this constant is a replay-only parameter and must stay
     structurally out of the file the live decision path imports from.
     """
     import math_engine
 
     assert not hasattr(math_engine, "SIM_EXIT_FRICTION_PCT"), (
-        "SIM_EXIT_FRICTION_PCT must NOT be defined in math_engine.py -- that "
-        "module is imported by the live engine's decision path. It belongs "
-        "in autotuner.py module scope."
+        "SIM_EXIT_FRICTION_PCT must NOT be defined in math_engine.py, which the live "
+        "engine's decision path imports. It belongs in autotuner.py module scope."
     )
 
 
@@ -108,7 +107,7 @@ def test_sim_exit_friction_pct_units_are_percentage_points_not_decimal_fraction(
         _EXPECTED_PERCENT_POINTS * autotuner.RETURN_PCT_TO_FRACTION, abs=1e-9
     )
     assert actual != pytest.approx(as_fraction, abs=1e-9), (
-        "SIM_EXIT_FRICTION_PCT must NOT be the decimal-fraction form of the cost -- that value "
+        "SIM_EXIT_FRICTION_PCT must NOT be the decimal-fraction form of the cost: that value "
         "is copied without converting to this file's percent-point convention."
     )
 
@@ -232,7 +231,7 @@ def test_sim_exit_friction_pct_never_read_from_trial_params_dict():
 
     AST scan for any ``p.get("SIM_EXIT_FRICTION_PCT", ...)`` (or
     ``params.get(...)`` / subscript ``p["SIM_EXIT_FRICTION_PCT"]``) call
-    pattern anywhere in autotuner.py -- the constant must be referenced
+    pattern anywhere in autotuner.py; the constant must be referenced
     directly as ``SIM_EXIT_FRICTION_PCT`` / ``autotuner.SIM_EXIT_FRICTION_PCT``,
     never sourced from the per-trial strategy-params dict.
     """
@@ -260,18 +259,18 @@ def test_sim_exit_friction_pct_never_read_from_trial_params_dict():
 
     assert not offending, (
         f"SIM_EXIT_FRICTION_PCT must never be read from a per-trial params "
-        f"dict (p.get(...) / p[...]) -- found dict-style access at line(s) "
+        f"dict (p.get(...) / p[...]); found dict-style access at line(s) "
         f"{offending}. It is a pure module constant."
     )
 
 
 def test_sim_exit_friction_pct_never_read_from_environment():
-    """Not env-tunable -- no os.environ access keyed on this name."""
+    """Not env-tunable: no os.environ access keyed on this name."""
     src = _AUTOTUNER_SRC.read_text(encoding="utf-8")
     assert 'environ.get("SIM_EXIT_FRICTION_PCT"' not in src, (
         "SIM_EXIT_FRICTION_PCT must not be read from an environment variable "
-        "-- it must be a fixed, non-operator-tunable-at-runtime "
-        "constant (only a code change may adjust it)."
+        "(it must be a fixed constant that an operator cannot tune at runtime; only a code "
+        "change may adjust it)."
     )
     assert "SIM_EXIT_FRICTION_PCT" not in _MATH_ENGINE_SRC.read_text(encoding="utf-8"), (
         "SIM_EXIT_FRICTION_PCT must not appear anywhere in math_engine.py "
@@ -281,7 +280,7 @@ def test_sim_exit_friction_pct_never_read_from_environment():
 
 def test_validate_search_space_nn1_does_not_need_sim_exit_friction_pct_forbidden_entry():
     """Sanity: SIM_EXIT_FRICTION_PCT is not a THEORY/CADENCE/MANDATE/CALIBRATION
-    spec-facet name either -- it's a replay cost parameter, not a frozen
+    spec-facet name either: it's a replay cost parameter, not a frozen
     spec facet, so it should not appear in validate_search_space_nn1's
     forbidden-facet set. This guards against a future maintainer conflating
     "non-tunable" with "spec-frozen facet" and wiring it into the wrong
@@ -289,6 +288,6 @@ def test_validate_search_space_nn1_does_not_need_sim_exit_friction_pct_forbidden
     """
     autotuner = _import_autotuner()
     # validate_search_space_nn1 must not raise merely because
-    # SIM_EXIT_FRICTION_PCT exists at module scope -- it is unrelated to the
+    # SIM_EXIT_FRICTION_PCT exists at module scope; it is unrelated to the
     # NN1 spec-freeze facet set.
     autotuner.validate_search_space_nn1()

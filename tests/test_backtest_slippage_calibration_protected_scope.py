@@ -2,10 +2,10 @@
 
 The slice edits two files that other pins hold byte for byte:
 
-* ``advisors/composer_backtest_client.py`` -- the slippage default (``_DEFAULT_SLIPPAGE_PERCENT``)
+* ``advisors/composer_backtest_client.py``: the slippage default (``_DEFAULT_SLIPPAGE_PERCENT``)
   with the comment block above it, the comment block above ``_DEFAULT_CAPITAL``, and the one
   ``slippage_percent:`` unit line of the ``run_backtest`` docstring.
-* ``autotuner.py`` -- the comment block above ``SIM_EXIT_FRICTION_PCT``; the assignment itself is
+* ``autotuner.py``: the comment block above ``SIM_EXIT_FRICTION_PCT``; the assignment itself is
   unchanged.
 
 A full-file pin cannot tell "only the listed edits" from "something else too", so each file is
