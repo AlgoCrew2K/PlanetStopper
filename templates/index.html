@@ -1262,6 +1262,33 @@
     .ctl-pos { color: var(--studio-pos); border-color: var(--studio-pos); }
     .ctl-neg { color: var(--studio-neg); border-color: var(--studio-neg); }
     .ctl-btn:disabled { cursor: not-allowed; }
+    .ticker-health-warning {
+      background: var(--studio-warn-tint);
+      border: 1px solid var(--studio-warn-border);
+      color: var(--studio-ink);
+      border-radius: 10px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+    .ticker-health-warning p { margin: 0 0 6px; }
+    .ticker-health-warning ul { margin: 0; padding-left: 18px; }
+    .ticker-health-notice {
+      background: var(--studio-chip-bg);
+      border: 1px solid var(--studio-rule);
+      color: var(--studio-ink-dim);
+      border-radius: 10px;
+      padding: 8px 14px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+    .ticker-health-notice p { margin: 0; }
+    .ticker-health-earlier { color: var(--studio-ink-dim); }
   </style>
 </head>
 
@@ -1313,6 +1340,23 @@
     <div id="market-state-banner" class="market-banner" hidden data-market-state="">
       Market closed
     </div>
+
+    {% if ticker_health is defined and ticker_health.warning %}
+    <div class="ticker-health-warning" data-testid="ticker-health-warning">
+      <p>{{ ticker_health_lead }} Checked {{ ticker_health.warning.checked }}.</p>
+      <ul>
+        {% for line in ticker_health.warning.lines %}
+        <li>{{ line.text }}{% if line.from_check %} <span class="ticker-health-earlier">(from the check at {{ line.from_check }})</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% if ticker_health is defined and ticker_health.notices %}
+    <div class="ticker-health-notice" data-testid="ticker-health-notice">
+      {% for notice in ticker_health.notices %}<p>{{ notice }}</p>
+      {% endfor %}
+    </div>
+    {% endif %}
 
     <!-- ======================== HERO SECTION ======================== -->
     <section data-testid="hero-section" class="hero-section">

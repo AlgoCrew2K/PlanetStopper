@@ -298,7 +298,10 @@ def _run_notices(latest: dict, completed: dict | None) -> list[str]:
         return [
             f"Ticker check unavailable: {latest['reason']}. {last or 'No completed check yet.'}"
         ]
-    return [f"Ticker check failed on {format_et_stamp(latest['ended_at'])}."]
+    return [
+        f"Ticker check failed on {format_et_stamp(latest['ended_at'])}. "
+        f"{last or 'No completed check yet.'}"
+    ]
 
 
 def page_view(latest: dict | None, latest_completed: dict | None, now_utc: datetime) -> dict:

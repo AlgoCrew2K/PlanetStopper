@@ -2155,6 +2155,114 @@ def _run_regime_label_tick() -> None:
     threading.Thread(target=_regime_label_job_worker, daemon=True, name="regime-label").start()
 
 
+# The named threads of the other jobs that read Composer; the ticker check waits for each to end.
+# Every name is the literal name= of a threading.Thread call in this file.
+_TICKER_HEALTH_WAITS_FOR_THREADS = (
+    "incubation-tick",
+    "retirement-recommender-tick",
+    "retirement-run-now",
+    "tenure-review-on-demand",
+)
+_TICKER_HEALTH_RUN_LOCK = threading.Lock()
+
+
+def _ticker_health_other_reader_running() -> bool:
+    """True while another Composer reader runs; any error answers True (wait, never overlap)."""
+    try:
+        from advisors import tenure_review  # lazy (CC-2)
+
+        live = {t.name for t in threading.enumerate() if t.is_alive()}
+        return (
+            any(name in live for name in _TICKER_HEALTH_WAITS_FOR_THREADS)
+            or _RETIREMENT_RUN_LOCK.locked()
+            or bool(tenure_review.REVIEW_RUN_STATE.snapshot()["running"])
+        )
+    except Exception:
+        return True
+
+
+def _ticker_health_run_body(trigger: str) -> None:
+    """The one road to a ticker check: one at a time, never raising an Exception."""
+    if not _TICKER_HEALTH_RUN_LOCK.acquire(blocking=False):
+        _daemon_log.info("ticker check (%s) not started: a check is already running", trigger)
+        return
+    try:
+        from advisors import tenure_review_runner, ticker_health_runner  # lazy (CC-2)
+
+        env = _ticker_health_settings()
+        ticker_health_runner.run_ticker_health_check(
+            account_ids=tenure_review_runner.configured_account_ids(env),
+            account_labels=tenure_review_runner.configured_account_labels(env),
+            alpaca_key=env.get("ALPACA_KEY"),
+            alpaca_secret=env.get("ALPACA_SECRET"),
+            webhook_url=env.get("DISCORD_WEBHOOK_URL"),
+            trigger=trigger,
+            other_reader_running=_ticker_health_other_reader_running,
+        )
+    except Exception as exc:
+        _daemon_log.warning("Ticker check failed: %s", type(exc).__name__)
+    finally:
+        _TICKER_HEALTH_RUN_LOCK.release()
+
+
+def _run_ticker_health_tick() -> None:
+    """Non-blocking nightly wrapper: the check runs on its own daemon thread."""
+    threading.Thread(
+        target=_ticker_health_run_body, args=("nightly",), daemon=True, name="ticker-health-check"
+    ).start()
+
+
+_TICKER_HEALTH_UNREADABLE_NOTICE = "The ticker check result could not be read."
+
+
+def _ticker_health_page_view() -> dict:
+    """The dashboard's dead-ticker warning and notices, from the stored runs only."""
+    try:
+        from advisors import ticker_health, ticker_health_runner  # lazy (CC-2)
+
+        runs = ticker_health_runner.read_latest_runs()
+        return ticker_health.page_view(runs.latest, runs.latest_completed, datetime.now(UTC))
+    except Exception as exc:
+        _daemon_log.warning("Ticker check result not read: %s", type(exc).__name__)
+        return {"warning": None, "notices": [_TICKER_HEALTH_UNREADABLE_NOTICE]}
+
+
+def _ticker_health_catch_up_due(now_utc) -> bool:
+    """True when the market is closed and no completed check ended since the latest close."""
+    try:
+        from advisors import ticker_health_runner  # lazy (CC-2)
+
+        now_et = now_utc.astimezone(_ET)
+        if market_calendar.get_market_state(now_et) == "open":
+            return False
+        session = market_calendar.most_recent_completed_session(now_et)
+        if session is None:
+            return False
+        close = _DatetimeType.combine(session, market_calendar.session_close(session), tzinfo=_ET)
+        completed = ticker_health_runner.read_latest_runs().latest_completed
+        return completed is None or _DatetimeType.fromisoformat(completed["ended_at"]) < close
+    except Exception as exc:
+        _daemon_log.warning("Ticker check catch-up decision failed: %s", type(exc).__name__)
+        return False
+
+
+def _start_ticker_health_catch_up() -> bool:
+    """At daemon start, run the check at once when the night run was missed. Never raises."""
+    try:
+        if not _ticker_health_catch_up_due(datetime.now(UTC)):
+            return False
+        threading.Thread(
+            target=_ticker_health_run_body,
+            args=("catch_up",),
+            daemon=True,
+            name="ticker-health-catch-up",
+        ).start()
+    except Exception as exc:
+        _daemon_log.warning("Ticker check catch-up not started: %s", type(exc).__name__)
+        return False
+    return True
+
+
 # PR#140 /code-review finding 1 (Cycle 2c, AC-4): the number of decimal
 # places every float in a retirement evidence snapshot is rounded to before
 # comparison -- named so both _round_floats and its docstrings share one
@@ -2650,17 +2758,36 @@ _TENURE_REVIEW_ACCOUNT_KEYS = ("ACCOUNT_INDIVIDUAL", "ACCOUNT_ROTH", "ACCOUNT_TR
 _TENURE_REVIEW_FAILED_TEXT = "review failed"
 
 
-def _tenure_review_settings() -> dict:
-    """The review's settings, read fresh from the env file (the file wins over os.environ)."""
+def _env_file_settings(keys) -> dict:
+    """The named settings, read fresh from the env file (the file wins over os.environ, even
+    when blank); a key set in neither place is left out."""
     file_values = dotenv_values(ENV_FILE_PATH)
     env = {}
-    for key in (_TENURE_REVIEW_THRESHOLD_KEY, *_TENURE_REVIEW_ACCOUNT_KEYS):
+    for key in keys:
         value = file_values.get(key)
         if value is None:
             value = os.environ.get(key)
         if value is not None:
             env[key] = value
     return env
+
+
+def _tenure_review_settings() -> dict:
+    """The review's settings: its threshold and the account ids, nothing else."""
+    return _env_file_settings((_TENURE_REVIEW_THRESHOLD_KEY, *_TENURE_REVIEW_ACCOUNT_KEYS))
+
+
+_TICKER_HEALTH_SETTING_KEYS = (
+    *_TENURE_REVIEW_ACCOUNT_KEYS,
+    "ALPACA_KEY",
+    "ALPACA_SECRET",
+    "DISCORD_WEBHOOK_URL",
+)
+
+
+def _ticker_health_settings() -> dict:
+    """The ticker check's settings: the account ids, the Alpaca key pair and the webhook."""
+    return _env_file_settings(_TICKER_HEALTH_SETTING_KEYS)
 
 
 def _plain_number(value: object, *, decimals: int) -> str | None:
@@ -3090,6 +3217,7 @@ def run_scheduler():
     _guard(schedule.every().day.at("02:00").do(_run_trigger_retention), "02:00 trigger retention")
     # Component 7+8: daily off-hours lens pipeline — Market Prism summary (CYCLE4-BRIEF.md).
     # Runs at 03:00 (off-hours) so it never overlaps the live market-hours execution path.
+    _guard(schedule.every().day.at("01:30").do(_run_ticker_health_tick), "01:30 ticker health")
     _guard(schedule.every().day.at("03:00").do(_run_lens_pipeline), "03:00 lens pipeline")
     # Strategy Incubation Gate daily tick — staggered 30 minutes after the lens
     # pipeline slot so the two off-hours jobs never contend for the same minute.
@@ -3804,8 +3932,12 @@ def _render_dashboard(
     if wording_day is not None:
         session_day = f"{wording_day.strftime('%b')} {wording_day.day}"
 
+    from advisors import ticker_health  # lazy (CC-2)
+
     return render_template(
         "index.html",
+        ticker_health=_ticker_health_page_view(),
+        ticker_health_lead=ticker_health.LEAD_SENTENCE,
         session_day=session_day,
         engine_phase=engine_phase,
         # The headline's descriptor says "Simulated" while the engine's last cycle placed no real
@@ -13310,6 +13442,7 @@ if __name__ == "__main__":
 
     # Fill the account totals off-thread so the first polls are not value-weighted.
     _start_account_refresh("startup")
+    _start_ticker_health_catch_up()
 
     # Start the scheduler thread
     threading.Thread(target=run_scheduler, daemon=True).start()
