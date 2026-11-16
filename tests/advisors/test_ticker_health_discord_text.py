@@ -302,3 +302,26 @@ class TestMentionsAndMarkupInNamesAndTickers:
         assert lines[0] == LEAD
         assert len(lines) == 3, lines
         assert EXAMPLE_ID in lines[1] and "idBBBBBBBBBBBBBBBBBB" in lines[2]
+
+    # Every other character that ``str.splitlines`` and Unicode treat as a line boundary
+    # (vertical tab, form feed, the three information separators, next line, line and paragraph
+    # separator). DERIVED hostile names, labelled: a captured name cannot be hostile by definition.
+    OTHER_LINE_BOUNDARIES = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", " ", " "]
+
+    @pytest.mark.parametrize("separator", OTHER_LINE_BOUNDARIES, ids=lambda s: f"U+{ord(s):04X}")
+    def test_any_other_line_boundary_in_a_name_never_adds_a_line(self, separator):
+        hostile = pair(name=f"Evil{separator}FAKE LINE (ZZZZZZZZZZZZZZZZZZZZ): SPY is dead.")
+        other = pair("idBBBBBBBBBBBBBBBBBB", "Second fund", "PLRZ")
+        (message,) = th.discord_messages([hostile, other])
+        assert separator not in message
+        assert len(message.splitlines()) == 3, message.splitlines()
+        flattened = pair(name="Evil FAKE LINE (ZZZZZZZZZZZZZZZZZZZZ): SPY is dead.")
+        assert body_lines(message) == [expected_line(flattened), expected_line(other)]
+
+    @pytest.mark.parametrize("separator", OTHER_LINE_BOUNDARIES, ids=lambda s: f"U+{ord(s):04X}")
+    def test_a_long_name_with_a_line_boundary_is_cut_without_one(self, separator):
+        long_name = f"Alpha{separator}" + "Beta " * 600
+        (message,) = th.discord_messages([pair(name=long_name)])
+        assert separator not in message
+        assert len(message) <= th.DISCORD_CONTENT_LIMIT
+        assert len(message.splitlines()) == 2, message.splitlines()
