@@ -113,7 +113,8 @@ _SCOPE = {
 # LF-normalized sha256 of each file with its listed edits cut (blank-line runs collapsed),
 # computed from `git show aafe476d:<path>`; equal to the file at the slice head.
 _PINNED_SCOPE_DIGESTS = {
-    "autotuner.py": "19f7be1a52a6d0f7f7e017754b9609f220cc97bea6e9abe0f3bda17b36e2735a",
+    # re-taken at cc3eca2d for backtest-slippage-calibration (calibrated backtest slippage default); tests/test_backtest_slippage_calibration_protected_scope.py proves the change stays inside its listed edits.
+    "autotuner.py": "e11e1f88c6c8788020f43596a3311b9daa69b1b7498be83c545e2567413e4fdc",
     "synthetic_history.py": "1b284b587a208f354732fb6d5836c46dbd99fc7530a8c8946db047b3a957d6ad",
 }
 

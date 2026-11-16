@@ -75,9 +75,20 @@ _RETRYABLE_HTTP_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 # Unix epoch used by Composer for day integers (days since 1970-01-01).
 _COMPOSER_DAY_EPOCH = date(1970, 1, 1)
 
-# Default backtest parameters — match the Composer UI defaults.
+# Default backtest parameters. Capital, the fee flags, the broker and the version match the
+# Composer UI defaults; the slippage default below is calibrated to live Composer results.
 _DEFAULT_CAPITAL: float = 10_000.0
-_DEFAULT_SLIPPAGE_PERCENT: float = 0.005
+# Slippage per trade, a fraction of each traded dollar: 0.001 is 0.1%. Calibrated 2026-11-16
+# against live Composer results: for 8 live symphonies, each current tree was backtested
+# (Composer backtest v2, broker alpaca) at slippage 0, 0.001 and 0.005 and compared day by day
+# with Composer's realized deposit-adjusted daily returns over the 87 trading days since each
+# tree's last edit (46 for one symphony), 2026-07-15 to 2026-11-13. Daily correlation, live
+# with backtest: 0.976 to 0.996. Simple mean of the eight per-symphony gaps (live minus
+# backtest) at 0, 0.001 and 0.005: -6.45, +0.875 and +29.9 bps a day. Per symphony the gap
+# runs from -11.4 to +9.3 bps a day at 0.001 and from +15.3 to +45.9 bps a day at 0.005, so
+# 0.005 understated live results on these daily-rebalancing trees. 0.001 is the measured
+# setting closest to live, slightly conservative on the mean.
+_DEFAULT_SLIPPAGE_PERCENT: float = 0.001
 _DEFAULT_BROKER: str = "alpaca"
 _DEFAULT_BACKTEST_VERSION: str = "v2"
 
@@ -301,7 +312,7 @@ def run_backtest(
     apply_reg_fee / apply_taf_fee:
         SEC/FINRA fee flags.  Default both True to match Composer UI defaults.
     slippage_percent:
-        Execution slippage fraction (0.005 = 0.5 %).
+        Execution slippage fraction (0.001 = 0.1 %).
     broker:
         Broker enum accepted by Composer.  Default ``"alpaca"``.
     backtest_version:

@@ -3,7 +3,7 @@
 > M2 AI Advisor building block: submits an inline symphony definition to Composer's `POST /api/v0.1/backtest` and parses the response into a typed `BacktestResult` the gate layer (`advisors/backtest_gate_engine.py`) consumes directly.
 
 **Source:** `advisors/composer_backtest_client.py`
-**Last updated:** 2026-07-17 (math-r2, `DE-MATH-R2-001` AC-5 — `_extract_returns` emits simple returns instead of log returns at the producer boundary)
+**Last updated:** 2026-11-16
 
 *This is this module's first `docs/generated/` entry — it had no prior doc-gen coverage. Full-module coverage reflects that this cycle's diff (`e57c2970`) touched the module for the first time under doc-gen; created now rather than left undocumented indefinitely.*
 
@@ -20,7 +20,7 @@ Off-execution-path: consumed by the Strategy Builder / advisor proposal pipeline
 
 ## Public API
 
-### `run_backtest(raw_value, symphony_id="", *, capital=10_000.0, apply_reg_fee=True, apply_taf_fee=True, slippage_percent=0.005, broker="alpaca", backtest_version="v2", max_retries=4) -> BacktestResult`
+### `run_backtest(raw_value, symphony_id="", *, capital=10_000.0, apply_reg_fee=True, apply_taf_fee=True, slippage_percent=0.001, broker="alpaca", backtest_version="v2", max_retries=4) -> BacktestResult`
 
 Submit an inline symphony tree and parse the result. Never raises.
 
@@ -31,7 +31,7 @@ Submit an inline symphony tree and parse the result. Never raises.
 | `symphony_id` | `str` | Composer symphony UUID for unpacking `dvm_capital`. Defaults to `raw_value.get("id", "")`. |
 | `capital` | `float` | Starting portfolio value (USD). Default 10,000. |
 | `apply_reg_fee` / `apply_taf_fee` | `bool` | SEC/FINRA fee flags. Default both `True`, matching the Composer UI. |
-| `slippage_percent` | `float` | Execution slippage fraction (`0.005` = 0.5%). |
+| `slippage_percent` | `float` | Execution slippage fraction (`0.001` = 0.1%). |
 | `broker` | `str` | Broker enum Composer accepts. Default `"alpaca"`. |
 | `backtest_version` | `str` | `"v1"` or `"v2"`. Default `"v2"`. |
 | `max_retries` | `int` | Max retry attempts after transient failures. `0` = first attempt only. Bounded, never unbounded. |
@@ -94,9 +94,22 @@ Constructs a failure `BacktestResult` — `stats=None`, `data_warnings=[]`, `err
 | `_RETRYABLE_HTTP_STATUSES` | `{429, 500, 502, 503, 504}` | Transient statuses that warrant a retry. |
 | `_COMPOSER_DAY_EPOCH` | `date(1970, 1, 1)` | Unix epoch, used to convert Composer day integers to ISO dates. |
 | `_DEFAULT_CAPITAL` | `10_000.0` | Default starting portfolio value, matching the Composer UI. |
-| `_DEFAULT_SLIPPAGE_PERCENT` | `0.005` | Default execution slippage fraction. |
+| `_DEFAULT_SLIPPAGE_PERCENT` | `0.001` | Default execution slippage fraction, calibrated to live Composer results (see Slippage calibration). |
 | `_DEFAULT_BROKER` | `"alpaca"` | Default broker enum. |
 | `_DEFAULT_BACKTEST_VERSION` | `"v2"` | Default backtest version. |
+
+### Slippage calibration
+
+The default slippage is a fraction of each traded dollar: 0.001 is 0.1%. Calibrated 2026-11-16
+against live Composer results: for 8 live symphonies, each current tree was backtested
+(Composer backtest v2, broker alpaca) at slippage 0, 0.001 and 0.005 and compared day by day
+with Composer's realized deposit-adjusted daily returns over the 87 trading days since each
+tree's last edit (46 for one symphony), 2026-07-15 to 2026-11-13. Daily correlation, live
+with backtest: 0.976 to 0.996. Simple mean of the eight per-symphony gaps (live minus
+backtest) at 0, 0.001 and 0.005: -6.45, +0.875 and +29.9 bps a day. Per symphony the gap
+runs from -11.4 to +9.3 bps a day at 0.001 and from +15.3 to +45.9 bps a day at 0.005, so
+0.005 understated live results on these daily-rebalancing trees. 0.001 is the measured
+setting closest to live, slightly conservative on the mean.
 
 ## Error Handling Contract (AC-X5)
 

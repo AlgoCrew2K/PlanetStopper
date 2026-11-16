@@ -324,6 +324,15 @@ functional impact -- the doc content itself is accurate, only the line pointers 
 - **QA-7: the scope pin no longer holds `load_cached_history`'s WARNING text.** `load_cached_history` is a listed edit in `tests/test_preconditions_replay_protected_scope.py`; the `WARNING_TEMPLATE` tests in `tests/app/test_preconditions_replay_load_once.py` pin the wording.
 - **PRL-API-2: the remembered-failure set clears in full when it fills.** Previously remembered corrupt files are then each read and logged once more. Bounded: one extra read per identity.
 
+### Backtest slippage calibration follow-ups (recorded 2026-11-16, `backtest-slippage-calibration`, see `DECISIONS.md`)
+- **Calibrate `SIM_EXIT_FRICTION_PCT` (0.5 pp) against realized exit costs** and state the magnitude's basis beside the constant. It is an unmeasured assumption carried over from the old backtest default.
+- **The calibration evidence lives only in a source comment**, not a committed fixture (`advisors/composer_backtest_client.py`).
+- **The `composer-api-researcher` agent file is an uncompiled stub** and cannot be dispatched; the slippage unit lookup was done by the PM.
+- **QA-3:** S-4.7's coverage should cite `tests/app/test_exit_turnover_holds_still_while_closed.py`.
+- **QA-4:** the S-1.4 timeout assertion should read the module's own constant.
+- **QA-5:** S-1.8 compares the parser with itself.
+- **CR-2:** the 0.5 exit cost is pinned in three test files.
+
 ---
 
 ## Deployment follow-on

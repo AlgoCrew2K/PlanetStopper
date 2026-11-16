@@ -311,6 +311,14 @@ class TestTradingCostSlot:
         monkeypatch.setattr(autotuner, "SIM_EXIT_FRICTION_PCT", authority)
         assert f24_text(client) == friction_text("F24", printed)
 
+    def test_the_shipped_constant_prints_half_a_point_with_nothing_patched(self, client):
+        """No patch of the authority: the page prints the cost autotuner ships with, so a change
+        of that cost (or a copy that hard-codes another one) shows here."""
+        import autotuner
+
+        assert autotuner.SIM_EXIT_FRICTION_PCT == 0.5
+        assert f24_text(client) == friction_text("F24", "0.5")
+
     @pytest.mark.parametrize(
         "authority",
         [math.nan, math.inf, -math.inf, "0.5", None, True],

@@ -33,6 +33,7 @@ import ast
 import importlib
 import inspect
 import json
+import math
 import pathlib
 import re
 import sys
@@ -485,6 +486,184 @@ class TestRequestContract:
         assert "authorization" in h, "Request must include authorization header."
 
 
+# The backtest slippage this repository's evidence supports, a fraction of each traded dollar
+# (0.001 is 0.1%). Written here as the value the requirement states, never read from the client
+# module: a test that read the module's own default would pass whatever the default is.
+_CALIBRATED_SLIPPAGE = 0.001
+
+
+def _body_of(call: dict) -> dict:
+    """The request body of one recorded post, whichever form the client sent it in."""
+    if call.get("data") is not None:
+        data = call["data"]
+        return json.loads(data.decode("utf-8") if isinstance(data, bytes) else data)
+    return call["json"]
+
+
+class TestDefaultSlippageIsCalibrated:
+    """With no slippage argument every request carries the calibrated fraction, and nothing
+    else about the request changes."""
+
+    @staticmethod
+    def _call(client, reply, *, via=None, **kwargs):
+        calls: list = []
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            (via or client.run_backtest)(**kwargs)
+        return calls
+
+    def test_run_backtest_with_no_slippage_argument_posts_the_calibrated_fraction(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        reply = _make_mock_response(200, body=response_body)
+
+        calls = self._call(client, reply, raw_value=minimal_raw_value)
+
+        assert len(calls) == 1
+        assert _body_of(calls[0])["slippage_percent"] == _CALIBRATED_SLIPPAGE
+
+    def test_submit_backtest_is_the_same_function_and_posts_the_calibrated_fraction(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        reply = _make_mock_response(200, body=response_body)
+
+        calls = self._call(client, reply, via=client.submit_backtest, raw_value=minimal_raw_value)
+
+        assert client.submit_backtest is client.run_backtest
+        assert len(calls) == 1
+        assert _body_of(calls[0])["slippage_percent"] == _CALIBRATED_SLIPPAGE
+
+    def test_the_tenure_review_call_form_posts_the_calibrated_fraction_in_a_compact_body(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        reply = _make_mock_response(200, body=response_body)
+
+        calls = self._call(
+            client,
+            reply,
+            raw_value=minimal_raw_value,
+            start_date="2026-07-20",
+            end_date="2026-10-19",
+            compact_body=True,
+        )
+
+        assert len(calls) == 1
+        assert calls[0].get("json") is None, "a compact body is sent as data=, never json="
+        body = _body_of(calls[0])
+        assert body["slippage_percent"] == _CALIBRATED_SLIPPAGE
+        assert body["start_date"] == "2026-07-20"
+        assert body["end_date"] == "2026-10-19"
+
+    def test_the_request_changes_in_no_field_but_slippage(self, minimal_raw_value, response_body):
+        client = _import_client()
+        reply = _make_mock_response(200, body=response_body)
+
+        calls = self._call(client, reply, raw_value=minimal_raw_value)
+
+        assert len(calls) == 1
+        body = calls[0]["json"]
+        assert body == {
+            "symphony": {"raw_value": minimal_raw_value},
+            "capital": 10000.0,
+            "apply_reg_fee": True,
+            "apply_taf_fee": True,
+            "slippage_percent": _CALIBRATED_SLIPPAGE,
+            "broker": "alpaca",
+            "backtest_version": "v2",
+        }
+        assert isinstance(body["capital"], float)
+        assert calls[0]["url"] == f"{client.COMPOSER_BASE_URL}/backtest"
+        assert calls[0]["headers"] == client.get_composer_headers()
+        assert calls[0]["timeout"] == client._BACKTEST_REQUEST_TIMEOUT
+        assert calls[0]["allow_redirects"] is False
+
+    def test_every_attempt_of_a_rate_limited_call_carries_the_calibrated_fraction(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        replies = [
+            _make_mock_response(429, headers={"Retry-After": "0"}),
+            _make_mock_response(200, body=response_body),
+        ]
+        calls: list = []
+
+        def post(url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return replies[len(calls) - 1]
+
+        with patch("requests.post", side_effect=post), patch("time.sleep"):
+            result = client.run_backtest(raw_value=minimal_raw_value)
+
+        assert len(calls) == 2
+        assert [_body_of(call)["slippage_percent"] for call in calls] == [_CALIBRATED_SLIPPAGE] * 2
+        assert result.error is None
+        assert result.stats == response_body["stats"]
+
+    def test_every_attempt_of_a_call_the_server_keeps_failing_carries_the_calibrated_fraction(
+        self, minimal_raw_value
+    ):
+        client = _import_client()
+        calls: list = []
+
+        def post(url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return _make_mock_response(503)
+
+        with patch("requests.post", side_effect=post), patch("time.sleep"):
+            result = client.run_backtest(raw_value=minimal_raw_value)
+
+        assert len(calls) >= 2, "the default retries re-send the request"
+        assert {_body_of(call)["slippage_percent"] for call in calls} == {_CALIBRATED_SLIPPAGE}
+        assert result.stats is None
+        assert "503" in result.error
+
+    def test_a_422_is_sent_once_with_the_calibrated_fraction_and_never_re_sent_with_another(
+        self, minimal_raw_value
+    ):
+        client = _import_client()
+        reply = _make_mock_response(422)
+
+        calls = self._call(client, reply, raw_value=minimal_raw_value)
+
+        assert len(calls) == 1
+        assert _body_of(calls[0])["slippage_percent"] == _CALIBRATED_SLIPPAGE
+        assert calls[0]["json"]["symphony"]["raw_value"] == minimal_raw_value
+
+    def test_a_422_result_is_the_error_result_of_the_status(self, minimal_raw_value):
+        client = _import_client()
+        reply = _make_mock_response(422)
+
+        with patch("requests.post", return_value=reply):
+            result = client.run_backtest(raw_value=minimal_raw_value)
+
+        assert result.stats is None
+        assert result.error.startswith("HTTP 422")
+
+    def test_the_captured_response_parses_as_it_did_with_the_calibrated_request(self):
+        client = _import_client()
+        record = json.loads(
+            (
+                _REPO_ROOT / "tests" / "fixtures" / "composer" / "backtest_response_v1.json"
+            ).read_text(encoding="utf-8")
+        )
+        symphony_id = record["_symphony_id"]
+        tree = {"id": symphony_id, "step": "root", "children": []}
+        expected = client._parse_response(json.loads(json.dumps(record)), symphony_id)
+        calls: list = []
+        reply = _make_mock_response(200, body=record)
+
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            result = client.run_backtest(raw_value=tree, symphony_id=symphony_id)
+
+        assert _body_of(calls[0])["slippage_percent"] == _CALIBRATED_SLIPPAGE
+        assert result.error is None
+        assert result.daily_portfolio_values, "fixture sanity: the capture holds a series"
+        assert result.daily_returns, "fixture sanity: the capture yields daily returns"
+        assert result == expected
+
+
 # ---------------------------------------------------------------------------
 # Section 6 — Retry: 429 then 200 succeeds; bounded retries
 # ---------------------------------------------------------------------------
@@ -774,6 +953,107 @@ class TestDatedCompactRequest:
         assert len(calls) == 1
         assert result.stats is None
         assert result.error.startswith("HTTP 413")
+
+
+class TestExplicitSlippageIsSentAsGiven:
+    """A slippage argument reaches the request exactly as given, in both body forms; the
+    client validates and substitutes nothing."""
+
+    @staticmethod
+    def _sent(client, raw_value, response_body, **kwargs):
+        calls: list = []
+        reply = _make_mock_response(200, body=response_body)
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            client.run_backtest(raw_value=raw_value, **kwargs)
+        assert len(calls) == 1
+        return calls[0]
+
+    @pytest.mark.parametrize(
+        "given",
+        [0.005, 0.0, 0.001, 0.0025, -0.001, None],
+        ids=["old_default", "zero", "equal_to_default", "between", "negative", "none"],
+    )
+    def test_the_given_value_is_the_one_in_the_json_body(
+        self, minimal_raw_value, response_body, given
+    ):
+        client = _import_client()
+
+        call = self._sent(client, minimal_raw_value, response_body, slippage_percent=given)
+
+        sent = call["json"]["slippage_percent"]
+        assert sent == given
+        assert type(sent) is type(given)
+        if given != _CALIBRATED_SLIPPAGE:
+            assert sent != _CALIBRATED_SLIPPAGE, "the default was substituted for a given value"
+
+    @pytest.mark.parametrize("given", [0.0, 0.005], ids=["zero", "old_default"])
+    def test_the_given_value_is_the_one_in_the_compact_body(
+        self, minimal_raw_value, response_body, given
+    ):
+        client = _import_client()
+
+        call = self._sent(
+            client, minimal_raw_value, response_body, slippage_percent=given, compact_body=True
+        )
+
+        assert call.get("json") is None
+        assert _body_of(call)["slippage_percent"] == given
+
+    @pytest.mark.parametrize(
+        "given",
+        [float("nan"), float("inf"), float("-inf")],
+        ids=["nan", "inf", "minus_inf"],
+    )
+    def test_a_non_finite_value_is_the_one_in_the_json_body_never_the_default(
+        self, minimal_raw_value, response_body, given
+    ):
+        client = _import_client()
+
+        call = self._sent(client, minimal_raw_value, response_body, slippage_percent=given)
+
+        sent = call["json"]["slippage_percent"]
+        assert math.isnan(sent) if math.isnan(given) else sent == given
+        assert sent != _CALIBRATED_SLIPPAGE
+
+    def test_a_non_finite_value_in_a_compact_body_is_an_error_result_without_a_request(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        calls: list = []
+        reply = _make_mock_response(200, body=response_body)
+
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            result = client.run_backtest(
+                raw_value=minimal_raw_value,
+                slippage_percent=float("nan"),
+                compact_body=True,
+            )
+
+        assert calls == []
+        assert result.stats is None
+        assert result.error == "request body not serializable: ValueError"
+
+    def test_every_attempt_of_a_rate_limited_call_carries_the_given_zero(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        replies = [
+            _make_mock_response(429, headers={"Retry-After": "0"}),
+            _make_mock_response(200, body=response_body),
+        ]
+        calls: list = []
+
+        def post(url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return replies[len(calls) - 1]
+
+        with patch("requests.post", side_effect=post), patch("time.sleep"):
+            result = client.run_backtest(raw_value=minimal_raw_value, slippage_percent=0.0)
+
+        assert len(calls) == 2
+        sent = [_body_of(call)["slippage_percent"] for call in calls]
+        assert sent == [0.0, 0.0]
+        assert result.error is None
 
 
 # ---------------------------------------------------------------------------
@@ -1223,6 +1503,233 @@ class TestStatedWaitBound:
 
 
 # ---------------------------------------------------------------------------
+# The slippage default states the evidence it rests on
+# ---------------------------------------------------------------------------
+
+# Provenance: the read-only live measurement of 2026-11-16 recorded in the plan's calibration
+# table (the raw files are not tracked). For each of 8 live symphonies the current Composer tree
+# was backtested at slippage 0, 0.001 and 0.005 and compared day by day with Composer's realized
+# deposit-adjusted daily returns. Each row is (days compared, gap at 0, gap at 0.001, gap at
+# 0.005), the gap being live minus backtest in basis points a day. Symphony names are left out.
+_CALIBRATION_ROWS = (
+    (87, 1.6, 7.8, 32.2),
+    (87, 0.1, 9.3, 45.9),
+    (87, -11.1, -2.7, 30.5),
+    (87, -1.1, 4.2, 25.2),
+    (46, -0.9, 7.1, 38.8),
+    (87, -18.1, -11.4, 15.3),
+    (87, -3.4, 3.2, 29.3),
+    (87, -18.7, -10.5, 22.2),
+)
+_FULL_WINDOW_DAYS = 87
+_SHORT_WINDOW_DAYS = 46
+_WINDOW_START = "2026-07-15"
+_WINDOW_END = "2026-11-13"
+_MEASURED_ON = "2026-11-16"
+_CORRELATION_RANGE = "0.976 to 0.996"
+# The mean at 0.001 the intake stated; it does not follow from the rows and appears nowhere.
+_MISSTATED_MEAN = re.compile(r"(?<![\d.])\+?2\.1(?![\d])")
+_LOCAL_PATH_PATTERNS = (
+    r"\b[A-Za-z]:[\\/]",
+    r"/Users/",
+    r"/home/",
+    r"/tmp\b",
+    r"scratchpad",
+    r"\.claude/",
+)
+_CLIENT_PAGE = _REPO_ROOT / "docs" / "generated" / "advisors_composer_backtest_client.md"
+
+
+def _column(index: int) -> list[float]:
+    return [row[index] for row in _CALIBRATION_ROWS]
+
+
+def _mean(index: int) -> float:
+    values = _column(index)
+    return sum(values) / len(values)
+
+
+def _flat_comment(lines: list[str]) -> str:
+    """Comment lines (closest-first, as _comment_lines_above returns them) as one sentence run."""
+    return " ".join(" ".join(line.lstrip("#").split()) for line in reversed(lines))
+
+
+def _client_source_lines() -> list[str]:
+    return (_REPO_ROOT / "advisors" / "composer_backtest_client.py").read_text("utf-8").splitlines()
+
+
+def _comment_above_constant(name: str) -> str:
+    lines = _client_source_lines()
+    index = next(i for i, line in enumerate(lines) if line.startswith(f"{name}:"))
+    return _flat_comment(_comment_lines_above(lines, index))
+
+
+def _slippage_statement() -> str:
+    return _comment_above_constant("_DEFAULT_SLIPPAGE_PERCENT")
+
+
+def _client_page_text() -> str:
+    assert _CLIENT_PAGE.exists(), f"{_CLIENT_PAGE} is missing"
+    return _CLIENT_PAGE.read_text(encoding="utf-8")
+
+
+def _page_calibration_section() -> str:
+    """The page's 'Slippage calibration' subsection, markup marks dropped, as one text run."""
+    lines = _client_page_text().splitlines()
+    start = next(
+        (i for i, line in enumerate(lines) if re.match(r"#{2,4}\s+Slippage calibration\b", line)),
+        None,
+    )
+    assert start is not None, "the page has no 'Slippage calibration' subsection"
+    level = len(lines[start]) - len(lines[start].lstrip("#"))
+    end = next(
+        (i for i in range(start + 1, len(lines)) if re.match(r"#{1,%d}\s" % level, lines[i])),
+        len(lines),
+    )
+    return " ".join(lines[start + 1 : end]).replace("`", "").replace("*", "")
+
+
+def _sentences(text: str) -> list[str]:
+    return re.split(r"(?<=[.;])\s+(?=[A-Z0-9])", " ".join(text.split()))
+
+
+def _naming_problems(text: str) -> list[str]:
+    """What a statement of the evidence leaves out of its sample, method, window and finding."""
+    flat = " ".join(text.split())
+    required = {
+        "the sample (8 live symphonies)": r"\b8 live symphonies",
+        "the backtest (Composer backtest v2, broker alpaca)": r"Composer backtest v2, broker alpaca",
+        "the comparison (realized deposit-adjusted daily returns)": (
+            r"realized deposit-adjusted daily returns"
+        ),
+        "the window length": rf"\b{_FULL_WINDOW_DAYS} trading days",
+        "the shorter window": rf"\b{_SHORT_WINDOW_DAYS} for one symphony",
+        "the window start": re.escape(_WINDOW_START),
+        "the window end": re.escape(_WINDOW_END),
+        "the three settings": r"\b0, 0\.001 and 0\.005\b",
+        "the gap's sign convention (live minus backtest)": r"live minus backtest",
+        "the measurement date": re.escape(_MEASURED_ON),
+        "the understatement at 0.005": r"0\.005 understated live results",
+        "the kind of tree (daily-rebalancing)": r"daily-rebalancing",
+    }
+    problems = [
+        f"names no {what}" for what, pattern in required.items() if not re.search(pattern, flat)
+    ]
+    if not any("0.001" in s and "closest to live" in s for s in _sentences(flat)):
+        problems.append("states no conclusion that 0.001 is closest to live")
+    return problems
+
+
+def _figure_problems(text: str) -> list[str]:
+    """Every figure of the statement checked against the recorded measurement."""
+    flat = " ".join(text.split())
+    problems = []
+    means = re.search(
+        r"0\.005:\s*([+-]?\d+(?:\.\d+)?),?\s+([+-]?\d+(?:\.\d+)?)\s+and\s+([+-]?\d+(?:\.\d+)?)\s*bps",
+        flat,
+    )
+    if means is None:
+        problems.append("states no mean of the gaps at the three settings")
+    else:
+        for stated, index in zip(means.groups(), (1, 2, 3), strict=True):
+            if float(stated) != pytest.approx(_mean(index), abs=0.03):
+                problems.append(f"mean {stated} differs from the rows' mean {_mean(index):.3f}")
+    ranges = (
+        f"{min(_column(2)):+.1f} to {max(_column(2)):+.1f}",
+        f"{min(_column(3)):+.1f} to {max(_column(3)):+.1f}",
+    )
+    problems += [f"states no per-symphony range {r}" for r in ranges if r not in flat]
+    if _CORRELATION_RANGE not in flat:
+        problems.append(f"states no daily correlation of {_CORRELATION_RANGE}")
+    if _MISSTATED_MEAN.search(flat):
+        problems.append("carries the mean at 0.001 that the rows do not support")
+    return problems
+
+
+def _path_problems(text: str) -> list[str]:
+    return [p for p in _LOCAL_PATH_PATTERNS if re.search(p, text)]
+
+
+class TestSlippageDefaultStatesItsEvidence:
+    """The definition of the slippage default and its generated page carry the value, the unit
+    and the calibration the value rests on, and no line gives the old value as the default."""
+
+    def test_the_statement_at_the_definition_names_its_sample_method_window_and_finding(self):
+        statement = _slippage_statement()
+
+        assert "fraction of each traded dollar" in statement
+        assert "0.001 is 0.1%" in statement
+        assert _naming_problems(statement) == []
+        assert _figure_problems(statement) == []
+
+    def test_the_generated_page_gives_the_new_value_in_signature_parameters_and_constants(self):
+        lines = _client_page_text().splitlines()
+        signature = next(line for line in lines if line.startswith("### `run_backtest("))
+        parameter = next(line for line in lines if line.startswith("| `slippage_percent` |"))
+        constant = next(line for line in lines if line.startswith("| `_DEFAULT_SLIPPAGE_PERCENT`"))
+
+        assert re.search(r"slippage_percent=0\.001\b", signature), signature
+        assert "0.001" in parameter and "0.1%" in parameter, parameter
+        assert re.search(r"`0\.001`", constant), constant
+        for line in (signature, parameter, constant):
+            assert "0.005" not in line, line
+
+    def test_the_generated_page_carries_the_evidence_summary(self):
+        section = _page_calibration_section()
+
+        assert _naming_problems(section) == []
+        assert _figure_problems(section) == []
+
+    def test_no_line_of_the_module_or_its_page_gives_the_old_value_as_the_default(self):
+        module = _client_source_lines()
+        page = _client_page_text().splitlines()
+
+        for where, lines in (("module", module), ("page", page)):
+            both = [ln for ln in lines if "0.005" in ln and "default" in ln.lower()]
+            assert both == [], f"{where} gives 0.005 as a default: {both}"
+
+    def test_the_run_backtest_docstring_reads_its_unit_example_as_a_tenth_of_a_percent(self):
+        source = "\n".join(_client_source_lines())
+        function = next(
+            n
+            for n in ast.parse(source).body
+            if isinstance(n, ast.FunctionDef) and n.name == "run_backtest"
+        )
+        doc = (ast.get_docstring(function, clean=False) or "").split("\n")
+        index = next(i for i, line in enumerate(doc) if line.strip() == "slippage_percent:")
+
+        assert re.fullmatch(
+            r"Execution slippage fraction \(0\.001 = 0\.1 ?%\)\.", doc[index + 1].strip()
+        ), doc[index + 1]
+
+    def test_the_statement_above_the_other_defaults_no_longer_covers_the_slippage_default(self):
+        capital = _comment_above_constant("_DEFAULT_CAPITAL")
+        module_comments = " ".join(
+            " ".join(line.lstrip("#").split())
+            for line in _client_source_lines()
+            if line.startswith("#")
+        )
+
+        assert "Composer UI defaults" in capital
+        assert "calibrated" in capital and "slippage" in capital
+        assert "match the Composer UI defaults." not in module_comments
+        assert "UI default" not in _slippage_statement()
+
+    @pytest.mark.parametrize("where", ["module", "page"])
+    def test_no_evidence_statement_carries_a_local_path_and_every_figure_equals_the_record(
+        self, where
+    ):
+        if where == "module":
+            text = " ".join([_comment_above_constant("_DEFAULT_CAPITAL"), _slippage_statement()])
+        else:
+            text = _page_calibration_section()
+
+        assert _path_problems(text) == []
+        assert _figure_problems(text) == []
+        assert len(_CALIBRATION_ROWS) == 8, "fixture sanity: the record holds eight symphonies"
+
+
+# ---------------------------------------------------------------------------
 # Live-daemon E2E regression (2026-06-12) — inline-backtest key mismatch
 # ---------------------------------------------------------------------------
 
@@ -1272,8 +1779,9 @@ class TestDvmCapitalKeyMismatchFallback:
 # ---------------------------------------------------------------------------
 
 _LF_DIGESTS = {
+    # re-taken at cc3eca2d for backtest-slippage-calibration (calibrated backtest slippage default); tests/test_backtest_slippage_calibration_protected_scope.py proves the change stays inside its listed edits.
     "advisors/composer_backtest_client.py": (
-        "bf1281b030e215e4f779697fd46849e854b46692f8945781c15e59cf2ab87661"
+        "401dd0b83bc13cac8e79e2f5a619c6b7114aeeb341786c2abce2a28e031e4d36"
     ),
     "tests/fixtures/composer/backtest_inline_v1.json": (
         "a2dfa7992f11d0a008476591a526f0e20386e29b227fcfe61ff93940aa7ee7bf"
