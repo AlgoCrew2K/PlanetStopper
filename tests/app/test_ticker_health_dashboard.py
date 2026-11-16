@@ -30,15 +30,23 @@ Markup (both elements render only when they have content; all text through Jinja
 - Style rules in the page's ``<style>`` block for ``.ticker-health-warning``,
   ``.ticker-health-notice`` and ``.ticker-health-earlier``: design tokens only, ``overflow-wrap:
   anywhere`` on the warning and the notice, ``text-align: left`` on both, ``font-size: 13px`` and
-  ``font-weight: 500`` on the warning (the fleet banner's values).
+  ``font-weight: 500`` on the warning (the fleet banner's values); the warning's radius, padding and
+  bottom margin are the fleet banner's, and the notice's radius, padding, bottom margin, font size
+  and font weight are the market-state banner's (``font-size: 13px`` and ``font-weight: 500``
+  there), the sibling rules themselves unchanged.
 
 Rulings pinned (PM): a run that did not complete, with no completed check ever, shows exactly one
-notice and never "No ticker check has completed yet." (that text is for no run at all); a failed
-run's notice reads "Ticker check failed on {stamp}." and ends " No completed check yet." when no
-completed check exists, or " Last completed check {stamp}." when one does (this needs a small change
-to ``advisors.ticker_health._run_notices``); after a run that did not complete the earlier completed
-run's warnings show with their "(from the check at ...)" suffix and none of that earlier run's
-not-checked notices show.
+notice and never "No ticker check has completed yet." (that text is for no run at all). Each check
+time prints at most once across the warning and the notice: the lead ends "Checked {L}." with L the
+newest completed check's time, and a warning line carries the "(from the check at ...)" suffix only
+when its own time differs from L, whichever run is the latest. The unavailable or skipped notice
+reads "Ticker check unavailable: {reason}." and the failed notice "Ticker check failed on {F}.";
+either ends " Last completed check {L}." only when a completed check exists and no warning is shown,
+or " No completed check yet." when none exists. The stale notice never shows beside either; alone it
+reads "No ticker check has completed since {L}." with no warning shown and "No ticker check has
+completed in the last {H} hours." with one shown, H the stale limit in hours read from
+``advisors.ticker_health.STALE_AFTER`` (the copy and the staleness test share it). After a run that
+did not complete none of the earlier completed run's not-checked notices show.
 
 Fixture provenance: the roster, score tree and Alpaca asset records are the captured ones behind the
 router (README and PROVENANCE.md beside them). Derived forms (a changed name, holdings, tree or
@@ -64,6 +72,7 @@ import pytest
 import requests
 
 import app as app_module
+from advisors import ticker_health as th
 from tests.advisors import _composer_http_router as h
 from tests.advisors import _ticker_health_http_router as t
 from tests.advisors.test_ticker_health_runner import (
@@ -223,6 +232,19 @@ def shny_line(symphony_id, held=NOT_HELD, name=None) -> str:
 
 def earlier(stamp_text: str) -> str:
     return f"(from the check at {stamp_text})"
+
+
+def stale_hours() -> int:
+    """H of the stale copy: the stale limit's one authority in whole hours, never a literal here."""
+    return int(th.STALE_AFTER.total_seconds() // 3600)
+
+
+def stale_with_warning() -> str:
+    return f"No ticker check has completed in the last {stale_hours()} hours."
+
+
+def stale_since(stamp_text: str) -> str:
+    return f"No ticker check has completed since {stamp_text}."
 
 
 def holdings_of(*tickers) -> list[dict]:
@@ -941,13 +963,11 @@ class TestEarlierResultsAndStaleness:
         world.router.set_all_alpaca(h.raising(requests.ConnectionError("down")))
         world.run(night(1), status="unavailable")
         page = world.page()
-        assert page.notices() == [
-            f"Ticker check unavailable: Alpaca unreachable. "
-            f"Last completed check {stamp(ended_at(first))}."
-        ]
+        assert page.notices() == ["Ticker check unavailable: Alpaca unreachable."]
         only_the_warning(page, [shny_line(X)])
-        assert page.lines()[0][1] == earlier(stamp(ended_at(first)))
+        assert page.lines()[0][1] is None, "the line is from the check the lead names"
         assert page.lead() == f"{LEAD} Checked {stamp(ended_at(first))}."
+        assert page.feature_text().count(stamp(ended_at(first))) == 1
 
     def test_the_earlier_runs_not_checked_notices_are_not_repeated_under_a_newer_run(self, world):
         roster(world.router, X, Y)
@@ -970,12 +990,13 @@ class TestEarlierResultsAndStaleness:
         _make_the_walker_raise(monkeypatch)
         failed = world.run(night(1), status="failed")
         page = world.page()
-        assert page.notices() == [
-            f"Ticker check failed on {stamp(ended_at(failed))}. "
-            f"Last completed check {stamp(ended_at(first))}."
-        ]
+        assert page.notices() == [f"Ticker check failed on {stamp(ended_at(failed))}."]
         only_the_warning(page, [shny_line(X)])
-        assert page.lines()[0][1] == earlier(stamp(ended_at(first)))
+        assert page.lines()[0][1] is None, "the line is from the check the lead names"
+        assert page.lead() == f"{LEAD} Checked {stamp(ended_at(first))}."
+        text = page.feature_text()
+        assert text.count(stamp(ended_at(first))) == 1
+        assert text.count(stamp(ended_at(failed))) == 1
         assert "RuntimeError" not in page.html and WALKER_FAULT not in page.html
 
     def test_a_failed_run_with_no_completed_check_says_so_and_nothing_else(
@@ -1003,9 +1024,8 @@ class TestEarlierResultsAndStaleness:
         page = world.page(at=datetime.fromisoformat(ended_at(outcome)) + timedelta(hours=hours))
         only_the_warning(page, [shny_line(X)])
         if stale:
-            assert page.notices() == [
-                f"No ticker check has completed since {stamp(ended_at(outcome))}."
-            ]
+            assert page.notices() == [stale_with_warning()]
+            assert page.feature_text().count(stamp(ended_at(outcome))) == 1
         else:
             assert page.notice is None
 
@@ -1073,6 +1093,267 @@ class TestInterruptedRun:
         assert page.lines()[0][1] is None, "the stopped run wrote nothing, so the line is current"
         assert page.notice is None
         assert len(world.router.discord_posts()) == posts_before
+
+
+# ---------------------------------------------------------------------------
+# Each check time is printed once; no two notices state one fact
+# ---------------------------------------------------------------------------
+
+STAMP_TEXT = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} ET")
+# Tuesday 11:00 EST: the market is open, so a run started then is stored skipped.
+IN_SESSION = datetime(2026, 11, 17, 16, 0, tzinfo=UTC)
+NO_COMPLETED_CHECK_YET = "No completed check yet."
+
+
+def closed_hour_after(instant: datetime) -> datetime:
+    """The next 22:00 ET (03:00 UTC in November), a closed-market hour on any day."""
+    candidate = instant.replace(hour=3, minute=0, second=0, microsecond=0)
+    return candidate if candidate > instant else candidate + timedelta(days=1)
+
+
+def _alpaca_is_down(world) -> None:
+    world.router.alpaca_by_symbol.clear()
+    world.router.set_all_alpaca(h.raising(requests.ConnectionError("down")))
+
+
+def _earlier_check(world, *, dead: bool):
+    roster(world.router, X)
+    if not dead:
+        world.router.set_alpaca("SHNY", t.healthy_reply("SHNY"))
+    return world.run(night(0))
+
+
+def _latest_that_could_not_judge(world, kind: str):
+    if kind == "unavailable":
+        _alpaca_is_down(world)
+        return world.run(night(1), status="unavailable")
+    if kind == "failed":
+        _make_the_walker_raise(world.monkeypatch)
+        return world.run(night(1), status="failed")
+    return world.run(IN_SESSION, status="skipped")
+
+
+def _page_when(world, completed_outcome, latest_outcome, *, stale: bool) -> Page:
+    """A page read at a closed hour: inside the stale limit, or beyond it after the newest
+    completed check."""
+    newest_completed = datetime.fromisoformat(ended_at(completed_outcome))
+    latest = datetime.fromisoformat(ended_at(latest_outcome))
+    if stale:
+        return world.page(at=closed_hour_after(max(latest, newest_completed + th.STALE_AFTER)))
+    return world.page(at=closed_hour_after(latest))
+
+
+def assert_each_fact_is_stated_once(page: Page) -> None:
+    printed = STAMP_TEXT.findall(page.feature_text())
+    assert len(printed) == len(set(printed)), f"a check time is printed twice: {printed}"
+    notices = page.notices()
+    assert len(notices) == len(set(notices)), f"a notice is stated twice: {notices}"
+    text = " ".join(notices)
+    assert not (NEVER_COMPLETED in text and NO_COMPLETED_CHECK_YET in text)
+    stale = [n for n in notices if "has completed since" in n or "has completed in the last" in n]
+    ran_into_trouble = [
+        n for n in notices if n.startswith(("Ticker check unavailable", "Ticker check failed"))
+    ]
+    assert not (stale and ran_into_trouble), f"a stale notice beside a run notice: {notices}"
+
+
+class TestEachCheckTimeIsPrintedOnce:
+    @pytest.mark.parametrize("stale", [False, True], ids=["inside_the_limit", "beyond_the_limit"])
+    def test_an_unavailable_run_after_a_warning_leaves_the_time_to_the_warning(self, world, stale):
+        first = _earlier_check(world, dead=True)
+        latest = _latest_that_could_not_judge(world, "unavailable")
+        page = _page_when(world, first, latest, stale=stale)
+        assert page.lead() == f"{LEAD} Checked {stamp(ended_at(first))}."
+        assert page.lines() == [(shny_line(X), None)]
+        assert page.notices() == ["Ticker check unavailable: Alpaca unreachable."]
+        assert page.feature_text().count(stamp(ended_at(first))) == 1
+        assert_each_fact_is_stated_once(page)
+
+    @pytest.mark.parametrize("stale", [False, True], ids=["inside_the_limit", "beyond_the_limit"])
+    def test_a_failed_run_after_a_warning_names_only_its_own_time(self, world, stale):
+        first = _earlier_check(world, dead=True)
+        failed = _latest_that_could_not_judge(world, "failed")
+        page = _page_when(world, first, failed, stale=stale)
+        assert page.lead() == f"{LEAD} Checked {stamp(ended_at(first))}."
+        assert page.lines() == [(shny_line(X), None)]
+        assert page.notices() == [f"Ticker check failed on {stamp(ended_at(failed))}."]
+        text = page.feature_text()
+        assert text.count(stamp(ended_at(first))) == 1
+        assert text.count(stamp(ended_at(failed))) == 1
+        assert_each_fact_is_stated_once(page)
+
+    @pytest.mark.parametrize("stale", [False, True], ids=["inside_the_limit", "beyond_the_limit"])
+    def test_a_failed_run_after_a_clean_check_names_the_clean_check_once(self, world, stale):
+        first = _earlier_check(world, dead=False)
+        failed = _latest_that_could_not_judge(world, "failed")
+        page = _page_when(world, first, failed, stale=stale)
+        assert page.warning is None
+        assert page.notices() == [
+            f"Ticker check failed on {stamp(ended_at(failed))}. "
+            f"Last completed check {stamp(ended_at(first))}."
+        ]
+        text = page.feature_text()
+        assert text.count(stamp(ended_at(first))) == 1
+        assert text.count(stamp(ended_at(failed))) == 1
+        assert_each_fact_is_stated_once(page)
+
+    @pytest.mark.parametrize("kind", ["unavailable", "skipped"])
+    @pytest.mark.parametrize("stale", [False, True], ids=["inside_the_limit", "beyond_the_limit"])
+    def test_a_run_that_could_not_judge_after_a_clean_check_names_the_clean_check_once(
+        self, world, kind, stale
+    ):
+        first = _earlier_check(world, dead=False)
+        latest = _latest_that_could_not_judge(world, kind)
+        page = _page_when(world, first, latest, stale=stale)
+        assert page.warning is None
+        reason = "Alpaca unreachable" if kind == "unavailable" else "market open"
+        assert page.notices() == [
+            f"Ticker check unavailable: {reason}. Last completed check {stamp(ended_at(first))}."
+        ]
+        assert page.feature_text().count(stamp(ended_at(first))) == 1
+        assert_each_fact_is_stated_once(page)
+
+    def test_a_stale_latest_check_with_a_warning_says_how_long_not_when(self, world):
+        first = _earlier_check(world, dead=True)
+        page = _page_when(world, first, first, stale=True)
+        assert page.lead() == f"{LEAD} Checked {stamp(ended_at(first))}."
+        assert page.notices() == [stale_with_warning()]
+        assert page.feature_text().count(stamp(ended_at(first))) == 1
+        assert_each_fact_is_stated_once(page)
+
+    def test_a_stale_latest_check_with_no_warning_names_its_time_once(self, world):
+        first = _earlier_check(world, dead=False)
+        page = _page_when(world, first, first, stale=True)
+        assert page.warning is None
+        assert page.notices() == [stale_since(stamp(ended_at(first)))]
+        assert page.feature_text().count(stamp(ended_at(first))) == 1
+        assert_each_fact_is_stated_once(page)
+
+    def test_the_hours_in_the_stale_copy_follow_the_limit_that_decides_staleness(self, world):
+        first = _earlier_check(world, dead=True)
+        world.monkeypatch.setattr(th, "STALE_AFTER", timedelta(hours=20))
+        at = datetime.fromisoformat(ended_at(first)) + timedelta(hours=21)
+        page = world.page(at=closed_hour_after(at))
+        assert page.notices() == ["No ticker check has completed in the last 20 hours."]
+
+    def test_a_line_from_an_earlier_check_keeps_its_own_time_beside_the_leads(self, world):
+        roster(world.router, X, Y)
+        first = world.run(night(0))
+        world.router.set_tree(Y, h.error_reply(503))
+        second = world.run(night(1))
+        page = world.page()
+        assert page.lead() == f"{LEAD} Checked {stamp(ended_at(second))}."
+        assert sorted(page.lines()) == sorted(
+            [(shny_line(X), None), (shny_line(Y), earlier(stamp(ended_at(first))))]
+        )
+        assert_each_fact_is_stated_once(page)
+
+
+# The stored states, each built by the real runner. ``has_warning`` is what the state must show,
+# so a state that stopped producing its lines fails here and does not pass unseen.
+def _completed_alone(world, *, dead: bool, not_checked: bool = False):
+    roster(world.router, *((X, Y) if not_checked else (X,)))
+    if not dead:
+        world.router.set_alpaca("SHNY", t.healthy_reply("SHNY"))
+    if not_checked:
+        world.router.set_tree(Y, h.error_reply(503))
+    outcome = world.run(night(0))
+    return outcome, outcome
+
+
+def _completed_after_a_carry(world):
+    roster(world.router, X, Y)
+    world.run(night(0))
+    world.router.set_tree(Y, h.error_reply(503))
+    outcome = world.run(night(1))
+    return outcome, outcome
+
+
+def _after(kind: str, *, dead: bool):
+    def build(world):
+        first = _earlier_check(world, dead=dead)
+        return first, _latest_that_could_not_judge(world, kind)
+
+    return build
+
+
+def _with_no_earlier_check(kind: str):
+    def build(world):
+        roster(world.router, X)
+        latest = _latest_that_could_not_judge(world, kind)
+        return None, latest
+
+    return build
+
+
+RUN_NOTICE_START = {
+    "unavailable": "Ticker check unavailable",
+    "skipped": "Ticker check unavailable",
+    "failed": "Ticker check failed on",
+}
+
+# state id -> (builder returning (newest completed outcome or None, latest outcome),
+#              whether a warning shows, text one notice must start with or None)
+STORED_STATES = {
+    "completed_with_a_warning": (lambda w: _completed_alone(w, dead=True), True, None),
+    "completed_clean": (lambda w: _completed_alone(w, dead=False), False, None),
+    "completed_with_a_warning_and_a_not_checked_symphony": (
+        lambda w: _completed_alone(w, dead=True, not_checked=True),
+        True,
+        "Not checked",
+    ),
+    "completed_clean_with_a_not_checked_symphony": (
+        lambda w: _completed_alone(w, dead=False, not_checked=True),
+        False,
+        "Not checked",
+    ),
+    "completed_with_a_line_carried_from_an_earlier_check": (
+        _completed_after_a_carry,
+        True,
+        "Not checked",
+    ),
+    **{
+        f"{kind}_after_a_warning": (_after(kind, dead=True), True, RUN_NOTICE_START[kind])
+        for kind in RUN_NOTICE_START
+    },
+    **{
+        f"{kind}_after_a_clean_check": (_after(kind, dead=False), False, RUN_NOTICE_START[kind])
+        for kind in RUN_NOTICE_START
+    },
+    **{
+        f"{kind}_with_no_check_before": (
+            _with_no_earlier_check(kind),
+            False,
+            RUN_NOTICE_START[kind],
+        )
+        for kind in RUN_NOTICE_START
+    },
+}
+
+
+class TestNoFactIsStatedTwice:
+    @pytest.mark.parametrize("stale", [False, True], ids=["inside_the_limit", "beyond_the_limit"])
+    @pytest.mark.parametrize("state_id", list(STORED_STATES))
+    def test_every_stored_state_prints_each_check_time_and_each_fact_once(
+        self, world, state_id, stale
+    ):
+        build, has_warning, notice_start = STORED_STATES[state_id]
+        completed, latest = build(world)
+        if completed is None:
+            # No completed check exists, so no staleness: the page is read at a closed hour.
+            page = world.page(at=closed_hour_after(datetime.fromisoformat(ended_at(latest))))
+        else:
+            page = _page_when(world, completed, latest, stale=stale)
+        assert (page.warning is not None) == has_warning
+        if notice_start is not None:
+            assert page.notices()[0].startswith(notice_start), page.notices()
+        assert_each_fact_is_stated_once(page)
+
+    def test_no_stored_run_reads_the_one_never_completed_notice(self, world):
+        page = world.page(at=t.NIGHT + PAGE_DELAY)
+        assert page.notices() == [NEVER_COMPLETED]
+        assert page.warning is None
+        assert_each_fact_is_stated_once(page)
 
 
 # ---------------------------------------------------------------------------
@@ -1277,6 +1558,47 @@ def rule_bodies(css: str, selector: str) -> str:
     return "\n".join(body for _, body in pattern.findall(css))
 
 
+def declarations(css: str, selector: str) -> dict[str, str]:
+    """The declarations of every rule whose selector is exactly ``selector``, later ones winning."""
+    pattern = re.compile(r"(?m)^[ \t]*" + re.escape(selector) + r"[ \t]*\{([^}]*)\}")
+    merged: dict[str, str] = {}
+    for body in pattern.findall(css):
+        for prop, value in re.findall(r"([a-z-]+)\s*:\s*([^;]+);?", body):
+            merged[prop] = " ".join(value.split())
+    return merged
+
+
+# The sibling banners' own declarations as they stand before this feature (provenance: the
+# ``.fleet-banner`` and ``.market-banner`` rules of templates/index.html at the branch's base
+# commit); the feature's boxes match them and never edit them, so a box cannot be made equal by
+# moving its sibling.
+FLEET_BANNER_DECLARATIONS = {
+    "align-items": "center",
+    "justify-content": "space-between",
+    "gap": "12px",
+    "padding": "8px 16px",
+    "margin-bottom": "16px",
+    "border-radius": "8px",
+    "background": "var(--studio-warn-tint)",
+    "border": "1px solid var(--studio-warn-border)",
+    "font-size": "13px",
+    "font-weight": "500",
+    "color": "var(--studio-ink)",
+    "flex-wrap": "wrap",
+}
+MARKET_BANNER_DECLARATIONS = {
+    "padding": "8px 16px",
+    "margin-bottom": "16px",
+    "border-radius": "8px",
+    "background": "var(--studio-chip-bg)",
+    "border": "1px solid var(--studio-rule)",
+    "font-size": "13px",
+    "font-weight": "500",
+    "color": "var(--studio-ink-dim)",
+    "text-align": "center",
+}
+
+
 class TestDesignSystemStyling:
     @pytest.fixture
     def css_and_page(self, world):
@@ -1305,6 +1627,35 @@ class TestDesignSystemStyling:
             assert f"var({token})" in body
         assert re.search(r"overflow-wrap:\s*anywhere", body)
         assert re.search(r"text-align:\s*left", body)
+
+    def test_the_sibling_banner_rules_are_unchanged(self, css_and_page):
+        css, _ = css_and_page
+        assert declarations(css, ".fleet-banner") == FLEET_BANNER_DECLARATIONS
+        assert declarations(css, ".market-banner") == MARKET_BANNER_DECLARATIONS
+
+    def test_the_warning_declares_the_fleet_banners_radius_padding_and_bottom_margin(
+        self, css_and_page
+    ):
+        css, _ = css_and_page
+        warning_rule, fleet_rule = (
+            declarations(css, ".ticker-health-warning"),
+            declarations(css, ".fleet-banner"),
+        )
+        for prop in ("border-radius", "padding", "margin-bottom"):
+            assert prop in warning_rule, f".ticker-health-warning declares no {prop}"
+            assert warning_rule[prop] == fleet_rule[prop], prop
+
+    def test_the_notice_declares_the_market_banners_radius_padding_margin_and_type(
+        self, css_and_page
+    ):
+        css, _ = css_and_page
+        notice_rule, market_rule = (
+            declarations(css, ".ticker-health-notice"),
+            declarations(css, ".market-banner"),
+        )
+        for prop in ("border-radius", "padding", "margin-bottom", "font-size", "font-weight"):
+            assert prop in notice_rule, f".ticker-health-notice declares no {prop}"
+            assert notice_rule[prop] == market_rule[prop], prop
 
     def test_the_earlier_check_suffix_is_dimmed_with_a_token(self, css_and_page):
         css, _ = css_and_page

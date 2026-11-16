@@ -59,6 +59,21 @@ and (no ticker asked, or at least one answered).
 are run records or ``None``. The text is plain: markup in a name stays as typed (the template
 escapes it).
 
+Each check time is printed at most once across the warning and the notices. L is the newest
+completed check's stamp (the warning's ``checked``), F the failed run's stamp, H the stale limit
+in whole hours read from ``STALE_AFTER`` at call time:
+
+- A line's ``from_check`` is ``None`` when its ``found_at`` prints as L, else its own stamp. This
+  holds whether the latest run completed or not.
+- Latest run unavailable or skipped: ``"Ticker check unavailable: {reason}."``; failed:
+  ``"Ticker check failed on {F}."``. Either ends `` Last completed check {L}.`` only when a
+  completed check exists and no warning is shown, or `` No completed check yet.`` when none exists,
+  and otherwise nothing.
+- The stale notice (completed check older than ``STALE_AFTER``) is shown only when the latest run
+  completed: ``"No ticker check has completed since {L}."`` with no warning shown, and
+  ``"No ticker check has completed in the last {H} hours."`` with the warning shown.
+- No run at all: the one notice ``"No ticker check has completed yet."``.
+
 Fixture provenance: names and ids come from the captured roster
 ``tests/fixtures/composer/ticker-health/symphony_stats_meta_holdings_kept.json`` (PROVENANCE.md
 there). The worked example is the plan's own invented example (QXGD, "Example Copper Rotation"),
@@ -70,7 +85,9 @@ the same cycle.
 from __future__ import annotations
 
 import copy
+import itertools
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -162,6 +179,15 @@ def line_key(text: str) -> tuple[str, str]:
     """(display name, ticker) of a line "NAME: TICKER is REASON. ..." (names here hold no colon)."""
     name, rest = text.split(": ", 1)
     return name, rest.split(" ", 1)[0]
+
+
+def stale_hours() -> int:
+    """H of the stale copy: the one authority's limit in whole hours, never a literal here."""
+    return int(th.STALE_AFTER.total_seconds() // 3600)
+
+
+def stale_notice_with_warning() -> str:
+    return f"No ticker check has completed in the last {stale_hours()} hours."
 
 
 # ---------------------------------------------------------------------------
@@ -853,7 +879,7 @@ class TestNoticesOfARunThatDidNotComplete:
     def test_an_unavailable_or_skipped_run_names_its_reason_and_the_last_completed_check(
         self, status
     ):
-        completed = run_record(warnings=[warning(found_at=EARLIER)], run_id="done")
+        completed = run_record(run_id="done")
         latest = run_record(
             status=status,
             run_id="latest",
@@ -863,6 +889,19 @@ class TestNoticesOfARunThatDidNotComplete:
         assert view(latest, completed)["notices"] == [
             f"Ticker check unavailable: Alpaca unreachable. Last completed check {ENDED_STAMP}."
         ]
+
+    @pytest.mark.parametrize("status", ["unavailable", "skipped"])
+    def test_a_warning_shown_names_the_last_check_so_the_notice_does_not_repeat_it(self, status):
+        completed = run_record(warnings=[warning(found_at=EARLIER)], run_id="done")
+        latest = run_record(
+            status=status,
+            run_id="latest",
+            reason="Alpaca unreachable",
+            ended_at="2026-11-17T09:00:00+00:00",
+        )
+        result = view(latest, completed)
+        assert result["notices"] == ["Ticker check unavailable: Alpaca unreachable."]
+        assert result["warning"]["checked"] == ENDED_STAMP
 
     def test_with_no_completed_check_the_notice_says_so(self):
         latest = run_record(status="unavailable", reason="no Composer account configured")
@@ -885,7 +924,12 @@ class TestNoticesOfARunThatDidNotComplete:
         )
         shown = view(latest, completed)["warning"]
         assert shown["checked"] == ENDED_STAMP
-        assert sorted(line["from_check"] for line in shown["lines"]) == [EARLIER_STAMP, ENDED_STAMP]
+        assert {line_key(x["text"])[1]: x["from_check"] for x in shown["lines"]} == {
+            "QXGD": EARLIER_STAMP,
+            "PLRZ": None,
+        }, (
+            "a line found by the check the lead names carries no suffix; an older one carries its own"
+        )
 
     def test_a_failed_run_says_when_it_failed_and_never_the_exception_type(self):
         completed = run_record(warnings=[warning()], run_id="done")
@@ -896,11 +940,24 @@ class TestNoticesOfARunThatDidNotComplete:
             ended_at="2026-11-17T09:00:00+00:00",
         )
         result = view(latest, completed)
+        assert result["notices"] == ["Ticker check failed on 2026-11-17 04:00 ET."]
+        assert "RuntimeError" not in json.dumps(result)
+        assert result["warning"]["checked"] == ENDED_STAMP
+        assert result["warning"]["lines"][0]["from_check"] is None
+
+    def test_a_failed_run_with_no_warning_shown_names_the_last_completed_check(self):
+        completed = run_record(run_id="done")
+        latest = run_record(
+            status="failed",
+            error_type="RuntimeError",
+            run_id="latest",
+            ended_at="2026-11-17T09:00:00+00:00",
+        )
+        result = view(latest, completed)
+        assert result["warning"] is None
         assert result["notices"] == [
             f"Ticker check failed on 2026-11-17 04:00 ET. Last completed check {ENDED_STAMP}."
         ]
-        assert "RuntimeError" not in json.dumps(result)
-        assert result["warning"]["lines"][0]["from_check"] == ENDED_STAMP
 
     def test_a_failed_run_with_no_completed_check_shows_one_notice_never_the_never_completed_line(
         self,
@@ -974,10 +1031,10 @@ class TestNoticesOfARunThatDidNotComplete:
             marker not in result["notices"][0]
             for marker in ("Not checked", "could not be checked", "Roth IRA", "Zed fund", "BRK/B")
         )
-        assert sorted(line["from_check"] for line in result["warning"]["lines"]) == [
-            EARLIER_STAMP,
-            ENDED_STAMP,
-        ]
+        assert {line_key(x["text"])[1]: x["from_check"] for x in result["warning"]["lines"]} == {
+            "QXGD": EARLIER_STAMP,
+            "PLRZ": None,
+        }
 
     def test_no_run_at_all_reads_never_completed(self):
         assert view(None, None) == {
@@ -1018,23 +1075,195 @@ class TestStaleCheck:
     def test_the_stale_threshold_is_36_hours(self):
         assert timedelta(hours=36) == th.STALE_AFTER
 
-    def test_stale_warnings_still_show(self):
+    def test_stale_warnings_still_show_and_the_notice_does_not_repeat_the_time_the_lead_names(self):
         run = run_record(warnings=[warning()])
         now = datetime(2026, 11, 17, 4, 12, tzinfo=UTC) + timedelta(hours=40)
         result = view(run, run, now)
-        assert result["notices"] == [f"No ticker check has completed since {ENDED_STAMP}."]
+        assert result["notices"] == [stale_notice_with_warning()]
+        assert result["warning"]["checked"] == ENDED_STAMP
         assert len(result["warning"]["lines"]) == 1
 
-    def test_an_unavailable_latest_run_and_a_stale_completed_run_show_both_in_order(self):
+    def test_the_stale_copy_names_the_limit_from_its_one_authority(self, monkeypatch):
+        """The hours in the copy and the instant staleness starts are one value: a limit changed
+        in ``STALE_AFTER`` moves both, so neither is a literal in the copy."""
+        monkeypatch.setattr(th, "STALE_AFTER", timedelta(hours=20))
+        run = run_record(warnings=[warning()])
+        base = datetime(2026, 11, 17, 4, 12, tzinfo=UTC)
+        assert view(run, run, base + timedelta(hours=19))["notices"] == []
+        assert view(run, run, base + timedelta(hours=21))["notices"] == [
+            "No ticker check has completed in the last 20 hours."
+        ]
+        monkeypatch.setattr(th, "STALE_AFTER", timedelta(hours=48))
+        assert view(run, run, base + timedelta(hours=40))["notices"] == []
+        assert view(run, run, base + timedelta(hours=49))["notices"] == [
+            "No ticker check has completed in the last 48 hours."
+        ]
+
+    @pytest.mark.parametrize("status", ["unavailable", "skipped", "failed"])
+    def test_a_check_that_could_not_run_never_adds_the_stale_notice_beside_its_own(self, status):
         completed = run_record(run_id="done")
         latest = run_record(
-            status="unavailable",
-            reason="Alpaca unreachable",
+            status=status,
+            reason=None if status == "failed" else "Alpaca unreachable",
+            error_type="RuntimeError" if status == "failed" else None,
             run_id="latest",
             ended_at="2026-11-19T04:00:00+00:00",
         )
         now = datetime(2026, 11, 19, 5, 0, tzinfo=UTC)
-        assert view(latest, completed, now)["notices"] == [
-            f"Ticker check unavailable: Alpaca unreachable. Last completed check {ENDED_STAMP}.",
-            f"No ticker check has completed since {ENDED_STAMP}.",
-        ]
+        assert now - datetime.fromisoformat(ENDED) > th.STALE_AFTER, "fixture integrity: stale"
+        notices = view(latest, completed, now)["notices"]
+        assert len(notices) == 1 and notices[0].endswith(f"Last completed check {ENDED_STAMP}.")
+        assert not any("has completed" in n for n in notices)
+
+
+# ---------------------------------------------------------------------------
+# page_view: each check time is printed once, and no two notices state one fact
+# ---------------------------------------------------------------------------
+
+STAMP_TEXT = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} ET")
+FAILED_AT = "2026-11-17T09:00:00+00:00"
+FAILED_STAMP = "2026-11-17 04:00 ET"
+INSIDE = datetime(2026, 11, 17, 4, 12, tzinfo=UTC) + timedelta(hours=10)
+BEYOND = datetime(2026, 11, 17, 4, 12, tzinfo=UTC) + timedelta(hours=40)
+NOT_CHECKED_Y = {"symphony_id": Y, "display_name": "Y fund", "reason": "Composer unavailable"}
+NOT_CHECKED_TEXT = "Not checked: Y fund (Composer unavailable)."
+NEVER_COMPLETED_LINE = "No ticker check has completed yet."
+NO_CHECK_YET = "No completed check yet."
+
+# Each variant of what the newest completed check stored, by the lines it carries.
+WARNING_SETS = {
+    "none": [],
+    "fresh": [warning()],
+    "carried": [warning(found_at=EARLIER)],
+    "fresh_and_carried": [warning(found_at=EARLIER), warning("idB", "PLRZ")],
+}
+
+
+def _run_notice_text(kind: str) -> str:
+    if kind == "failed":
+        return f"Ticker check failed on {FAILED_STAMP}."
+    return "Ticker check unavailable: Alpaca unreachable."
+
+
+def _latest_run(kind: str) -> dict:
+    return run_record(
+        status=kind,
+        run_id="latest",
+        reason=None if kind == "failed" else "Alpaca unreachable",
+        error_type="RuntimeError" if kind == "failed" else None,
+        ended_at=FAILED_AT,
+    )
+
+
+def _expected_notices(kind, has_completed, warned, has_not_checked, stale) -> list[str]:
+    """The notices the rule yields, written out from the rule and not from the product."""
+    if kind == "completed":
+        out = [NOT_CHECKED_TEXT] if has_not_checked else []
+        if stale:
+            out.append(
+                stale_notice_with_warning()
+                if warned
+                else f"No ticker check has completed since {ENDED_STAMP}."
+            )
+        return out
+    if not has_completed:
+        return [f"{_run_notice_text(kind)} {NO_CHECK_YET}"]
+    if warned:
+        return [_run_notice_text(kind)]
+    return [f"{_run_notice_text(kind)} Last completed check {ENDED_STAMP}."]
+
+
+def _printed_times(result: dict) -> list[str]:
+    printed: list[str] = []
+    if result["warning"] is not None:
+        printed.append(result["warning"]["checked"])
+        printed += [x["from_check"] for x in result["warning"]["lines"] if x["from_check"]]
+    for notice in result["notices"]:
+        printed += STAMP_TEXT.findall(notice)
+    return printed
+
+
+def _states():
+    for kind, warnings_id, with_not_checked, stale in itertools.product(
+        ("completed", "unavailable", "skipped", "failed"),
+        WARNING_SETS,
+        (False, True),
+        (False, True),
+    ):
+        yield pytest.param(
+            kind,
+            warnings_id,
+            with_not_checked,
+            stale,
+            id=f"{kind}-warnings_{warnings_id}-not_checked_{with_not_checked}-stale_{stale}",
+        )
+
+
+class TestEachCheckTimeIsPrintedOnce:
+    @pytest.mark.parametrize(("kind", "warnings_id", "with_not_checked", "stale"), _states())
+    def test_no_check_time_is_printed_twice_and_the_notices_follow_the_rule(
+        self, kind, warnings_id, with_not_checked, stale
+    ):
+        completed = run_record(
+            warnings=WARNING_SETS[warnings_id],
+            not_checked=not_checked(symphonies=[NOT_CHECKED_Y] if with_not_checked else []),
+            run_id="done",
+        )
+        latest = completed if kind == "completed" else _latest_run(kind)
+        result = view(latest, completed, BEYOND if stale else INSIDE)
+
+        printed = _printed_times(result)
+        assert len(printed) == len(set(printed)), f"a check time is printed twice: {printed}"
+        assert result["notices"] == _expected_notices(
+            kind, True, bool(WARNING_SETS[warnings_id]), with_not_checked, stale
+        )
+        assert (result["warning"] is not None) == bool(WARNING_SETS[warnings_id])
+        assert len(result["notices"]) == len(set(result["notices"]))
+
+    @pytest.mark.parametrize("kind", ["unavailable", "skipped", "failed"])
+    def test_a_run_that_could_not_run_with_no_completed_check_says_no_completed_check_yet_once(
+        self, kind
+    ):
+        result = view(_latest_run(kind), None, BEYOND)
+        assert result == {
+            "warning": None,
+            "notices": [f"{_run_notice_text(kind)} {NO_CHECK_YET}"],
+        }
+        assert NEVER_COMPLETED_LINE not in json.dumps(result)
+
+    def test_with_no_run_at_all_the_one_notice_is_the_never_completed_line(self):
+        assert view(None, None) == {"warning": None, "notices": [NEVER_COMPLETED_LINE]}
+
+    def test_the_never_completed_line_and_the_no_completed_check_yet_phrase_never_show_together(
+        self,
+    ):
+        for latest, completed in [
+            (None, None),
+            (_latest_run("unavailable"), None),
+            (_latest_run("failed"), None),
+            (_latest_run("skipped"), None),
+        ]:
+            text = " ".join(view(latest, completed, BEYOND)["notices"])
+            assert not (NEVER_COMPLETED_LINE in text and NO_CHECK_YET in text)
+
+    def test_a_carried_line_carries_its_own_time_while_the_lead_names_the_newest_check(self):
+        run = run_record(warnings=[warning(found_at=EARLIER), warning("idB", "PLRZ")])
+        shown = view(run, run)["warning"]
+        assert shown["checked"] == ENDED_STAMP
+        assert {line_key(x["text"])[1]: x["from_check"] for x in shown["lines"]} == {
+            "QXGD": EARLIER_STAMP,
+            "PLRZ": None,
+        }
+
+    def test_a_line_whose_time_prints_as_the_leads_time_carries_no_suffix(self):
+        """The rule is on the printed time: a line found half a minute after the newest check's
+        stored instant prints the same minute, so a suffix would print that time twice."""
+        same_minute = warning("idB", "PLRZ", found_at="2026-11-17T04:12:30+00:00")
+        run = run_record(warnings=[same_minute])
+        assert view(run, run)["warning"]["lines"][0]["from_check"] is None
+
+    def test_a_line_found_by_the_newest_check_carries_no_suffix_whichever_run_is_latest(self):
+        completed = run_record(warnings=[warning()], run_id="done")
+        for latest in (completed, _latest_run("unavailable"), _latest_run("failed")):
+            line = view(latest, completed)["warning"]["lines"][0]
+            assert line["from_check"] is None, latest["status"]
