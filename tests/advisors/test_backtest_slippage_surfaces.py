@@ -284,7 +284,8 @@ def test_the_goldens_hold_a_request_sequence_for_every_entry_point():
     for entry, view in golden.items():
         assert len(view["requests"]) >= 1, f"{entry} has no recorded request"
         for request in view["requests"]:
-            assert "slippage_percent" not in request["body"], "the goldens hold no slippage"
+            assert "slippage_percent" not in request["fields"], "the goldens hold no slippage"
+            assert len(request["tree_sha256"]) == 64
             assert request["url"].endswith("/backtest")
 
 

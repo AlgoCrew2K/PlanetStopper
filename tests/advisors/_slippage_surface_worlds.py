@@ -26,6 +26,7 @@ Not imported by production code.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import subprocess
@@ -586,9 +587,35 @@ GOLDEN_PATH = (
 )
 
 
+def _tree_digest(tree: dict) -> str:
+    text = json.dumps(tree, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def golden_view(run: SurfaceRun) -> dict:
-    """What the S-3.14 golden holds for one entry point."""
-    return {"requests": masked_sequence(run.router), "outcome": run.outcome}
+    """What the S-3.14 golden holds for one entry point.
+
+    Per request: the URL, the body form, every body field except the tree and the slippage
+    (capital, fee flags, broker, version, dates: small and read as they are) and, for the tree,
+    its ids-masked SHA-256 with its ticker set. The trees of a real symphony run to 100 KB, so
+    the golden holds their digest and not their text; equal digests mean equal trees.
+    """
+    requests = []
+    for entry in masked_sequence(run.router):
+        body = entry["body"]
+        tree = body["symphony"]["raw_value"]
+        requests.append(
+            {
+                "url": entry["url"],
+                "body_form": entry["body_form"],
+                "fields": {key: value for key, value in body.items() if key != "symphony"},
+                "tree_sha256": _tree_digest(tree),
+                "tree_tickers": sorted(
+                    {n["ticker"] for n in sbh.walk(tree) if isinstance(n.get("ticker"), str)}
+                ),
+            }
+        )
+    return {"requests": requests, "outcome": run.outcome}
 
 
 def tracked_python_sources() -> list[Path]:
