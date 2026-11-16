@@ -122,12 +122,15 @@ def probe(firefox, stored_page_html):  # noqa: F811
         def serve(route):
             url = route.request.url
             path = urlsplit(url).path
-            if not url.startswith(server.base_url) or path.endswith(".js"):
+            if not url.startswith(server.base_url):
                 route.abort()
             elif path == "/":
                 route.fulfill(
                     status=200, content_type="text/html; charset=utf-8", body=stored_page_html
                 )
+            elif path.startswith("/static/") and path.endswith(".js"):
+                # The page's own scripts answer empty, so nothing moves a box after load.
+                route.fulfill(status=200, content_type="text/javascript", body="")
             elif path.startswith("/static/"):
                 route.continue_()
             elif path == "/api/events":
