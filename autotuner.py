@@ -1431,20 +1431,18 @@ def replay_exit_sequence(ticks, params, *, grace_minutes):
     return out
 
 
-# Simulated-exit friction: a replay-only cost term subtracted at every
-# triggered-exit accounting site below (_collect_sim_returns,
-# _collect_sim_returns_dated, run_simulation), distinct from the deviation-
-# dict `penalty` term. Value is 0.5 PERCENTAGE POINTS, derived from
-# composer_backtest_client._DEFAULT_SLIPPAGE_PERCENT (0.005, a decimal
-# fraction = 0.5%, composer_backtest_client.py:71) converted to this file's
-# percent-point convention via RETURN_PCT_TO_FRACTION (100.0) — NOT the bare
-# 0.005 literal, which would apply 100x too little friction at these
-# percent-point-scaled subtraction sites. Closes the gap identified in
-# docs/research/methodology-validation-2026-07.md (gross-of-cost replay
-# objective vs Composer's own slippage-adjusted backtests). Deliberately kept
-# out of math_engine.py (the live engine's decision-math module) and out of
-# OPTUNA_SEARCH_SPACE_KEYS / the per-trial params dict / os.environ — this is
-# a fixed replay-environment parameter, never tunable by the optimizer.
+# Simulated-exit friction: a replay-only cost term subtracted at every triggered-exit
+# accounting site below (_collect_sim_returns, _collect_sim_returns_dated, run_simulation),
+# distinct from the deviation-dict `penalty` term. It models the cost of a Planet Stopper
+# full-position exit in the replay and closes the gross-of-cost gap identified in
+# docs/research/methodology-validation-2026-07.md. Value: 0.5 PERCENTAGE POINTS, in this
+# file's percent-point convention (RETURN_PCT_TO_FRACTION, 100.0); a decimal-fraction value
+# would apply 100x too little friction at these percent-point-scaled subtraction sites. It is
+# a different cost from the per-trade slippage Composer backtests assume for daily
+# rebalancing and does not follow the backtest client's default. Deliberately kept out of
+# math_engine.py (the live engine's decision-math module) and out of
+# OPTUNA_SEARCH_SPACE_KEYS / the per-trial params dict / os.environ: a fixed
+# replay-environment parameter, never tunable by the optimizer.
 SIM_EXIT_FRICTION_PCT: float = 0.5
 
 
