@@ -241,11 +241,15 @@ def atlas_candidate(candidate_id: str = "atlas-candidate"):
     )
 
 
-def install_chain_seams(monkeypatch, fake: AnthropicHttpFake, atlas=None) -> ExitStack:
+def install_chain_seams(
+    monkeypatch, fake: AnthropicHttpFake, atlas=None, *, composer_router=None
+) -> ExitStack:
     """Wire generation to ``fake`` and stub every other live seam of the Strategy Builder run.
 
     Returns the ExitStack holding the Composer ``requests.post`` patch; the caller
-    keeps it open for the request (use ``with`` or ``stack.close()``).
+    keeps it open for the request (use ``with`` or ``stack.close()``). When
+    ``composer_router`` is given the caller has already installed it as the one
+    replacement of ``requests``, so this function adds no ``requests.post`` patch.
     """
     import advisors.build_plan_generator as gen
     import advisors.composer_backtest_client as composer
@@ -258,9 +262,10 @@ def install_chain_seams(monkeypatch, fake: AnthropicHttpFake, atlas=None) -> Exi
     atlas_list = list(atlas or [])
     monkeypatch.setattr(gen, "load_atlas_candidates", lambda *a, **k: list(atlas_list))
     stack = ExitStack()
-    stack.enter_context(
-        patch.object(composer.requests, "post", return_value=_ComposerBacktestResponse())
-    )
+    if composer_router is None:
+        stack.enter_context(
+            patch.object(composer.requests, "post", return_value=_ComposerBacktestResponse())
+        )
     return stack
 
 

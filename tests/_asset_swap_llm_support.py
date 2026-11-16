@@ -125,8 +125,14 @@ class Run:
         self.inserts = inserts
 
 
-def post_evaluate(client, fake, body, *, tree=None, composer_key=True, universe=None) -> Run:
-    """POST the evaluate route with every non-model seam stubbed and the model seam on ``fake``."""
+def post_evaluate(
+    client, fake, body, *, tree=None, composer_key=True, universe=None, real_backtest=False
+) -> Run:
+    """POST the evaluate route with every non-model seam stubbed and the model seam on ``fake``.
+
+    ``real_backtest=True`` leaves ``run_backtest`` unpatched so the caller's own replacement of
+    ``requests`` (the one Composer boundary) sees every request.
+    """
     import advisors.asset_swap_engine as ase
     import ai_advisor
 
@@ -137,9 +143,12 @@ def post_evaluate(client, fake, body, *, tree=None, composer_key=True, universe=
         stack.enter_context(patch.object(ase, "_has_composer_key", return_value=composer_key))
         stack.enter_context(patch.object(ase, "_build_client", return_value=fake.client))
         stack.enter_context(patch.object(ase, "get_tradeable_set", return_value=universe))
-        stack.enter_context(
-            patch.object(ase, "run_backtest", side_effect=lambda *a, **k: fake_backtest_result())
-        )
+        if not real_backtest:
+            stack.enter_context(
+                patch.object(
+                    ase, "run_backtest", side_effect=lambda *a, **k: fake_backtest_result()
+                )
+            )
         stack.enter_context(patch.object(ase.database, "insert_advisor_observation", inserts))
         stack.enter_context(
             patch("database.load_state", return_value={COMPOSER_HASH: {"name": SYMPHONY_NAME}})

@@ -173,6 +173,73 @@ class TestNormalTick:
             "or equivalent), not merely 'the loop skips already-seen dates' logic."
         )
 
+    def test_rows_recorded_before_a_tick_keep_their_values_and_only_new_days_are_added(
+        self, isolated_db, monkeypatch
+    ):
+        """Rows already stored for an INCUBATING candidate (whatever basis they were written
+        on) are never rewritten by a later tick: the tick appends only the trading days not yet
+        recorded, and the candidate's admission drawdown baseline is not touched.
+
+        Composer is served at the ``requests`` boundary by the captured tenure backtest record
+        (the router's default reply), so the real client and the real tick run. The expected
+        day set and return values are computed here from that record's own dvm_capital series.
+        Rejects a tick that replaces a stored day (INSERT OR REPLACE or an UPDATE), one that
+        re-derives the stored days from the new response, and one that resets the baseline."""
+        from datetime import date
+
+        import advisors.incubation as incubation_module
+        import market_calendar
+        from tests.advisors import _composer_http_router as h
+
+        h.ComposerRouter().install(monkeypatch)
+        _admit("hash-keep-rows", "cand-keep", backtest_mdd_pct=8.0)
+
+        series = next(iter(h.backtest_success_body()["dvm_capital"].values()))
+        points = sorted((int(day), float(value)) for day, value in series.items())
+        expected: dict[str, float] = {}
+        for (_, previous), (day, value) in zip(points, points[1:], strict=False):
+            iso = h.day_integer_to_iso(day)
+            if (
+                previous > 0
+                and value > 0
+                and market_calendar.is_trading_day(date.fromisoformat(iso))
+            ):
+                expected[iso] = (value / previous - 1.0) * 100.0
+        assert len(expected) >= 4, "premise: the record holds several trading days"
+        first_day, second_day, *new_days = sorted(expected)
+        stored_first = (7.77, 0.11)
+        stored_second = (-3.33, None)
+        assert stored_first[0] != expected[first_day] and stored_second[0] != expected[second_day]
+        db_module.append_incubation_day("hash-keep-rows", first_day, *stored_first)
+        db_module.append_incubation_day("hash-keep-rows", second_day, *stored_second)
+
+        incubation_module.run_incubation_tick()
+
+        conn = db_module.get_connection()
+        try:
+            stored = {
+                day: (forward, spy)
+                for day, forward, spy in conn.execute(
+                    "SELECT trading_day, forward_return_pct, spy_return_pct "
+                    "FROM incubation_daily WHERE candidate_hash = ?",
+                    ("hash-keep-rows",),
+                )
+            }
+        finally:
+            conn.close()
+        assert stored[first_day] == stored_first, "a day recorded before the tick was rewritten"
+        assert stored[second_day] == stored_second, "a day recorded before the tick was rewritten"
+        assert sorted(stored) == sorted(expected), "exactly the trading days of the response"
+        for day in new_days:
+            assert stored[day][0] == pytest.approx(expected[day])
+            assert stored[day][1] == pytest.approx(expected[day])
+        row = next(
+            r
+            for r in db_module.get_incubation_overview()
+            if r["candidate_hash"] == "hash-keep-rows"
+        )
+        assert row["backtest_mdd_pct"] == 8.0, "the admission baseline is not recomputed"
+
 
 # ---------------------------------------------------------------------------
 # TICK2: catch-up after a multi-day gap, one call
