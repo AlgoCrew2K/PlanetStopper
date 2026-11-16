@@ -1,0 +1,250 @@
+{
+  "spec_audit": "feature-plans/backtest-slippage-calibration.md (tier: feature)",
+  "round": 1,
+  "plan_commit": "4e797004",
+  "verified_against": "AlphaBotPM @ c3e12882141a (worktree HEAD 4e797004, branch feat/backtest-slippage-calibration, ahead of origin/main by the plan commit only; every repo:path:line below read via git show c3e12882:<path>)",
+  "checklist": ".claude/agents/_refs/spec-review-checklist.md (project copy)",
+  "structure_pass": "plan-trace check --stage gate-1: clean; plan-trace self-contained: 0 findings; placeholder grep: no matches; sections present in template order. Requirements as Given matches the source file and the dispatcher's brief sentence for sentence.",
+  "result": {
+    "confirmed": 9,
+    "question": 0,
+    "blocking": [
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "findings": [
+    {
+      "n": 1,
+      "section": "B. Criteria missing or contradicting an enforced contract (Not Building item the code forces)",
+      "class": "CONFIRMED",
+      "blocking": true,
+      "spec_location": "AC-1 (edit to advisors/composer_backtest_client.py:80), AC-4 S-4.5 (edit to the comment at autotuner.py:1433-1447), Definition of Done gates",
+      "spec_says": "Only the constant, its comment and the friction comment change; the scoped gate runs tests/ai_advisor/, tests/autotuner/, tests/app/, tests/ui/, tests/security/, incubation and tenure suites. No criterion or Not Building entry names any content pin.",
+      "code_does": "Four content pins cover the two files this plan edits, and each fails on any byte changed outside its listed edits. (a) A full-file LF sha256 of advisors/composer_backtest_client.py, which fails as soon as line 80 changes. (b) A full-file sha256 of autotuner.py. (c) and (d) Two AST scope digests of autotuner.py that cut only other slices' listed nodes, so the S-4.5 comment rewrite moves both. Two of the four say 'STOP and ask the PM' before a re-take. Three of the four live in the repository-root tests/ directory, which the DoD's scoped gate does not run, so the failures surface first in CI.",
+      "evidence": [
+        "c3e12882:tests/ai_advisor/test_advisor_backtest_client.py:1274-1276 \"\\\"advisors/composer_backtest_client.py\\\": ( \\\"bf1281b030e215e4f779697fd46849e854b46692f8945781c15e59cf2ab87661\\\"\"",
+        "c3e12882:tests/ai_advisor/test_advisor_backtest_client.py:1362-1366 \"removing the root module must leave the canonical client and its captured fixtures byte for byte as they were\"",
+        "c3e12882:tests/test_regime_label_protected_files.py:40 \"\\\"autotuner.py\\\": \\\"85b2354d994eb6adcbbb26f8601ab80f37bed88baee3346d4915f4fcf3f9874b\\\"\"",
+        "c3e12882:tests/test_hygiene_protected_surfaces.py:197 \"\\\"autotuner.py\\\": \\\"21dcdb8ea205c0ae1a70a16360cbea4f8630db9bb6b09f5262c5eebeeb062238\\\"\" (assert at :210-213 \"changed outside the slice's listed edits ... STOP and ask the PM.\")",
+        "c3e12882:tests/test_preconditions_replay_protected_scope.py:22 \"STOP and ask the PM before re-taking either digest: a change means a file moved outside what the slice may touch.\""
+      ],
+      "settle_by": "A criterion (or an AC-1/AC-4 scenario) that names each pin, states it is re-taken over exactly this plan's listed edits (line 80 plus its comment in the client; the comment block above SIM_EXIT_FRICTION_PCT in autotuner.py), and proves nothing else moved, as feature-plans/hygiene-waves-3-4.md AC-10 S-10.1/S-10.2 does. The DoD gate must name the four pin files."
+    },
+    {
+      "n": 2,
+      "section": "B. Criteria missing or contradicting an enforced contract (Earlier criteria on the same surface)",
+      "class": "CONFIRMED",
+      "blocking": true,
+      "spec_location": "Earlier criteria on the same surface (plan lines 83-97)",
+      "spec_says": "Lists exit-friction, strategy-builder-composer-grammar, composer-backtest-schema-drift, ai-advisor-composer-api-research, DE-SB-CULL-001, DE-MATH-R2-001, strategy-incubation-gate and symphony-tenure-review criteria.",
+      "code_does": "Three delivered plans have criteria that hold the two edited files byte-unchanged, and this plan contradicts them without listing them: hygiene-waves-3-4 AC-2 S-2.3 (the client and its two captured fixtures byte-unchanged) and its AC-10; regime-label-producer AC-6 S-6.4 (autotuner.py byte-unchanged); preconditions-replay-load-once AC-8 (protected files unchanged outside its listed edits). These are the criteria behind the pins of finding 1.",
+      "evidence": [
+        "c3e12882:feature-plans/hygiene-waves-3-4.md:221 \"S-2.3 | N7 | the GREEN tree | the canonical client and its fixtures are compared with the ref | `advisors/composer_backtest_client.py`, `tests/fixtures/composer/backtest_inline_v1.json` and `tests/fixtures/composer/backtest_response_v1.json` are byte-unc[hanged]\"",
+        "c3e12882:feature-plans/hygiene-waves-3-4.md:355 \"### AC-10: Protected surfaces stay unchanged and each content pin moves only over the listed edits\"",
+        "c3e12882:feature-plans/regime-label-producer.md:236 \"S-6.4 | N7 | the GREEN tree | the content checks run | `math_engine.py`, `regime_classifier.py`, `autotuner.py`, ... are byte-unchanged from the ref\"",
+        "c3e12882:feature-plans/preconditions-replay-load-once.md:295 \"### AC-8: Contracts and protected surfaces stay unchanged\""
+      ],
+      "settle_by": "One row per earlier criterion, disposition 'changed' and the reason (pin re-taken over this plan's listed edits only), as hygiene-waves-3-4.md:178 did for regime-label-producer AC-6."
+    },
+    {
+      "n": 3,
+      "section": "A. Wrong or unverifiable claims",
+      "class": "CONFIRMED",
+      "blocking": true,
+      "spec_location": "Known-Unconfirmed calibration table row 'Cross-symphony mean' (line 316); AC-5 S-5.1 and S-5.5; Q-5 and the standing-risk bullet at line 321",
+      "spec_says": "The cross-symphony mean gap at 0.001 is 'about +2.1' bps a day. S-5.1 writes that figure into the code comment, and S-5.5 requires every number there to equal this table. Q-5 says the mean gap at 0.0027 is 'about +14'. S-5.1 also states '87 trading days since each tree's last edit' for all 8 symphonies.",
+      "code_does": "The plan's own per-symphony rows do not produce +2.1. At 0.001 the rows (7.8, 9.3, -2.7, 4.2, 7.1, -11.4, 3.2, -10.5) sum to 7.0, so the simple mean is +0.875 bps a day. Weighted by days (seven symphonies at 87 days, one at 46) the mean is +0.49. The other two means check out: the rows at 0 give -6.45 and the rows at 0.005 give +29.9, matching about -6.5 and about +30. Interpolated from the corrected mean, the gap at 0.0027 is about +13, not +14. Reasonabilists has 46 days, not 87 (the plan's own table, line 312). The figure comes verbatim from the source (G-10), but AC-5 would commit it to code and docs as fact, and a test built from S-5.5 would pin a number the table contradicts.",
+      "evidence": [
+        "feature-plans/backtest-slippage-calibration.md:308-316 (per-symphony rows vs \"Cross-symphony mean | | about -6.5 | about +2.1 | about +30\")",
+        "feature-plans/backtest-slippage-calibration.source.md:11 \"Cross-symphony mean: about -6.5 / +2.1 / +30 bps/day.\""
+      ],
+      "settle_by": "Restate the mean at 0.001 as computed from the rows (+0.9 simple, +0.5 day-weighted) or carry +2.1 labelled as the PM's stated figure with its averaging method. Correct Q-5's +14. State the Reasonabilists 46-day exception wherever S-5.1 says 87 days."
+    },
+    {
+      "n": 4,
+      "section": "B. Criteria missing or contradicting an enforced contract",
+      "class": "CONFIRMED",
+      "blocking": true,
+      "spec_location": "AC-4 rule and S-4.4/S-4.5",
+      "spec_says": "'no check or provenance statement in the repository shall derive it from the backtest default'. S-4.4: 'no pin reads the backtest default'. S-4.5: the statement cites the methodology report and does not say the value is derived from the default.",
+      "code_does": "The pin test has a second check besides the derivation (:76-117): a source-comment test that requires the 15 lines above SIM_EXIT_FRICTION_PCT to cite the Composer client's slippage assumption as the constant's 'AC-1 provenance requirement'. AC-4 does not say whether that check is removed, kept or reworded. Kept as written, it forces the comment to name the backtest client as provenance, which conflicts with AC-4's rule. S-4.4 does not reach it, because the check reads text, not the default's value.",
+      "evidence": [
+        "c3e12882:tests/autotuner/test_exit_friction_constant.py:146-150 \"assert \\\"_DEFAULT_SLIPPAGE_PERCENT\\\" in window or \\\"composer_backtest_client\\\" in window, ( \\\"SIM_EXIT_FRICTION_PCT's source comment must cite the Composer backtest client's slippage assumption ... -- AC-1 provenance requirement.\\\"\"",
+        "c3e12882:tests/autotuner/test_exit_friction_constant.py:96 \"expected = composer_backtest_client._DEFAULT_SLIPPAGE_PERCENT * autotuner.RETURN_PCT_TO_FRACTION\""
+      ],
+      "settle_by": "An AC-4 scenario that says what the source-comment check requires after the change (for example, it cites the methodology report and no longer requires the client name)."
+    },
+    {
+      "n": 5,
+      "section": "A. Wrong or unverifiable claims",
+      "class": "CONFIRMED",
+      "blocking": false,
+      "spec_location": "AC-3 negative coverage N5 reason (line 165); AC-1 N5 reason (line 116)",
+      "spec_says": "'the default is a module constant read on every call, so concurrent runs cannot see different values'",
+      "code_does": "The default is bound once, when run_backtest is defined at import. It is not read on each call, so patching `_DEFAULT_SLIPPAGE_PERCENT` after import leaves what run_backtest sends unchanged. The N5 conclusion still holds, but its stated reason is wrong. A test that patches the module constant to show a surface 'reads the default' (S-4.4 patches it) proves nothing about the sent body.",
+      "evidence": [
+        "c3e12882:advisors/composer_backtest_client.py:277 \"slippage_percent: float = _DEFAULT_SLIPPAGE_PERCENT,\""
+      ],
+      "settle_by": "State the reason as the default being fixed when the function is defined. AC-1 and AC-3 assert the value in the sent body, never a patched constant."
+    },
+    {
+      "n": 6,
+      "section": "E. Closed-scope breaches",
+      "class": "CONFIRMED",
+      "blocking": false,
+      "spec_location": "NB-10; DC-3 sibling search",
+      "spec_says": "NB-10 excludes edits to the recorded request bodies of backtest_inline_v1.json, backtest_inline_transit_v1.json and backtest_response_v1.json. DC-3 greps `0.005` in `*.py`, docs/generated/ and .claude/CLAUDE.md.",
+      "code_does": "The tenure-review capture family also records `slippage_percent` 0.005 in its request parameters, and NB-10 and DC-3 miss it: tests/fixtures/composer/tenure-review/case4_definition_sizes.json, case5_backtest_dated_compact_nOyb55RMGVCKPiYXv7TI.json, case6_backtest_413_too_large.json, case7c_backtest_malformed_structure_400.json, case7c_backtest_unknown_ticker_500.json and README.md. One test replays case5, captured at 0.005, through run_backtest with no slippage argument. After the change that test sends 0.001 against a response captured at 0.005. It is parse-only, so it stays valid, but the plan should say so.",
+      "evidence": [
+        "c3e12882:tests/fixtures/composer/tenure-review/case5_backtest_dated_compact_nOyb55RMGVCKPiYXv7TI.json \"\\\"slippage_percent\\\":0.005\"",
+        "c3e12882:tests/ai_advisor/test_advisor_backtest_client.py:731-743 (case5 record replayed through client.run_backtest with no slippage argument)"
+      ],
+      "settle_by": "NB-10 names the tenure-review fixture family. DC-3's search adds `*.json` and `*.md` under tests/fixtures/."
+    },
+    {
+      "n": 7,
+      "section": "A. Wrong or unverifiable claims",
+      "class": "CONFIRMED",
+      "blocking": false,
+      "spec_location": "Summary (line 16)",
+      "spec_says": "every advisor surface ... 'compares candidates, incumbents and benchmarks on one basis'",
+      "code_does": "Strategy Builder backtests no incumbent. Its incumbent bar is the constant 0.0, and neither the route nor the weekly scheduler passes another value. For that surface the change moves candidates against a fixed bar; it does not put both sides on one basis. Breaking Changes says more candidates can pass, but the Summary misstates the mechanism.",
+      "evidence": [
+        "c3e12882:advisors/strategy_builder_engine.py:899 \"incumbent_oos_alpha: float = 0.0,\"",
+        "c3e12882:app.py:12006-12014 (propose_strategies call passes no incumbent_oos_alpha)",
+        "c3e12882:advisors/strategy_builder_scheduler.py:166-176 (same)"
+      ],
+      "settle_by": "Name Strategy Builder's incumbent as the fixed 0.0 bar, not a backtest."
+    },
+    {
+      "n": 8,
+      "section": "A. Wrong or unverifiable claims",
+      "class": "CONFIRMED",
+      "blocking": false,
+      "spec_location": "S-3.15, Security Considerations (Money), D-3: 'advisors/tenure_review.py:1185-1193'",
+      "spec_says": "The watch rule is at advisors/tenure_review.py:1185-1193.",
+      "code_does": "At the ref the rule spans :1187-1196. The cited range stops before the comparison (:1194) and the reason append (:1196).",
+      "evidence": [
+        "c3e12882:advisors/tenure_review.py:1194 \"and backtest_total - realized_total > BACKTEST_TRAIL_WATCH_PP\"",
+        "c3e12882:advisors/tenure_review.py:1196 \"reasons.append(_TRAILS_REASON)\""
+      ],
+      "settle_by": "Cite :1187-1196."
+    },
+    {
+      "n": 9,
+      "section": "B. Criteria missing or contradicting an enforced contract (Open Questions the code already answers)",
+      "class": "CONFIRMED",
+      "blocking": false,
+      "spec_location": "Q-4",
+      "spec_says": "Asks the operator whether 'money' is the right Sensitive marking.",
+      "code_does": "Code plus the project's Sensitive definition already answer Q-4. Money covers anything that drives a real-money keep, retire or trade decision, and the tenure verdict reads the backtest leg. D-3 already records the answer, so Q-4 duplicates a settled decision.",
+      "evidence": [
+        "c3e12882:advisors/tenure_review.py:1194 \"and backtest_total - realized_total > BACKTEST_TRAIL_WATCH_PP\" (feeds the watch verdict at :1208)"
+      ],
+      "settle_by": "Drop Q-4 and keep D-3 with its evidence."
+    }
+  ],
+  "sections_without_findings": {
+    "C. Template sections absent or empty without reason": "none",
+    "D. HOW content that belongs at Gate 2": "none (the named constant, test file and function names are the observable contract of AC-4/AC-5 or citations of existing code)"
+  },
+  "F_correct_and_easily_doubted": [
+    "The caller census is complete. At the ref the production callers of run_backtest, submit_backtest and backtest_fn are exactly the sites AC-3 lists, and none passes slippage_percent. The search covered advisors/, app.py, scripts/ and the root modules, excluding tests. The alias is at composer_backtest_client.py:454; the only compile_plan call passing backtest_fn is strategy_builder_engine.py:442.",
+    "The tenure review (tenure_review_runner.py:179-188) is a real caller that the brief omitted; the plan correctly adds it.",
+    "SIM_EXIT_FRICTION_PCT is the literal 0.5 (autotuner.py:1448), not computed from the client constant. The page copy reads it (app.py:2740-2744), so the new default cannot move it. Of the tests that touch the friction constant, only tests/autotuner/test_exit_friction_constant.py reads the client constant.",
+    "The Frontrunner Builder runs no SPY baseline: its evaluate_candidate_batch call passes no spy_returns_fn (frontrunner_builder.py:2278-2282).",
+    "On an SPY failure Strategy Builder still backtests candidates, which are then withheld through the +inf sentinel (strategy_builder_engine.py:1068-1075, backtest_gate_engine.py:962-968). pbo_veto takes precedence when K>=2 (:957).",
+    "incubation_daily is INSERT OR IGNORE (database.py:5180), so rows recorded before the change keep their stored values.",
+    "Arithmetic checks: the means at 0 and 0.005 (-6.45, +29.9) match the source. The 0.0027 interpolation matches LQD+EYEG's zero crossing (0.00271). 2026-07-15 to 2026-11-13 is 87 NYSE sessions.",
+    "Composer accepting 0.001, and slippage_percent being a fraction, are production behaviour and cannot be confirmed from code. The plan correctly marks both unconfirmed, and its DoD live check settles them."
+  ],
+  "refusal_enumeration": {
+    "note": "The feature sends one input, the slippage_percent value, to Composer POST /backtest. That is an external compute endpoint, not an app write route, and every refusal path below is the same for any value. Fail-Closed 'none' holds.",
+    "rows": [
+      {
+        "input": "slippage_percent (compact body)",
+        "entry": "run_backtest compact_body=True",
+        "refusal": "error 'request body not serializable: ValueError|TypeError', no POST",
+        "enforced_at": "advisors/composer_backtest_client.py:349-353",
+        "covered": "AC-2 S-2.8"
+      },
+      {
+        "input": "request body",
+        "entry": "run_backtest",
+        "refusal": "HTTP 429, then retried; error 'HTTP 429 rate limit exceeded' when retries are exhausted or retry_on_rate_limit is False",
+        "enforced_at": "composer_backtest_client.py:390-403",
+        "covered": "S-1.5, S-2.10 (retry); exhausted: unchanged, value-independent (N7 S-3.14)"
+      },
+      {
+        "input": "request body",
+        "entry": "run_backtest",
+        "refusal": "HTTP 500/502/503/504 retried, then 'HTTP <code>: <text>'",
+        "enforced_at": "composer_backtest_client.py:405-424",
+        "covered": "S-1.6, S-3.13"
+      },
+      {
+        "input": "request body",
+        "entry": "run_backtest",
+        "refusal": "non-retryable 4xx (400 untradeable, 413 too large, 422 grammar or value) 'HTTP <code>: <text>'",
+        "enforced_at": "composer_backtest_client.py:422-424",
+        "covered": "S-1.7 (422), S-3.12 (400); 413: unchanged, value-independent (tenure compact path, N7 S-3.14)"
+      },
+      {
+        "input": "response",
+        "entry": "run_backtest",
+        "refusal": "'invalid JSON in 200 response'",
+        "enforced_at": "composer_backtest_client.py:386",
+        "covered": "unreachable as a change: response parsing is unchanged (S-1.8)"
+      },
+      {
+        "input": "transport",
+        "entry": "run_backtest",
+        "refusal": "timeout, returned at once",
+        "enforced_at": "composer_backtest_client.py:426-431",
+        "covered": "unchanged, value-independent (N7 S-3.14)"
+      },
+      {
+        "input": "transport",
+        "entry": "run_backtest",
+        "refusal": "RequestException, retried, then 'transport error'",
+        "enforced_at": "composer_backtest_client.py:433-448",
+        "covered": "unchanged, value-independent (N7 S-3.14)"
+      },
+      {
+        "input": "slippage_percent 0.001",
+        "entry": "Composer server-side validation",
+        "refusal": "unknown (Composer-side range validation not visible in code)",
+        "enforced_at": "Composer, not in repo",
+        "covered": "Known-Unconfirmed + DoD live check; handled if it occurs as S-1.7"
+      }
+    ]
+  },
+  "round_2": {
+    "plan_commit": "8349c909",
+    "verified_against": "AlphaBotPM @ c3e12882141a (worktree HEAD 8349c909)",
+    "structure_pass": "plan-trace check --stage gate-1: clean; self-contained: 0 findings; placeholder grep: no matches",
+    "verdict": "READY",
+    "result": {
+      "confirmed": 0,
+      "question": 0,
+      "blocking": []
+    },
+    "round_1_dispositions": {
+      "1": "closed: AC-6 names all four pins and the listed edits; S-6.2 to S-6.5 hold the other pinned files and fixtures; the DoD gate runs the root pin tests. A further search of every test that hashes a file and names either edited file found no fifth pin. The other hits: tests/harness/test_implementer_agent.py:97 holds the name in text only, and tests/fixtures/hygiene_waves_3_4/verify_against_ref.py is not collected by pytest (its docstring, :3).",
+      "2": "closed: rows added for hygiene-waves-3-4 AC-2 S-2.3/AC-10, regime-label-producer AC-6 S-6.4, preconditions-replay-load-once AC-8.",
+      "3": "closed: the computed means (+0.875 simple, +0.49 day-weighted) sit beside G-10's stated figure; S-5.1 uses +0.9 and notes the 46-day symphony; Q-5 reads about +13 (recomputed: 0.875 + 29.05 x 0.425 = 13.2).",
+      "4": "closed: S-4.8 states the source-comment check's post-change requirement; S-4.4 states the expected value is not computed from the client default.",
+      "5": "closed: N5 reasons cite the default bound at definition (:277).",
+      "6": "closed: NB-10 lists the tenure-review fixture family; DC-3 searches *.json and *.md under tests/fixtures/.",
+      "7": "closed: the Summary names the Strategy Builder incumbent bar as the fixed 0.0 (strategy_builder_engine.py:899).",
+      "8": "closed: the rule is cited as :1187-1196.",
+      "9": "closed: Q-4 is marked removed and settled by D-3."
+    },
+    "non_blocking_notes": [
+      "AC-6's listed edits name advisors/composer_backtest_client.py ':78-79' as the statement beside the default, but at the ref :79 is the `_DEFAULT_CAPITAL: float = 10_000.0` assignment (c3e12882:advisors/composer_backtest_client.py:79). The statement is :78 plus any new comment above :80. S-1.4 already pins capital at 10000.0, so this cannot license a capital change."
+    ]
+  }
+}

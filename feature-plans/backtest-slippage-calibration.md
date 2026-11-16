@@ -1,5 +1,5 @@
 # Feature: Backtest slippage default calibrated to live Composer results
-Status: draft
+Status: gate-1
 Story: none: operator request in chat on 2026-11-16, quoted whole in backtest-slippage-calibration.source.md
 Type: fix
 Suite: none
@@ -206,7 +206,7 @@ Questions: Q-5
 Requirement items: R-14, R-16
 Rule: When the change is complete, `advisors/composer_backtest_client.py` and `autotuner.py` shall differ from the ref by exactly the listed edits below, and each content pin on those files shall be re-taken over those edits only, while every other file those pins hold keeps its ref digest.
 
-Listed edits: `advisors/composer_backtest_client.py`: the slippage default (:80) with the statement beside it (:78-79), and the `slippage_percent` unit line of the `run_backtest` docstring (:303-304). `autotuner.py`: the statement above `SIM_EXIT_FRICTION_PCT` (:1433-1447); the assignment (:1448) is unchanged. The content pins on these files at the ref: the full-file digest of the client (tests/ai_advisor/test_advisor_backtest_client.py:1274-1276, asserted at :1362-1366), the full-file digest of `autotuner.py` (tests/test_regime_label_protected_files.py:40), and the two scope digests of `autotuner.py` (tests/test_hygiene_protected_surfaces.py:197, asserted at :210-213, and tests/test_preconditions_replay_protected_scope.py), two of which say to stop and ask the PM before a re-take (Q-6).
+Listed edits: `advisors/composer_backtest_client.py`: the slippage default (:80) with the statement beside it (:78), and the `slippage_percent` unit line of the `run_backtest` docstring (:303-304). `autotuner.py`: the statement above `SIM_EXIT_FRICTION_PCT` (:1433-1447); the assignment (:1448) is unchanged. The content pins on these files at the ref: the full-file digest of the client (tests/ai_advisor/test_advisor_backtest_client.py:1274-1276, asserted at :1362-1366), the full-file digest of `autotuner.py` (tests/test_regime_label_protected_files.py:40), and the two scope digests of `autotuner.py` (tests/test_hygiene_protected_surfaces.py:197, asserted at :210-213, and tests/test_preconditions_replay_protected_scope.py), two of which say to stop and ask the PM before a re-take (Q-6).
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
