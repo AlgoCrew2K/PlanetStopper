@@ -1,4 +1,4 @@
-"""Dead-ticker check, pure part: tree walk, Alpaca verdicts, stored-result logic and page and Discord text.
+"""Dead-ticker check, pure part: tree walk, Alpaca verdicts, stored results, page and Discord text.
 
 No I/O: the runner reads Composer and Alpaca and writes the records this module judges and shows.
 Advisory only; nothing here reaches an order, a trade or a Composer write.

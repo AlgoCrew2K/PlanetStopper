@@ -111,6 +111,11 @@ def _is_plain_id(identifier: object) -> bool:
     return isinstance(identifier, str) and _PLAIN_ID.fullmatch(identifier) is not None
 
 
+def is_plain_id(identifier: object) -> bool:
+    """Whether the id is one the client would put in a request path (see ``_is_plain_id``)."""
+    return _is_plain_id(identifier)
+
+
 def _get(
     kind: str,
     path: str,
