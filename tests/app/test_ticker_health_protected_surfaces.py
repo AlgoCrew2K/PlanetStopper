@@ -161,7 +161,8 @@ class TestHealthAndHeaderStatusIgnoreTheCheck:
 
         for key in ("health_on_the_box", "health_remote", "header"):
             assert after[key]["status"] == before[key]["status"], key
-            assert after[key]["degraded_reasons"] == before[key]["degraded_reasons"], key
+            # A remote caller's /health body has no reasons; the other two bodies do.
+            assert after[key].get("degraded_reasons") == before[key].get("degraded_reasons"), key
             assert sorted(after[key]) == sorted(before[key]), key
             assert "ticker" not in json.dumps(after[key]).lower(), key
             assert DEAD not in json.dumps(after[key]), key

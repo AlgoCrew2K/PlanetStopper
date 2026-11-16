@@ -675,7 +675,14 @@ class TestInsideASession:
 
         assert stub_engine.starts == 3, "every :00 pass must spawn the engine"
         assert len(refreshes) == 3, "every :00 pass must start the account refresh"
-        assert world.requests == [], "the check made a request inside a session"
+        # The engine's own cycle refresh asks Composer for account totals; the check asks for
+        # rosters and trees, Alpaca for assets and Discord for nothing.
+        made_by_the_check = [
+            r
+            for r in world.requests
+            if r.kind in ("statistics", "score", "alpaca_asset", "discord")
+        ]
+        assert made_by_the_check == [], "the check made a request inside a session"
         assert run_records()[0]["status"] == "skipped"
 
 
@@ -712,6 +719,7 @@ class TestWaitingForTheOtherReaders:
     def test_the_check_makes_no_composer_request_until_the_other_reader_has_ended(
         self, world, monkeypatch, reader
     ):
+        body = need("_ticker_health_run_body")
         set_clocks(monkeypatch, world, NIGHT)
         end = _hold_reader(reader)
         polls: list[float] = []
@@ -726,7 +734,7 @@ class TestWaitingForTheOtherReaders:
 
         monkeypatch.setattr(time, "sleep", pause)
 
-        need("_ticker_health_run_body")("nightly")
+        body("nightly")
 
         kinds = [event[0] for event in world.events]
         assert "reader_ended" in kinds, "the check never waited for the other reader"
@@ -744,16 +752,14 @@ class TestWaitingForTheOtherReaders:
 
 
 class TestOneRunAtATime:
-    @pytest.mark.parametrize(
-        "second",
-        ["nightly slot", "catch-up start", "direct body"],
-    )
+    @pytest.mark.parametrize("first_trigger", ["nightly", "catch_up"])
+    @pytest.mark.parametrize("second", ["nightly slot", "catch-up start", "direct body"])
     def test_a_second_start_while_a_run_is_in_flight_starts_nothing_and_writes_nothing(
-        self, world, monkeypatch, caplog, second
+        self, world, monkeypatch, caplog, first_trigger, second
     ):
         set_clocks(monkeypatch, world, NIGHT)
         hold = Hold(world, monkeypatch)
-        first = start_run("nightly")
+        first = start_run(first_trigger)
         assert hold.entered.wait(timeout=10), "the first run never reached its first pause"
         requests_before = len(world.requests)
         jb.install_inline_threads(monkeypatch)
@@ -772,6 +778,7 @@ class TestOneRunAtATime:
         assert not first.is_alive()
         assert during == 0, "the second start made requests while the first run was in flight"
         assert len(run_records()) == 1, "the second start wrote a run row"
+        assert run_records()[0]["trigger"] == first_trigger
         assert max(Counter(world.score_ids()).values()) == 1
         assert len(world.of_kind("statistics")) == 1
         assert any(
@@ -1031,6 +1038,64 @@ class TestFromTheSchedulerToThePage:
         assert FIRST_NAME in text and SECOND_NAME in text
 
 
+class TestSecurity:
+    def test_no_log_line_of_a_start_carries_a_credential_an_account_a_name_or_a_ticker(
+        self, world, monkeypatch, tmp_path, caplog
+    ):
+        isolate_env(
+            monkeypatch,
+            tmp_path,
+            ACCOUNT_ROTH=ACCOUNT,
+            ALPACA_KEY=t.ALPACA_KEY,
+            ALPACA_SECRET=t.ALPACA_SECRET,
+            DISCORD_WEBHOOK_URL=t.WEBHOOK_URL,
+        )
+        world.set_discord(h.error_reply(500))
+        set_clocks(monkeypatch, world, NIGHT)
+        jb.install_inline_threads(monkeypatch)
+
+        with caplog.at_level(logging.DEBUG):
+            need("_run_ticker_health_tick")()
+            need("_start_ticker_health_catch_up")()
+            need("_ticker_health_catch_up_due")(NIGHT)
+
+        assert [r["completed"] for r in run_records()] == [True], "test premise: the run completed"
+        assert len(world.discord_posts()) >= 1, "test premise: the Discord failure path ran"
+        for secret in (
+            t.ALPACA_KEY,
+            t.ALPACA_SECRET,
+            t.WEBHOOK_URL,
+            t.WEBHOOK_TOKEN,
+            t.WEBHOOK_ID,
+            ACCOUNT,
+            FIRST_ID,
+            SECOND_ID,
+            FIRST_NAME,
+            SECOND_NAME,
+            DEAD,
+        ):
+            assert secret not in caplog.text, f"a log line carries {secret[:6]}..."
+
+    def test_the_check_reads_no_setting_that_could_arm_or_change_trading(
+        self, world, monkeypatch, tmp_path, spy
+    ):
+        isolate_env(
+            monkeypatch,
+            tmp_path,
+            ACCOUNT_ROTH=ACCOUNT,
+            ALPACA_KEY=t.ALPACA_KEY,
+            ALPACA_SECRET=t.ALPACA_SECRET,
+            LIVE_EXECUTION="True",
+        )
+        monkeypatch.setenv("LIVE_EXECUTION", "True")
+
+        need("_ticker_health_run_body")("nightly")
+
+        (call,) = spy
+        assert "live" not in " ".join(call).lower(), sorted(call)
+        assert "LIVE_EXECUTION" not in need("_ticker_health_settings")()
+
+
 # ---------------------------------------------------------------------------
 # The slot's place in the day, in every host zone
 # ---------------------------------------------------------------------------
@@ -1211,6 +1276,7 @@ class TestEveryStartGoesThroughTheOneBody:
         assert "run_scheduler" not in _functions_naming(source, "_start_ticker_health_catch_up")
 
     def test_running_the_scheduler_starts_no_catch_up(self, world, monkeypatch):
+        need("_start_ticker_health_catch_up")
         started: list[str] = []
         monkeypatch.setattr(
             app_module, "_start_ticker_health_catch_up", lambda: started.append("x")
