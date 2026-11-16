@@ -1343,7 +1343,7 @@
 
     {% if ticker_health is defined and ticker_health.warning %}
     <div class="ticker-health-warning" data-testid="ticker-health-warning">
-      <p>{{ ticker_health_lead }} Checked {{ ticker_health.warning.checked }}.</p>
+      <p>{{ ticker_health.warning.lead }} Checked {{ ticker_health.warning.checked }}.</p>
       <ul>
         {% for line in ticker_health.warning.lines %}
         <li>{{ line.text }}{% if line.from_check %} <span class="ticker-health-earlier">(from the check at {{ line.from_check }})</span>{% endif %}</li>

@@ -107,6 +107,10 @@ _STOP_OTHER_JOB = _Stop(
     "another Composer job was running", "another Composer job was still running"
 )
 _STOP_RATE_LIMIT = _Stop("Composer rate limit", "Composer rate limit")
+_STOP_CANNOT_TELL = _Stop(
+    "could not tell whether another Composer job was running",
+    "could not tell whether another Composer job was running",
+)
 
 
 class _SkipRun(Exception):  # noqa: N818 - control flow inside this module only
@@ -151,12 +155,22 @@ class _Run:
     def market_is_open(self) -> bool:
         return market_calendar.get_market_state(self.clock().astimezone(_ET)) == "open"
 
+    def _other_reader_running(self) -> bool:
+        """Whether another Composer job runs; a check that cannot answer stops the reads
+        (waiting out the whole period for a job that may not exist would be a guess)."""
+        try:
+            return self.other_reader_running()
+        except Exception as exc:  # noqa: BLE001 - the cause is stored, never the message
+            logger.warning("wait check failed: %s", type(exc).__name__)
+            self.stop = _STOP_CANNOT_TELL
+            return True
+
     def gate(self) -> _Stop | None:
         """The stop that applies before the next Composer request, waiting for another job."""
         while self.stop is None:
             if self.market_is_open():
                 self.stop = _STOP_MARKET
-            elif not self.other_reader_running():
+            elif not self._other_reader_running():
                 return None
             elif (self.clock() - self.started).total_seconds() >= GATE_WAIT_LIMIT_SECONDS:
                 self.stop = _STOP_OTHER_JOB

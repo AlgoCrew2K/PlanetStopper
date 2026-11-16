@@ -2167,18 +2167,16 @@ _TICKER_HEALTH_RUN_LOCK = threading.Lock()
 
 
 def _ticker_health_other_reader_running() -> bool:
-    """True while another Composer reader runs; any error answers True (wait, never overlap)."""
-    try:
-        from advisors import tenure_review  # lazy (CC-2)
+    """True while another Composer reader runs. An error is not caught: the runner stores the
+    cause, since neither True (wait out the period) nor False (overlap) would be true."""
+    from advisors import tenure_review  # lazy (CC-2)
 
-        live = {t.name for t in threading.enumerate() if t.is_alive()}
-        return (
-            any(name in live for name in _TICKER_HEALTH_WAITS_FOR_THREADS)
-            or _RETIREMENT_RUN_LOCK.locked()
-            or bool(tenure_review.REVIEW_RUN_STATE.snapshot()["running"])
-        )
-    except Exception:
-        return True
+    live = {t.name for t in threading.enumerate() if t.is_alive()}
+    return (
+        any(name in live for name in _TICKER_HEALTH_WAITS_FOR_THREADS)
+        or _RETIREMENT_RUN_LOCK.locked()
+        or bool(tenure_review.REVIEW_RUN_STATE.snapshot()["running"])
+    )
 
 
 def _ticker_health_run_body(trigger: str) -> None:
@@ -2221,7 +2219,10 @@ def _ticker_health_page_view() -> dict:
         from advisors import ticker_health, ticker_health_runner  # lazy (CC-2)
 
         runs = ticker_health_runner.read_latest_runs()
-        return ticker_health.page_view(runs.latest, runs.latest_completed, datetime.now(UTC))
+        view = ticker_health.page_view(runs.latest, runs.latest_completed, datetime.now(UTC))
+        if view["warning"]:
+            view["warning"]["lead"] = ticker_health.LEAD_SENTENCE
+        return view
     except Exception as exc:
         _daemon_log.warning("Ticker check result not read: %s", type(exc).__name__)
         return {"warning": None, "notices": [_TICKER_HEALTH_UNREADABLE_NOTICE]}
@@ -3932,12 +3933,9 @@ def _render_dashboard(
     if wording_day is not None:
         session_day = f"{wording_day.strftime('%b')} {wording_day.day}"
 
-    from advisors import ticker_health  # lazy (CC-2)
-
     return render_template(
         "index.html",
         ticker_health=_ticker_health_page_view(),
-        ticker_health_lead=ticker_health.LEAD_SENTENCE,
         session_day=session_day,
         engine_phase=engine_phase,
         # The headline's descriptor says "Simulated" while the engine's last cycle placed no real
