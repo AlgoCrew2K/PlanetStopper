@@ -1,0 +1,1243 @@
+{
+  "asset_swaps_route": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "d5601127d82f84bdb630812359ba62173aedc0c273f79509cb6fc88c1480007f",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TLT",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "11146fd84da1c7d5dcdfd174fb96bf2f5d6018d7c94fb5546e1c3609a63d1997",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IEF",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "d01225e1ff28757004dceb2b897a9cc06b09a6364f52e3ba99438c05b2c61a29",
+        "tree_tickers": [
+          "SPY"
+        ]
+      }
+    ],
+    "outcome": {
+      "status": 200,
+      "route": {
+        "error": null,
+        "gate_decision": "REJECT_VETO_FAILED",
+        "rejection_reason": "below_spy_alpha",
+        "survivors": [],
+        "rejected": [],
+        "survivors_detail": 0,
+        "rejected_detail": 1,
+        "built_new_count": null,
+        "atlas_count": null,
+        "backtest_unavailable": null
+      }
+    }
+  },
+  "asset_swaps_weekly": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "d5601127d82f84bdb630812359ba62173aedc0c273f79509cb6fc88c1480007f",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TLT",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "11146fd84da1c7d5dcdfd174fb96bf2f5d6018d7c94fb5546e1c3609a63d1997",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IEF",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "d5601127d82f84bdb630812359ba62173aedc0c273f79509cb6fc88c1480007f",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TLT",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "d01225e1ff28757004dceb2b897a9cc06b09a6364f52e3ba99438c05b2c61a29",
+        "tree_tickers": [
+          "SPY"
+        ]
+      }
+    ],
+    "outcome": {
+      "observations": [
+        [
+          "ASSET_SWAP",
+          "REJECT_VETO_FAILED",
+          1
+        ]
+      ]
+    }
+  },
+  "frontrunner_route": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "f5603b478c7245dd3c828237335ac54935d2d4d374ad9dfee75c5d4bc8de739b",
+        "tree_tickers": [
+          "CORE_ASSET_0001",
+          "VIXY"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "4a5e19081e48957ea664e9e5661d5c910e12662463ee61cea9b5572602089278",
+        "tree_tickers": [
+          "CORE_ASSET_0001",
+          "UVXY"
+        ]
+      }
+    ],
+    "outcome": {
+      "status": 202,
+      "proposals_queued": 0,
+      "observations": [
+        [
+          "FRONTRUNNER_BUILDER",
+          "gate rejected candidate: fdr_not_winner",
+          1
+        ],
+        [
+          "FRONTRUNNER_BUILD_SUMMARY",
+          "completed",
+          1
+        ]
+      ]
+    }
+  },
+  "frontrunner_weekly": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "f5603b478c7245dd3c828237335ac54935d2d4d374ad9dfee75c5d4bc8de739b",
+        "tree_tickers": [
+          "CORE_ASSET_0001",
+          "VIXY"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "4a5e19081e48957ea664e9e5661d5c910e12662463ee61cea9b5572602089278",
+        "tree_tickers": [
+          "CORE_ASSET_0001",
+          "UVXY"
+        ]
+      }
+    ],
+    "outcome": {
+      "proposals_queued": 0,
+      "observations": [
+        [
+          "FRONTRUNNER_BUILDER",
+          "gate rejected candidate: fdr_not_winner",
+          1
+        ]
+      ]
+    }
+  },
+  "incubation_tick": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "93fffab0d15275fd47c4538d8d2d5ef57754e3ffb62814fed28113e16b6384c2",
+        "tree_tickers": [
+          "SPY"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "783a5d8d017c65961f5304e87d71d050d6d5aa7edb24a56d9a284c92f2529542",
+        "tree_tickers": []
+      }
+    ],
+    "outcome": {
+      "incubation": [
+        [
+          "FAILED",
+          64
+        ]
+      ]
+    }
+  },
+  "logic_changes_route": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "38a9e282c444cc6fa8bebefc5d550b05460b6b7bb26f63033f26ea203f569e1f",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SHY",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "2c3111736616f5f57f700dafbbbeda54bc2925a335edb21447324b39670092dc",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SHY",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "d01225e1ff28757004dceb2b897a9cc06b09a6364f52e3ba99438c05b2c61a29",
+        "tree_tickers": [
+          "SPY"
+        ]
+      }
+    ],
+    "outcome": {
+      "status": 200,
+      "route": {
+        "error": null,
+        "gate_decision": "REJECT_VETO_FAILED",
+        "rejection_reason": "below_spy_alpha",
+        "survivors": [],
+        "rejected": [],
+        "survivors_detail": 0,
+        "rejected_detail": 1,
+        "built_new_count": null,
+        "atlas_count": null,
+        "backtest_unavailable": null
+      },
+      "stored": [
+        [
+          "LOGIC_CHANGE",
+          "REJECT_VETO_FAILED"
+        ]
+      ]
+    }
+  },
+  "logic_changes_weekly": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "38a9e282c444cc6fa8bebefc5d550b05460b6b7bb26f63033f26ea203f569e1f",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SHY",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "2c3111736616f5f57f700dafbbbeda54bc2925a335edb21447324b39670092dc",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SHY",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "38a9e282c444cc6fa8bebefc5d550b05460b6b7bb26f63033f26ea203f569e1f",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SHY",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "d01225e1ff28757004dceb2b897a9cc06b09a6364f52e3ba99438c05b2c61a29",
+        "tree_tickers": [
+          "SPY"
+        ]
+      }
+    ],
+    "outcome": {
+      "stored": [
+        [
+          "LOGIC_CHANGE",
+          "REJECT_VETO_FAILED"
+        ]
+      ]
+    }
+  },
+  "strategy_builder_route": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "144902317248160268b930f8f93be093ca5f80df4a8d9707d52319c7ea5df960",
+        "tree_tickers": [
+          "GLD",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "f6a8080a6fd27db190f2949db104ec409634df9d29e231819fe26db72664fbd1",
+        "tree_tickers": [
+          "AGG",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "fd8d808f507c610c2a58173e76fb4c472b4bcb523aaa276dd38c56426759ea45",
+        "tree_tickers": [
+          "SPY"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "144902317248160268b930f8f93be093ca5f80df4a8d9707d52319c7ea5df960",
+        "tree_tickers": [
+          "GLD",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "f6a8080a6fd27db190f2949db104ec409634df9d29e231819fe26db72664fbd1",
+        "tree_tickers": [
+          "AGG",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      }
+    ],
+    "outcome": {
+      "status": 200,
+      "route": {
+        "error": null,
+        "gate_decision": null,
+        "rejection_reason": null,
+        "survivors": [],
+        "rejected": [
+          [
+            "div-a",
+            "REJECT_VETO_FAILED",
+            "pbo_veto"
+          ],
+          [
+            "div-b",
+            "REJECT_VETO_FAILED",
+            "pbo_veto"
+          ]
+        ],
+        "survivors_detail": 0,
+        "rejected_detail": 0,
+        "built_new_count": 2,
+        "atlas_count": 0,
+        "backtest_unavailable": false
+      }
+    }
+  },
+  "strategy_builder_weekly": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "144902317248160268b930f8f93be093ca5f80df4a8d9707d52319c7ea5df960",
+        "tree_tickers": [
+          "GLD",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "f6a8080a6fd27db190f2949db104ec409634df9d29e231819fe26db72664fbd1",
+        "tree_tickers": [
+          "AGG",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "fd8d808f507c610c2a58173e76fb4c472b4bcb523aaa276dd38c56426759ea45",
+        "tree_tickers": [
+          "SPY"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "144902317248160268b930f8f93be093ca5f80df4a8d9707d52319c7ea5df960",
+        "tree_tickers": [
+          "GLD",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "f6a8080a6fd27db190f2949db104ec409634df9d29e231819fe26db72664fbd1",
+        "tree_tickers": [
+          "AGG",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "76fb699f1b8ec4162b10dc8f7ed657384d84cbeaf3bc6c023112e476436c5260",
+        "tree_tickers": [
+          "AGG",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "50b598137dfca1f307fa4c2e04ef2e06473864de548eedf1e583a01b75a7684c",
+        "tree_tickers": [
+          "SPY"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "76fb699f1b8ec4162b10dc8f7ed657384d84cbeaf3bc6c023112e476436c5260",
+        "tree_tickers": [
+          "AGG",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "5fc82c12b40c4a9fa9ca298307e24883063d650f139a239d10b6bdc5447da65f",
+        "tree_tickers": [
+          "AGG",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "3fe43cd33772412d3755e40341f848a41e749277a8fdc8931cc10e92da0e9d01",
+        "tree_tickers": [
+          "SPY"
+        ]
+      },
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "json",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2"
+        },
+        "tree_sha256": "5fc82c12b40c4a9fa9ca298307e24883063d650f139a239d10b6bdc5447da65f",
+        "tree_tickers": [
+          "AGG",
+          "QQQ",
+          "SPY",
+          "TLT"
+        ]
+      }
+    ],
+    "outcome": {
+      "observations": [
+        [
+          "STRATEGY_BUILDER",
+          "REJECT_VETO_FAILED",
+          4
+        ]
+      ]
+    }
+  },
+  "tenure_review_route": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "data",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2",
+          "start_date": "2026-07-20",
+          "end_date": "2026-10-19"
+        },
+        "tree_sha256": "e5207f98b614701e5d015813667b64406b2ff703b5ddbb792282acb2d07ac77c",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SHY",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      }
+    ],
+    "outcome": {
+      "status": 202,
+      "observations": [
+        [
+          "TENURE_REVIEW_RUN",
+          "completed",
+          1
+        ]
+      ]
+    }
+  },
+  "tenure_review_tick": {
+    "requests": [
+      {
+        "url": "https://api.composer.trade/api/v0.1/backtest",
+        "body_form": "data",
+        "fields": {
+          "capital": 10000.0,
+          "apply_reg_fee": true,
+          "apply_taf_fee": true,
+          "broker": "alpaca",
+          "backtest_version": "v2",
+          "start_date": "2026-07-20",
+          "end_date": "2026-10-19"
+        },
+        "tree_sha256": "e5207f98b614701e5d015813667b64406b2ff703b5ddbb792282acb2d07ac77c",
+        "tree_tickers": [
+          "%",
+          "BIV",
+          "BTAL",
+          "EEV",
+          "EUM",
+          "FAS",
+          "FXE",
+          "GLD",
+          "IOO",
+          "ISHG",
+          "PSQ",
+          "PSR",
+          "QLD",
+          "QQQ",
+          "RSPT",
+          "SH",
+          "SHY",
+          "SPHD",
+          "SPLV",
+          "TECL",
+          "TQQQ",
+          "UCO",
+          "UGE",
+          "UGL",
+          "UMDD",
+          "USCI",
+          "UST",
+          "UVIX",
+          "UYM",
+          "VIXY",
+          "VO",
+          "WANT",
+          "XLB",
+          "XLF",
+          "XLK",
+          "XLP",
+          "XLY",
+          "ZSL"
+        ]
+      }
+    ],
+    "outcome": {
+      "observations": [
+        [
+          "TENURE_REVIEW_RUN",
+          "completed",
+          1
+        ]
+      ]
+    }
+  }
+}
