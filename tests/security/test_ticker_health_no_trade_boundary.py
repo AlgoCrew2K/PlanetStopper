@@ -354,7 +354,9 @@ def _after_function(source: str, fn_name: str, statement: str) -> str:
         None,
     )
     assert fn is not None, f"no module-level function {fn_name!r} to plant a statement into"
-    lines = source.splitlines()
+    # Split on "\n" only: the parser numbers lines by \n, \r and \r\n, and a source may hold other
+    # line separator characters inside a string, which splitlines would also split on.
+    lines = source.split("\n")
     lines.insert(fn.end_lineno, f"    {statement}")
     return "\n".join(lines) + "\n"
 

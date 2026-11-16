@@ -318,6 +318,13 @@ class TestMentionsAndMarkupInNamesAndTickers:
         flattened = pair(name="Evil FAKE LINE (ZZZZZZZZZZZZZZZZZZZZ): SPY is dead.")
         assert body_lines(message) == [expected_line(flattened), expected_line(other)]
 
+    def test_the_module_source_names_the_line_boundaries_by_escape_never_by_the_character(self):
+        """A separator character typed into the source splits its lines for every tool that
+        reads it by ``splitlines`` (the no-trade scan plants statements by line)."""
+        source = Path(th.__file__).read_text(encoding="utf-8")
+        for separator in self.OTHER_LINE_BOUNDARIES:
+            assert separator not in source, f"U+{ord(separator):04X} is in the source literally"
+
     @pytest.mark.parametrize("separator", OTHER_LINE_BOUNDARIES, ids=lambda s: f"U+{ord(s):04X}")
     def test_a_long_name_with_a_line_boundary_is_cut_without_one(self, separator):
         long_name = f"Alpha{separator}" + "Beta " * 600
