@@ -813,6 +813,52 @@ def test_run_where_every_answer_is_rate_limited_reads_unavailable_with_that_reas
 
 
 @pytest.mark.parametrize(
+    ("first", "second", "reason"),
+    [
+        pytest.param(
+            lambda: alpaca_status(429),
+            lambda: alpaca_status(503),
+            "Alpaca rate limit",
+            id="rate_limit_then_unavailable",
+        ),
+        pytest.param(
+            lambda: alpaca_status(503),
+            lambda: transport_error(),
+            "Alpaca unavailable",
+            id="unavailable_then_unreachable",
+        ),
+        pytest.param(
+            lambda: transport_error(),
+            lambda: alpaca_status(503),
+            "Alpaca unreachable",
+            id="unreachable_then_unavailable",
+        ),
+        pytest.param(
+            lambda: alpaca_status(503),
+            t.unauthorized_reply,
+            "Alpaca refused the credentials",
+            id="any_refusal_wins",
+        ),
+    ],
+)
+def test_run_with_no_answer_reads_the_first_failed_tickers_reason_unless_one_was_refused(
+    router, first, second, reason
+):
+    """Only transport errors read unreachable, any refusal reads refused, else the first
+    failed ticker's reason (tickers are asked in sorted order, AAA before BBB)."""
+    roster(router, X)
+    router.set_tree(X, t.tree_with(assets=["AAA", "BBB"]))
+    router.alpaca_by_symbol.clear()
+    router.alpaca_by_symbol["AAA"] = first()
+    router.alpaca_by_symbol["BBB"] = second()
+    outcome = run_check(router)
+    assert (outcome.status, outcome.completed) == ("unavailable", False)
+    assert record_of(outcome)["reason"] == reason
+    assert router.asset_symbols()[0] == "AAA"
+    assert router.of_kind("discord") == []
+
+
+@pytest.mark.parametrize(
     ("retry_after", "waited"),
     [("7", 7), ("999", RETRY_CAP), (None, RETRY_BACKOFF), ("soon", RETRY_BACKOFF)],
 )
@@ -1168,6 +1214,29 @@ def test_pair_that_cleared_and_died_again_is_announced_again(router):
     posts = router.discord_posts()
     assert len(posts) == 2
     assert f"({X}): SHNY is {DEAD_SHNY}." in posts[1]["content"]
+
+
+def test_announcement_from_before_a_clearing_does_not_suppress_a_later_post(router):
+    """The pair was announced, cleared, found dead again and its post failed; the next run
+    must post it: only announcement rows of the run whose warnings are carried count, never
+    an older row that predates the clearing."""
+    roster(router, X)
+    router.set_tree(X, t.tree_with(assets=["SHNY"]))
+    first = completed_run(router)
+    assert [rec["run_id"] for rec in announcements()] == [first.run_id]
+    router.set_alpaca("SHNY", t.healthy_reply("SHNY"))
+    assert record_of(completed_run(router, start=night(1)))["warnings"] == []
+    router.set_alpaca("SHNY", t.shny_reply())
+    router.set_discord(h.Reply(status=204, body=None), h.Reply(status=500, body={"message": "x"}))
+    third = completed_run(router, start=night(2))
+    assert warning_pairs(record_of(third)) == {(X, "SHNY")}
+    assert len(router.of_kind("discord")) == 2
+    assert [rec["run_id"] for rec in announcements()] == [first.run_id]
+    router.discord_replies.clear()
+    fourth = completed_run(router, start=night(3))
+    assert len(router.of_kind("discord")) == 3
+    assert f"({X}): SHNY is {DEAD_SHNY}." in router.discord_posts()[2]["content"]
+    assert [rec["run_id"] for rec in announcements()][0] == fourth.run_id
 
 
 def test_clearing_by_removing_the_ticker_from_the_tree_posts_nothing(router):
