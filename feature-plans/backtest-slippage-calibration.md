@@ -1,5 +1,5 @@
 # Feature: Backtest slippage default calibrated to live Composer results
-Status: gate-1
+Status: ready
 Story: none: operator request in chat on 2026-11-16, quoted whole in backtest-slippage-calibration.source.md
 Type: fix
 Suite: none
@@ -232,20 +232,20 @@ Non-goals:
 - NB-2: Re-running or rewriting stored advisor observations, `incubation_daily` rows, incubation admission baselines or tenure review records written before the change (excludes R-20 as given).
 - NB-3: Any UI change; no page states the backtest slippage assumption today and none will (excludes R-21 as given).
 - NB-4: Any schema, migration or route change (R-26 as given).
-- NB-5: Validation of an explicit `slippage_percent` (negative, NaN or infinite values keep their ref behavior; proposed).
-- NB-6: A field recording the slippage used on stored observations or in API responses (proposed).
-- NB-7: Re-tuning the tenure review's 10 percentage point watch threshold for the new basis (proposed; Q-2).
-- NB-8: Special handling for candidates already incubating when the default changes (proposed; Q-3).
-- NB-9: An operator setting or environment key for the slippage default; it is not added to `_SETTINGS_WRITE_ALLOWLIST` (proposed).
-- NB-10: Editing the recorded request bodies inside captured Composer fixtures (tests/fixtures/composer/backtest_inline_v1.json, backtest_inline_transit_v1.json, backtest_response_v1.json, and the tenure review family under tests/fixtures/composer/tenure-review/: case4_definition_sizes.json, case5_backtest_dated_compact_nOyb55RMGVCKPiYXv7TI.json, case6_backtest_413_too_large.json, case7c_backtest_malformed_structure_400.json, case7c_backtest_unknown_ticker_500.json and README.md); they record what was sent at capture time (proposed).
-- NB-11: Editing dated research and audit records that state the old default (docs/research/methodology-validation-2026-07.md line 105, docs/audit/COMPOSER-HISTORICAL-SERIES-2026-09-03.md line 159) (proposed).
+- NB-5: Validation of an explicit `slippage_percent` (negative, NaN or infinite values keep their ref behavior; approved).
+- NB-6: A field recording the slippage used on stored observations or in API responses (approved).
+- NB-7: Re-tuning the tenure review's 10 percentage point watch threshold for the new basis (approved; Q-2).
+- NB-8: Special handling for candidates already incubating when the default changes (approved; Q-3).
+- NB-9: An operator setting or environment key for the slippage default; it is not added to `_SETTINGS_WRITE_ALLOWLIST` (approved).
+- NB-10: Editing the recorded request bodies inside captured Composer fixtures (tests/fixtures/composer/backtest_inline_v1.json, backtest_inline_transit_v1.json, backtest_response_v1.json, and the tenure review family under tests/fixtures/composer/tenure-review/: case4_definition_sizes.json, case5_backtest_dated_compact_nOyb55RMGVCKPiYXv7TI.json, case6_backtest_413_too_large.json, case7c_backtest_malformed_structure_400.json, case7c_backtest_unknown_ticker_500.json and README.md); they record what was sent at capture time (approved).
+- NB-11: Editing dated research and audit records that state the old default (docs/research/methodology-validation-2026-07.md line 105, docs/audit/COMPOSER-HISTORICAL-SERIES-2026-09-03.md line 159) (approved).
 
 Behavior that stays exactly as it is:
 - NB-12: Every other request field, the retry policy, the timeout and response parsing of the backtest client (AC-1).
 - NB-13: `SIM_EXIT_FRICTION_PCT`'s value, its three replay subtraction sites and every display that reads it (AC-4).
 
 Deferred:
-- NB-16: Repeating the calibration measurement on a later window and adjusting the default from that evidence (proposed; Follow-Ups).
+- NB-16: Repeating the calibration measurement on a later window and adjusting the default from that evidence (approved; Follow-Ups).
 
 Protected surfaces this consumes but does not change:
 - NB-14: The execution engine, alpha_bot_execution.py and math_engine.py (S-1.9).
@@ -355,12 +355,12 @@ Standing risks and unconfirmed claims:
 ## Open Questions
 | Q-n | Question | Blocks (AC ids or "plan") | Proposed default | Answer |
 |---|---|---|---|---|
-| Q-1 | Does the tenure review's backtest leg move to the new default with the advisor gates? It passes no slippage today, so it moves unless excluded, and its watch verdicts can change (two of the eight measured symphonies would read watch). | AC-3 | yes: it is the one consumer that compares a backtest with realized returns, the comparison the calibration measures | |
-| Q-2 | Does the tenure review's 10 percentage point watch threshold stay 10 on the new basis? | AC-3 | yes, unchanged; re-tuning it is NB-7 | |
-| Q-3 | Do candidates already incubating at deploy get special handling for their mixed basis and their admission baseline taken at 0.5%? | AC-3 | no; their rows stay as written (S-3.16) and the mix is recorded as a standing risk (NB-8) | |
-| Q-4 | removed: settled by D-3; the project's Sensitive definition covers anything that drives a real-money keep, retire or trade decision, and the tenure watch verdict reads the backtest leg (advisors/tenure_review.py:1187-1196) | none | none | |
-| Q-5 | The default 0.001 is conservative on the cross-symphony mean but not for three of the eight symphonies; about 0.0027 would be conservative for all eight at a mean gap of about +13 bps a day (interpolated). Which value? | AC-1, AC-5 | 0.001, the intake's value | |
-| Q-6 | Two of the content pins on `autotuner.py` say to stop and ask the PM before a re-take. Does approving this plan authorize re-taking the four pins of AC-6 over the listed edits? | AC-6 | yes, over the listed edits only, each re-take proven by S-6.1 | |
+| Q-1 | Does the tenure review's backtest leg move to the new default with the advisor gates? It passes no slippage today, so it moves unless excluded, and its watch verdicts can change (two of the eight measured symphonies would read watch). | AC-3 | yes: it is the one consumer that compares a backtest with realized returns, the comparison the calibration measures | [PM-ASSUMED] yes: the tenure review is a consumer and takes the same default |
+| Q-2 | Does the tenure review's 10 percentage point watch threshold stay 10 on the new basis? | AC-3 | yes, unchanged; re-tuning it is NB-7 | [PM-ASSUMED] yes: the 10 percentage point threshold stays |
+| Q-3 | Do candidates already incubating at deploy get special handling for their mixed basis and their admission baseline taken at 0.5%? | AC-3 | no; their rows stay as written (S-3.16) and the mix is recorded as a standing risk (NB-8) | [PM-ASSUMED] no special handling; the mixed-basis period is an accepted limitation |
+| Q-4 | removed: settled by D-3; the project's Sensitive definition covers anything that drives a real-money keep, retire or trade decision, and the tenure watch verdict reads the backtest leg (advisors/tenure_review.py:1187-1196) | none | none | [PM-ASSUMED] Sensitive: money, accepted (D-3) |
+| Q-5 | The default 0.001 is conservative on the cross-symphony mean but not for three of the eight symphonies; about 0.0027 would be conservative for all eight at a mean gap of about +13 bps a day (interpolated). Which value? | AC-1, AC-5 | 0.001, the intake's value | [PM-ASSUMED] 0.001: the goal is the setting closest to live, not a one-sided bound |
+| Q-6 | Two of the content pins on `autotuner.py` say to stop and ask the PM before a re-take. Does approving this plan authorize re-taking the four pins of AC-6 over the listed edits? | AC-6 | yes, over the listed edits only, each re-take proven by S-6.1 | [PM-ASSUMED] yes: approval authorizes re-taking the four content pins over the listed edits only |
 
 ## Decisions
 | ID | Decision | Rationale |
@@ -368,6 +368,7 @@ Standing risks and unconfirmed claims:
 | D-1 | The backtest default becomes 0.001 [PM-ASSUMED] | closest of the three measured settings to live results, with the cross-symphony mean (+0.9 bps a day computed from the rows) slightly conservative (Calibration evidence) |
 | D-2 | `SIM_EXIT_FRICTION_PCT` stays 0.5 percentage points and stops being derived from the backtest default [PM-ASSUMED] | it models a full-position exit in the replay, a different cost from daily-rebalance slippage; changing it would move the optimizer objective without evidence (G-16) |
 | D-3 | Sensitive is marked money, correcting the intake | the tenure review verdict and the advisor adopt gates read these backtests and drive real-money keep, retire and adopt decisions (advisors/tenure_review.py:1187-1196) |
+| D-4 | Dated records that state the old default or the old derivation stay unchanged: DECISIONS.md:9239, feature-plans/exit-friction-realized-savings.md:10 and :22, docs/research/methodology-validation-2026-07.md line 105, docs/audit/COMPOSER-HISTORICAL-SERIES-2026-09-03.md line 159 [PM-ASSUMED] | they record what was true when written; the new basis is recorded by this plan's DECISIONS.md entry at ship (NB-11) |
 
 ## Docs to Update
 - docs/generated/advisors_composer_backtest_client.md: the default in the signature, parameter and constants entries, with the evidence summary (S-5.2).
