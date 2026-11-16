@@ -896,7 +896,9 @@ class TestNoticesOfARunThatDidNotComplete:
             ended_at="2026-11-17T09:00:00+00:00",
         )
         result = view(latest, completed)
-        assert result["notices"] == ["Ticker check failed on 2026-11-17 04:00 ET."]
+        assert result["notices"] == [
+            f"Ticker check failed on 2026-11-17 04:00 ET. Last completed check {ENDED_STAMP}."
+        ]
         assert "RuntimeError" not in json.dumps(result)
         assert result["warning"]["lines"][0]["from_check"] == ENDED_STAMP
 
@@ -911,7 +913,9 @@ class TestNoticesOfARunThatDidNotComplete:
         result = view(latest, None)
         assert result["warning"] is None
         assert len(result["notices"]) == 1
-        assert result["notices"][0].startswith("Ticker check failed on 2026-11-17 04:00 ET.")
+        assert result["notices"] == [
+            "Ticker check failed on 2026-11-17 04:00 ET. No completed check yet."
+        ]
         assert "No ticker check has completed yet." not in json.dumps(result)
         assert "RuntimeError" not in json.dumps(result)
 
