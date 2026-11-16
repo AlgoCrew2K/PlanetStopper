@@ -1,0 +1,57 @@
+{
+ "_provenance": "characterization pin, computed (read-only) by running advisors.symphony_schema.extract_tickers and advisors.asset_swap_engine.extract_tickers at branch commit 5aecaad4 (their source is byte-equal to ref c3e12882) over each listed captured tree. A pin per tree is the set size and the sha256 of the sorted, newline-joined ticker set. It proves the two existing ticker readers keep returning what they returned before the dead-ticker check was added; it is not a statement of what they should return. Tree sources are captured trees: the trimmed real trees under tests/fixtures/advisors/frontrunner/, the live score body under tests/fixtures/composer/ticker-health/, and the response_body of the case4 capture under tests/fixtures/composer/tenure-review/ (marked by the #response_body suffix).",
+ "pins": {
+  "tests/fixtures/advisors/frontrunner/real_tree_01_5XjzXjdGnjh99MIsdM97.json": {
+   "symphony_schema": {"size": 1014, "sha256": "0a5e3723baa9ad86adf690cfa251dd9452a574934924ee958a5dbf02caaa7f39"},
+   "asset_swap_engine": {"size": 996, "sha256": "035888c5098f4cd4a8120befe776957241f91f0b9869495730186d4030a9015e"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_02_8FAXAnQmYi1INDubazeC.json": {
+   "symphony_schema": {"size": 197, "sha256": "d76e7c42724c30c61ddcf3786c2cea58e9dbda5571c288254035489e24294d71"},
+   "asset_swap_engine": {"size": 197, "sha256": "d76e7c42724c30c61ddcf3786c2cea58e9dbda5571c288254035489e24294d71"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_03_Gpaw3IhZghQPRE6AdEKx.json": {
+   "symphony_schema": {"size": 1017, "sha256": "5aaf25df506bfe031e4f5798f5bc383c95913f6f5b95922a4113d47bec24f7f3"},
+   "asset_swap_engine": {"size": 1017, "sha256": "5aaf25df506bfe031e4f5798f5bc383c95913f6f5b95922a4113d47bec24f7f3"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_04_INfCn3eKsu6i4oTTqdUp.json": {
+   "symphony_schema": {"size": 438, "sha256": "c23ac5c64781586cff153939b8991c388c57d21709352194561312c1d57db42b"},
+   "asset_swap_engine": {"size": 438, "sha256": "c23ac5c64781586cff153939b8991c388c57d21709352194561312c1d57db42b"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_05_MoAkUHnavSYw3oONiUxe.json": {
+   "symphony_schema": {"size": 1098, "sha256": "b0bf50e86686550f66b7ec5702361358086aee1e7c2cd71d5de086589b94bdf1"},
+   "asset_swap_engine": {"size": 1071, "sha256": "0763a4a5e9d77fbc9910198f8171e6239a7f02c6073d6a51a18053eb91ffe699"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_06_hvPiGP1O7AHfutHE3Fjy.json": {
+   "symphony_schema": {"size": 1152, "sha256": "fee617fb635fd7b2498400269ee829b6bc7dc35c3d0a6190f739e773e06ea3c5"},
+   "asset_swap_engine": {"size": 1152, "sha256": "fee617fb635fd7b2498400269ee829b6bc7dc35c3d0a6190f739e773e06ea3c5"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_07_iaSOOUsmnCJHiZvbrWfs.json": {
+   "symphony_schema": {"size": 1577, "sha256": "2727e2079ab17723da9c32b35e4b9a0f20feb400eada03e2223e7af6a043c702"},
+   "asset_swap_engine": {"size": 1549, "sha256": "13ffed5b516bf78b35e96f27ecd57d964c7a76634cbe4923bf538566655f177f"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_08_lW4ZzWuqR8tEO2DhXbil.json": {
+   "symphony_schema": {"size": 400, "sha256": "ceb8e743f01d341f20ed099c0eed0d5e0e02f488b9b4c6ab28cdbb565f5a1ebc"},
+   "asset_swap_engine": {"size": 381, "sha256": "a7bbf01376bb07807eb63304921ab0b8a5af1bc6feb945c6c0010c4934dfdd2f"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_09_n2ooAZTvBRN6ZzpMmWmU.json": {
+   "symphony_schema": {"size": 785, "sha256": "b2157d9f1e9fa3e3235f25aa65f4778ceed25fbafdaeaa79825fffbbfb967eff"},
+   "asset_swap_engine": {"size": 785, "sha256": "b2157d9f1e9fa3e3235f25aa65f4778ceed25fbafdaeaa79825fffbbfb967eff"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_10_nOyb55RMGVCKPiYXv7TI.json": {
+   "symphony_schema": {"size": 291, "sha256": "0ea37ca629a990e292b561e9589ff53afe34ef156723401b4550b046273d9350"},
+   "asset_swap_engine": {"size": 259, "sha256": "0477a5b36626108067f6b778e4f89b3887ab4f7aa28381840b907e859d85e2ec"}
+  },
+  "tests/fixtures/advisors/frontrunner/real_tree_11_qF5ZU7ALjrlhxrGEwsyJ.json": {
+   "symphony_schema": {"size": 688, "sha256": "a351f347f3a2c8c0f81e9624c085e27bc2fc3ece9687bdcbbac4568eb5e1237d"},
+   "asset_swap_engine": {"size": 670, "sha256": "2b4f79913857206299bbaed3efa89fc361d21f93103695e8c720f9442a8986d0"}
+  },
+  "tests/fixtures/composer/ticker-health/score_8FAXAnQmYi1INDubazeC.json": {
+   "symphony_schema": {"size": 40, "sha256": "fe20adc2a617efa29186a68a1fe33ab0329328aadbe22de4a8659930ab6e1c10"},
+   "asset_swap_engine": {"size": 40, "sha256": "fe20adc2a617efa29186a68a1fe33ab0329328aadbe22de4a8659930ab6e1c10"}
+  },
+  "tests/fixtures/composer/tenure-review/case4_definition_nOyb55RMGVCKPiYXv7TI.json#response_body": {
+   "symphony_schema": {"size": 57, "sha256": "c9ea131850e6d296783396b977a3650b7ad49949495cddaa9176c80fb4c2aea5"},
+   "asset_swap_engine": {"size": 27, "sha256": "6af2aaa9113bbe2f618a424fde85b45b3f31e3ffef239b6e00b6b2e91e543d5e"}
+  }
+ }
+}
