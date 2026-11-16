@@ -1239,6 +1239,57 @@ def test_announcement_from_before_a_clearing_does_not_suppress_a_later_post(rout
     assert [rec["run_id"] for rec in announcements()][0] == fourth.run_id
 
 
+def test_announcement_of_the_previous_completed_run_still_counts_across_a_run_that_did_not_complete(
+    router,
+):
+    """A guard for the rule above from the other side: a run that ended unavailable between two
+    completed ones is not the run whose announcements count; the previous completed run is."""
+    roster(router, X)
+    router.set_tree(X, t.tree_with(assets=["SHNY"]))
+    completed_run(router)
+    assert len(router.discord_posts()) == 1
+    router.statistics_default = h.error_reply(503)
+    assert run_check(router, start=night(1)).status == "unavailable"
+    roster(router, X)
+    third = completed_run(router, start=night(2))
+    assert len(router.discord_posts()) == 1
+    assert warning_pairs(record_of(third)) == {(X, "SHNY")}
+    assert record_of(third)["warnings"][0]["announced"] is True
+
+
+def test_a_carried_unannounced_pair_of_a_symphony_the_run_could_not_judge_waits_for_the_run_that_judges_it(
+    router,
+):
+    """Only pairs found dead in this run and not yet announced are posted. The first run finds
+    both pairs dead and its post fails. The second cannot read Y's tree: Y's carried pair keeps
+    the earlier time and is not posted; X's is. The third judges Y dead and posts it."""
+    ids = [X, Y]
+    roster(router, *ids)
+    router.set_discord(h.Reply(status=500, body={"message": "x"}))
+    first = completed_run(router)
+    assert warning_pairs(record_of(first)) == {(X, "SHNY"), (Y, "SHNY")}
+    assert announcements() == []
+    router.discord_replies.clear()
+    router.set_tree(Y, h.error_reply(503))
+    second = completed_run(router, start=night(1))
+    rec = record_of(second)
+    carried = next(w for w in rec["warnings"] if w["symphony_id"] == Y)
+    assert carried["found_at"] == record_of(first)["ended_at"]
+    assert carried["announced"] is False
+    posts = router.discord_posts()
+    assert len(posts) == 2
+    assert lines_of(posts[1]["content"]) == [LEAD, shny_line(X)]
+    assert Y not in posts[1]["content"]
+    assert announcements() == [{"run_id": second.run_id, "pairs": [[X, "SHNY"]]}]
+    router.set_tree(Y, h.Reply(body=t.captured_tree()))
+    third = completed_run(router, start=night(2))
+    posts = router.discord_posts()
+    assert len(posts) == 3
+    assert lines_of(posts[2]["content"]) == [LEAD, shny_line(Y)]
+    assert announced_pairs() == {(X, "SHNY"), (Y, "SHNY")}
+    assert announcements()[0] == {"run_id": third.run_id, "pairs": [[Y, "SHNY"]]}
+
+
 def test_clearing_by_removing_the_ticker_from_the_tree_posts_nothing(router):
     """S-6.7."""
     roster(router, X)
@@ -1617,6 +1668,40 @@ def test_rate_limit_on_the_second_account_leaves_the_first_accounts_symphonies_u
         not_checked_symphony(X, "Composer rate limit"),
         not_checked_symphony(Y, "Composer rate limit"),
     ]
+    assert router.asset_requests() == []
+
+
+@pytest.mark.parametrize(
+    ("stop", "reason"),
+    [
+        pytest.param("market", "market opened", id="market_opens_after_the_first_roster"),
+        pytest.param(
+            "other_job", "another Composer job was running", id="other_job_after_the_first_roster"
+        ),
+    ],
+)
+def test_account_the_gate_stops_after_the_first_request_is_named_with_the_gate_reason(
+    router, stop, reason
+):
+    """A gate stop that comes after a first Composer request is no skipped run: the account whose
+    roster was never asked is recorded under accounts with the gate's own reason, and the
+    symphonies of the roster that was read carry the same reason."""
+    roster(router, X, Y)
+    options = {"webhook_url": None, "account_ids": [h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID]}
+    if stop == "market":
+        options["clock"] = t.FlippingClock(router, t.NIGHT, JUST_AFTER_OPEN, after_requests=1)
+    else:
+        options["other_reader_running"] = lambda: bool(router.of_kind("statistics"))
+    outcome = completed_run(router, **options)
+    rec = record_of(outcome)
+    assert len(router.composer_requests()) == 1
+    assert rec["not_checked"]["accounts"] == [{"label": LABELS[h.SECOND_ACCOUNT_ID], "reason": reason}]
+    assert rec["not_checked"]["symphonies"] == [
+        not_checked_symphony(X, reason),
+        not_checked_symphony(Y, reason),
+    ]
+    assert rec["counts"]["accounts_read"] == 1
+    assert rec["warnings"] == []
     assert router.asset_requests() == []
 
 

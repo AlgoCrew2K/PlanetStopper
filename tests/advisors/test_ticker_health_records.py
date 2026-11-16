@@ -900,13 +900,79 @@ class TestNoticesOfARunThatDidNotComplete:
         assert "RuntimeError" not in json.dumps(result)
         assert result["warning"]["lines"][0]["from_check"] == ENDED_STAMP
 
-    def test_a_failed_run_with_no_completed_check_shows_both_facts_in_order(self):
+    def test_a_failed_run_with_no_completed_check_shows_one_notice_never_the_never_completed_line(
+        self,
+    ):
+        """One notice per state: a run that exists but did not complete is never also reported
+        as "no check has completed yet", which is the text for no run at all."""
         latest = run_record(
             status="failed", error_type="RuntimeError", ended_at="2026-11-17T09:00:00+00:00"
         )
-        assert view(latest, None)["notices"] == [
-            "No ticker check has completed yet.",
-            "Ticker check failed on 2026-11-17 04:00 ET.",
+        result = view(latest, None)
+        assert result["warning"] is None
+        assert len(result["notices"]) == 1
+        assert result["notices"][0].startswith("Ticker check failed on 2026-11-17 04:00 ET.")
+        assert "No ticker check has completed yet." not in json.dumps(result)
+        assert "RuntimeError" not in json.dumps(result)
+
+    @pytest.mark.parametrize("status", ["unavailable", "skipped"])
+    def test_an_unavailable_or_skipped_run_with_no_completed_check_shows_only_that_one_notice(
+        self, status
+    ):
+        latest = run_record(status=status, reason="Alpaca unreachable")
+        assert view(latest, None) == {
+            "warning": None,
+            "notices": ["Ticker check unavailable: Alpaca unreachable. No completed check yet."],
+        }
+
+    @pytest.mark.parametrize("status", ["unavailable", "skipped", "failed"])
+    def test_a_run_that_did_not_complete_shows_the_earlier_warnings_and_none_of_its_not_checked(
+        self, status
+    ):
+        """The earlier completed run's dead tickers stay on the page, each with the time it was
+        found, even one found by that run itself; what that run could not check is not repeated
+        under a newer run that says nothing about it."""
+        earlier_not_checked = not_checked(
+            accounts=[{"label": "Roth IRA", "reason": "Composer unavailable"}],
+            symphonies=[
+                {"symphony_id": Y, "display_name": "Zed fund", "reason": "definition not found"}
+            ],
+            tickers=[
+                {
+                    "symphony_id": X,
+                    "display_name": "Alpha fund",
+                    "ticker": "BRK/B",
+                    "reason": "ticker form not checked",
+                },
+                {
+                    "symphony_id": X,
+                    "display_name": "Alpha fund",
+                    "reason": "Alpaca unavailable",
+                    "count": 2,
+                },
+            ],
+        )
+        completed = run_record(
+            warnings=[warning(found_at=EARLIER), warning("idB", "PLRZ", found_at=ENDED)],
+            not_checked=earlier_not_checked,
+            run_id="done",
+        )
+        latest = run_record(
+            status=status,
+            reason=None if status == "failed" else "Alpaca unreachable",
+            error_type="RuntimeError" if status == "failed" else None,
+            run_id="latest",
+            ended_at="2026-11-17T09:00:00+00:00",
+        )
+        result = view(latest, completed)
+        assert len(result["notices"]) == 1
+        assert all(
+            marker not in result["notices"][0]
+            for marker in ("Not checked", "could not be checked", "Roth IRA", "Zed fund", "BRK/B")
+        )
+        assert sorted(line["from_check"] for line in result["warning"]["lines"]) == [
+            EARLIER_STAMP,
+            ENDED_STAMP,
         ]
 
     def test_no_run_at_all_reads_never_completed(self):
