@@ -4,7 +4,7 @@ Ref: AlphaBotPM@c3e12882141ae601f900fdc13e0c342462a739bb
 
 ## Architecture
 
-Every `file:line` below is at AlphaBotPM@c3e12882. The worktree HEAD (`5af9e9ec`) differs from the ref only in the two plan files, so the working tree is the ref for every code citation.
+Every `file:line` below is at AlphaBotPM@c3e12882. The design follows the plan at its newest commit `5da2c85c` (the completed-run definition of audit finding 12), which differs from the ref only in plan files, so the working tree is the ref for every code citation.
 
 ### Shape: two advisory modules, wiring in `app.py`, no schema change
 
@@ -80,7 +80,10 @@ Other pure functions:
   - X not judged (score failed, market opened, rate limit, other reader, id not usable): carried (S-6.3).
   - X absent from every roster with `every_roster_read` true: dropped (S-6.5). Absent while some roster failed: carried.
   - `announced` is carried with each kept pair. A fresh dead pair takes `announced` from the previous warning for the same pair, else from the previous run's announcement rows, else false.
-- `is_completed(rosters_read, tickers_asked, tickers_answered) -> bool` implements D-6 literally: at least one roster read and (no ticker asked, or at least one answered). An answer is a `dead` or `healthy` verdict.
+- `is_completed(rosters_read, symphonies_listed, symphonies_reached, tickers_asked, tickers_answered) -> bool` implements D-6 as worded at `5da2c85c`: at least one roster read, every symphony listed on the rosters read is reached, and (no ticker asked, or at least one answered).
+  - A symphony is reached when it is judged (its tree read) or carries a not-checked entry with its cause. The runner gives every listed symphony one or the other: a failed score read, an id not usable, an asset class not covered, and a stop for a rate limit, the market open or another Composer job all write the symphony's not-checked entry, so a stop of that kind still reaches it.
+  - A daemon stop, crash or restart mid-run never completes: a `BaseException` escapes before the run row is written, so no row exists (S-7.7), and an `Exception` writes a `failed` row with `completed` false (S-7.10).
+  - An answer is a `dead` or `healthy` verdict.
 - `page_view(latest, latest_completed, now_utc) -> dict` builds `{"warning": None | {"checked", "lines": [{"text", "from_check"}]}, "notices": [str]}`:
   - Lines come from `latest_completed["warnings"]`, sorted by `display_name.casefold()`, then symphony id, then ticker (S-3.5).
   - Line text: "X: T is {reason}. Used by n asset node(s) and m condition(s). Held now." (or "Not held now." or "Holding unknown."). The plural follows the count (S-3.4).
@@ -249,7 +252,7 @@ Team size: 15 = 4 test-writer + 2 implementer + 1 qa + 1 qa (hidden mode) + 1 co
 
 | Cycle | Consumes (cycle: committed artifact) | Branch base |
 |---|---|---|
-| C1 |  | feat/live-tree-ticker-health@5af9e9ec |
+| C1 |  | feat/live-tree-ticker-health@5da2c85c |
 | C2 | C1: advisors/ticker_health_runner.py (run_ticker_health_check, read_latest_runs); C1: advisors/ticker_health.py (page_view and the run-record schema); C1: tests/advisors/_ticker_health_http_router.py | C1's branch at its cycle-complete SHA |
 
 C1's dispatch waits for the PM's fixture capture commit on `feat/live-tree-ticker-health`; its base is then that commit.
@@ -478,8 +481,8 @@ The assembled head must pass:
    - per symphony: "market opened" (S-7.3), "another Composer job was running";
    - per ticker: "Not checked: T in Y (ticker form not checked)." (S-9.4), "1 ticker in Y could not be checked (...)", and "Alpaca unreachable" for a transport failure (S-2.11 names only rate limit and unavailable);
    - render failure: "The ticker check result could not be read."
-3. D-6 corner cases, applied literally:
-   - A run whose rosters are read and whose every score read fails has no ticker to ask, so it completes and resets the stale clock, with every symphony named not checked.
+3. D-6 corner cases, applied literally to the definition at `5da2c85c`:
+   - A run whose rosters are read and whose every score read fails reaches every symphony (each reported not checked with its cause) and has no ticker to ask, so it completes and resets the stale clock, with every symphony named not checked.
    - A run with no Alpaca key or secret ends `unavailable` before any request, even on a night when no ticker would have been asked (S-2.14).
    Confirm both, or rule that a run judging no symphony while the rosters list some does not complete.
 4. The set of Composer readers the check waits for. It waits for the threads and slots of the 03:30 incubation tick, the 03:45 tenure and retirement tick, the retirement Run now and the tenure review Run now, as ruled. These other in-process Composer readers are neither waited for nor blocked; the first 429 stops the check:
