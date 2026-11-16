@@ -260,15 +260,17 @@ def _facts_text(warning: dict) -> str:
     )
 
 
-def _warning_lines(warnings: list[dict], completed_record: dict, shown_run_is_latest: bool) -> list:
+def _warning_lines(warnings: list[dict], completed_record: dict) -> list:
     ordered = sorted(
         warnings, key=lambda w: (w["display_name"].casefold(), w["symphony_id"], w["ticker"])
     )
+    checked = format_et_stamp(completed_record["ended_at"])
+    # The lead names the newest check once, so only a line from an earlier check carries its time.
     return [
         {
             "text": f"{w['display_name']}: {w['ticker']} {_facts_text(w)}",
             "from_check": None
-            if shown_run_is_latest and w["found_at"] == completed_record["ended_at"]
+            if format_et_stamp(w["found_at"]) == checked
             else format_et_stamp(w["found_at"]),
         }
         for w in ordered
@@ -297,16 +299,23 @@ def _not_checked_notices(not_checked: dict) -> list[str]:
 
 
 def _run_notices(latest: dict, completed: dict | None) -> list[str]:
-    status = latest.get("status")
-    last = f"Last completed check {format_et_stamp(completed['ended_at'])}." if completed else None
-    if status in ("unavailable", "skipped"):
-        return [
-            f"Ticker check unavailable: {latest['reason']}. {last or 'No completed check yet.'}"
-        ]
-    return [
-        f"Ticker check failed on {format_et_stamp(latest['ended_at'])}. "
-        f"{last or 'No completed check yet.'}"
-    ]
+    if latest.get("status") in ("unavailable", "skipped"):
+        lead = f"Ticker check unavailable: {latest['reason']}."
+    else:
+        lead = f"Ticker check failed on {format_et_stamp(latest['ended_at'])}."
+    if completed is None:
+        return [f"{lead} No completed check yet."]
+    if completed["warnings"]:
+        # The warning's own lead already names the last completed check.
+        return [lead]
+    return [f"{lead} Last completed check {format_et_stamp(completed['ended_at'])}."]
+
+
+def _stale_notice(completed: dict) -> str:
+    if completed["warnings"]:
+        hours = int(STALE_AFTER.total_seconds() // 3600)
+        return f"No ticker check has completed in the last {hours} hours."
+    return f"No ticker check has completed since {format_et_stamp(completed['ended_at'])}."
 
 
 def page_view(latest: dict | None, latest_completed: dict | None, now_utc: datetime) -> dict:
@@ -326,14 +335,11 @@ def page_view(latest: dict | None, latest_completed: dict | None, now_utc: datet
         if warnings:
             warning = {
                 "checked": format_et_stamp(latest_completed["ended_at"]),
-                "lines": _warning_lines(warnings, latest_completed, latest_is_completed),
+                "lines": _warning_lines(warnings, latest_completed),
             }
         ended = datetime.fromisoformat(latest_completed["ended_at"])
-        if now_utc - ended > STALE_AFTER:
-            notices.append(
-                "No ticker check has completed since "
-                f"{format_et_stamp(latest_completed['ended_at'])}."
-            )
+        if latest_is_completed and now_utc - ended > STALE_AFTER:
+            notices.append(_stale_notice(latest_completed))
     return {"warning": warning, "notices": notices}
 
 
