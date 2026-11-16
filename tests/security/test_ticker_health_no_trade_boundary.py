@@ -163,6 +163,17 @@ class _ParsedModule:
             for node in self.tree.body
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
+        # Module-level classes: a reference to the class reaches every one of its methods, which
+        # are registered under "Class.method" (the run object's gate and clock live in methods).
+        self.classes: dict[str, list[str]] = {}
+        for node in self.tree.body:
+            if isinstance(node, ast.ClassDef):
+                self.classes[node.name] = []
+                for member in node.body:
+                    if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        qualified = f"{node.name}.{member.name}"
+                        self.functions[qualified] = member
+                        self.classes[node.name].append(qualified)
         self.imports = self._collect_imports(loader)
 
     def _collect_imports(self, loader: Loader) -> dict[str, tuple[str, str | None]]:
@@ -214,13 +225,18 @@ class _Graph:
             if (module_name, fn_name) in reached:
                 continue
             module = self.module(module_name)
-            if module is None or fn_name not in module.functions:
+            if module is None:
+                continue
+            if fn_name in module.classes:
+                pending.extend((module_name, method) for method in module.classes[fn_name])
+                continue
+            if fn_name not in module.functions:
                 continue
             fn = module.functions[fn_name]
             reached[(module_name, fn_name)] = fn
             for node in ast.walk(fn):
                 if isinstance(node, ast.Name):
-                    if node.id in module.functions:
+                    if node.id in module.functions or node.id in module.classes:
                         pending.append((module_name, node.id))
                     elif node.id in module.imports:
                         target, attr = module.imports[node.id]
@@ -723,16 +739,23 @@ def _planted_loader(edits: dict) -> Loader:
     return _loader_with({m: edit(_SOURCES[m]) for m, edit in edits.items()})
 
 
-@pytest.mark.parametrize("label", list(_PLANTS))
-def test_a_forbidden_statement_planted_on_the_walked_graph_fails_the_scan(label):
-    edits, fragment, entries = _PLANTS[label]
+_PLANT_CASES = [
+    pytest.param(label, entry, id=f"{label} / from {entry[1]}")
+    for label, (_, _, entries) in _PLANTS.items()
+    for entry in entries
+]
+
+
+@pytest.mark.parametrize(("label", "entry"), _PLANT_CASES)
+def test_a_forbidden_statement_planted_on_the_walked_graph_fails_the_scan(label, entry):
+    edits, fragment, _ = _PLANTS[label]
     loader = _planted_loader(edits)
 
-    for entry in entries:
-        found = _violations(loader, [entry])
-        assert any(f == fragment for _, _, f in found), (
-            f"planting [{label}] was not detected from {entry}: {found}"
-        )
+    found = _violations(loader, [entry])
+
+    assert any(f == fragment for _, _, f in found), (
+        f"planting [{label}] was not detected from {entry}: {found}"
+    )
 
 
 def test_a_harmless_statement_planted_in_the_runner_entry_point_passes_the_scan():

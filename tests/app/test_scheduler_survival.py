@@ -130,6 +130,7 @@ class TestRegistrations:
     _EXPECTED = [
         ("threaded_trigger", "minutes", dtime(0, 0)),
         ("_start_account_refresh", "minutes", dtime(0, 0)),
+        ("_run_ticker_health_tick", "days", dtime(1, 30)),
         ("_run_trigger_retention", "days", dtime(2, 0)),
         ("_run_lens_pipeline", "days", dtime(3, 0)),
         ("_run_incubation_tick", "days", dtime(3, 30)),
