@@ -242,9 +242,11 @@ def run_strategy_builder_route(
     tmp_path,
     *,
     backtest_handler: Callable[[h.Request, int], h.Reply] | None = None,
+    plans: list[dict] | None = None,
 ) -> SurfaceRun:
     """``POST /ai-advisor/strategy-builder/run`` for a symphony-scoped run that compiles two
-    candidates; ``backtest_handler`` scripts Composer's backtest answers."""
+    candidates (or the given ``plans``); ``backtest_handler`` scripts Composer's backtest
+    answers."""
     _scratch_db(monkeypatch, tmp_path)
     router = install_router(monkeypatch, response_body=GATE_RESPONSE)
     if backtest_handler is not None:
@@ -253,7 +255,9 @@ def run_strategy_builder_route(
     _no_reasoning_context(monkeypatch)
     monkeypatch.setattr("database.load_state", lambda: {})
     fake = sbh.fake_with_captured_page()
-    fake.queue_message(sbh.tool_reply_with_plans(sbh.conforming_diversify_plans()))
+    fake.queue_message(
+        sbh.tool_reply_with_plans(plans if plans is not None else sbh.conforming_diversify_plans())
+    )
     stack = sbh.install_chain_seams(monkeypatch, fake, composer_router=router)
     with stack, _flask_client() as client:
         response = sbh.post_strategy_builder_run(client, copy.deepcopy(SB_ROUTE_BODY))

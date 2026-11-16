@@ -68,7 +68,6 @@ def _assert_surface(
     if expect_spy:
         spies = worlds.spy_requests(run.router)
         assert spies, f"{entry} sent no SPY baseline request"
-    _assert_every_body_is_calibrated(run, entry=entry)
 
 
 def _requests_for_tree(run: worlds.SurfaceRun, tree: dict) -> list:
@@ -95,6 +94,7 @@ def test_strategy_builder_route_sends_the_calibrated_slippage_on_its_spy_and_can
     assert run.outcome["status"] == 200
     assert run.outcome["route"]["error"] is None
     assert len(_non_spy(run)) >= 4, "the compiler and candidate requests are in the census too"
+    _assert_every_body_is_calibrated(run, entry="strategy_builder_route")
 
 
 def test_strategy_builder_weekly_run_sends_the_calibrated_slippage_on_every_body(
@@ -103,6 +103,7 @@ def test_strategy_builder_weekly_run_sends_the_calibrated_slippage_on_every_body
     run = worlds.run_strategy_builder_weekly(monkeypatch, tmp_path)
 
     _assert_surface("strategy_builder_weekly", run, min_requests=5, expect_spy=True)
+    _assert_every_body_is_calibrated(run, entry="strategy_builder_weekly")
 
 
 def test_asset_swaps_route_sends_the_calibrated_slippage_on_spy_baseline_and_variant_bodies(
@@ -113,6 +114,7 @@ def test_asset_swaps_route_sends_the_calibrated_slippage_on_spy_baseline_and_var
     _assert_surface("asset_swaps_route", run, min_requests=3, expect_spy=True)
     assert run.outcome["status"] == 200
     assert _requests_for_tree(run, asl.held_tree()), "the baseline of the held tree was sent"
+    _assert_every_body_is_calibrated(run, entry="asset_swaps_route")
 
 
 def test_asset_swaps_weekly_run_sends_the_calibrated_slippage_on_the_baseline_returns_body(
@@ -126,6 +128,7 @@ def test_asset_swaps_weekly_run_sends_the_calibrated_slippage_on_the_baseline_re
         "the held tree is backtested once for the variant's baseline and once for the "
         "baseline returns of the batch gate, so both bodies are in the census"
     )
+    _assert_every_body_is_calibrated(run, entry="asset_swaps_weekly")
 
 
 def test_logic_changes_route_sends_the_calibrated_slippage_on_spy_baseline_and_variant_bodies(
@@ -136,6 +139,7 @@ def test_logic_changes_route_sends_the_calibrated_slippage_on_spy_baseline_and_v
     _assert_surface("logic_changes_route", run, min_requests=3, expect_spy=True)
     assert run.outcome["status"] == 200
     assert _requests_for_tree(run, lcs.load_tree()), "the baseline of the live tree was sent"
+    _assert_every_body_is_calibrated(run, entry="logic_changes_route")
 
 
 def test_logic_changes_weekly_run_sends_the_calibrated_slippage_on_the_baseline_returns_body(
@@ -149,6 +153,7 @@ def test_logic_changes_weekly_run_sends_the_calibrated_slippage_on_the_baseline_
         "the live tree is backtested once for the variant's baseline and once for the "
         "baseline returns of the batch gate, so both bodies are in the census"
     )
+    _assert_every_body_is_calibrated(run, entry="logic_changes_weekly")
 
 
 def test_frontrunner_route_sends_the_calibrated_slippage_on_incumbent_and_candidate_bodies(
@@ -159,6 +164,7 @@ def test_frontrunner_route_sends_the_calibrated_slippage_on_incumbent_and_candid
     _assert_surface("frontrunner_route", run, min_requests=2, expect_spy=False)
     assert run.outcome["status"] == 202
     assert worlds.spy_requests(run.router) == [], "the Frontrunner Builder runs no SPY baseline"
+    _assert_every_body_is_calibrated(run, entry="frontrunner_route")
 
 
 def test_frontrunner_weekly_run_sends_the_calibrated_slippage_on_incumbent_and_candidate_bodies(
@@ -168,6 +174,7 @@ def test_frontrunner_weekly_run_sends_the_calibrated_slippage_on_incumbent_and_c
 
     _assert_surface("frontrunner_weekly", run, min_requests=2, expect_spy=False)
     assert worlds.spy_requests(run.router) == [], "the Frontrunner Builder runs no SPY baseline"
+    _assert_every_body_is_calibrated(run, entry="frontrunner_weekly")
 
 
 def test_incubation_tick_sends_the_calibrated_slippage_on_the_spy_and_candidate_bodies(
@@ -177,6 +184,7 @@ def test_incubation_tick_sends_the_calibrated_slippage_on_the_spy_and_candidate_
 
     _assert_surface("incubation_tick", run, min_requests=2, expect_spy=True)
     assert len(_non_spy(run)) == 1, "one INCUBATING candidate, one candidate request"
+    _assert_every_body_is_calibrated(run, entry="incubation_tick")
 
 
 def test_tenure_review_route_sends_the_calibrated_slippage_on_its_dated_compact_backtest(
@@ -190,7 +198,7 @@ def test_tenure_review_route_sends_the_calibrated_slippage_on_its_dated_compact_
     assert first.kwargs.get("data") is not None, "the tenure review sends the compact text body"
     body = first.body_json()
     assert body["start_date"] and body["end_date"], "the review's backtest is dated"
-    assert body["slippage_percent"] == CALIBRATED_SLIPPAGE
+    _assert_every_body_is_calibrated(run, entry="tenure_review_route")
 
 
 def test_tenure_review_tick_sends_the_calibrated_slippage_on_its_dated_compact_backtest(
@@ -200,6 +208,7 @@ def test_tenure_review_tick_sends_the_calibrated_slippage_on_its_dated_compact_b
 
     _assert_surface("tenure_review_tick", run, min_requests=1, expect_spy=False)
     assert run.backtests[0].kwargs.get("data") is not None
+    _assert_every_body_is_calibrated(run, entry="tenure_review_tick")
 
 
 # ---------------------------------------------------------------------------
@@ -240,18 +249,23 @@ def test_candidates_withheld_for_a_failed_spy_baseline_were_still_backtested_at_
             return h.error_reply(503)
         return served
 
+    # One plan, so the batch holds one candidate and the overfitting veto (which needs two) does
+    # not decide before the SPY rule does.
     run = worlds.run_strategy_builder_route(
-        monkeypatch, tmp_path, backtest_handler=spy_is_unavailable
+        monkeypatch,
+        tmp_path,
+        backtest_handler=spy_is_unavailable,
+        plans=[worlds.sbh.conforming_diversify_plans()[0]],
     )
 
     spies = worlds.spy_requests(run.router)
     assert len(spies) >= 2, "the SPY baseline was retried before it gave up"
-    assert len(_non_spy(run)) >= 4, "the compiler and both candidates were still backtested"
-    _assert_every_body_is_calibrated(run, entry="strategy_builder_route with SPY unavailable")
+    assert len(_non_spy(run)) >= 2, "the compiler and the candidate were still backtested"
     route = run.outcome["route"]
     assert route["survivors"] == [], "an unavailable SPY series withholds every candidate"
     assert route["rejected"], "the candidates are reported, withheld"
     assert {reason for _, _, reason in route["rejected"]} == {"below_spy_alpha"}
+    _assert_every_body_is_calibrated(run, entry="strategy_builder_route with SPY unavailable")
 
 
 # ---------------------------------------------------------------------------
