@@ -41,8 +41,14 @@ ALPACA_ATTEMPTS = 2
 # Wait before the retry when Alpaca names no usable Retry-After, and the longest wait honoured.
 ALPACA_RETRY_DEFAULT_SECONDS = 2
 ALPACA_RETRY_CAP_SECONDS = 30
-# Consecutive tickers ending unreachable or unavailable after which the rest are not asked.
+# Consecutive tickers ending unreachable, unavailable or rate limited after which the rest are
+# not asked.
 ALPACA_FAILURE_STREAK_LIMIT = 5
+# Most seconds one run spends waiting out Alpaca rate limits (429 retries, whose wait Alpaca
+# chooses). Without it a run whose every ticker is rate limited waits the retry cap per ticker
+# for the whole list, long past the night window; once spent, the tickers not yet asked read as
+# rate limited. The short fixed wait after a transport error or a 5xx is not counted.
+ALPACA_RETRY_BUDGET_SECONDS = 120
 # Composer gate: poll interval and the longest wait for another Composer job, seconds.
 GATE_POLL_SECONDS = 15
 GATE_WAIT_LIMIT_SECONDS = 2700
@@ -134,6 +140,7 @@ class _Run:
         self.ended: datetime | None = None
         self.composer_requests = 0
         self.alpaca_requests = 0
+        self.alpaca_waited = 0
         self.stop: _Stop | None = None
 
     def ended_at(self) -> str:
@@ -141,10 +148,13 @@ class _Run:
             self.ended = self.clock()
         return self.ended.isoformat()
 
+    def market_is_open(self) -> bool:
+        return market_calendar.get_market_state(self.clock().astimezone(_ET)) == "open"
+
     def gate(self) -> _Stop | None:
         """The stop that applies before the next Composer request, waiting for another job."""
         while self.stop is None:
-            if market_calendar.get_market_state(self.clock().astimezone(_ET)) == "open":
+            if self.market_is_open():
                 self.stop = _STOP_MARKET
             elif not self.other_reader_running():
                 return None
@@ -206,8 +216,10 @@ def _read_rosters(run: _Run, account_ids, labels) -> tuple[dict, list, int]:
     symphonies: dict[str, _Symphony] = {}
     failures: list[dict] = []
     rosters_read = 0
-    for account in account_ids:
-        label = labels.get(account) or account
+    for position, account in enumerate(account_ids, start=1):
+        label = labels.get(account)
+        if not _has_text(label):
+            label = f"account {position}"  # never the Composer id, which must not be shown
         stop = run.gate()
         if stop and run.composer_requests == 0 and stop is not _STOP_RATE_LIMIT:
             raise _SkipRun(stop.skip_reason)
@@ -290,8 +302,12 @@ def _alpaca_attempt(run: _Run, ticker: str, headers: dict):
         return status, None, None
 
 
-def _read_asset(run: _Run, ticker: str, headers: dict) -> tuple[th.TickerVerdict, int | None]:
+def _read_asset(run: _Run, ticker: str, headers: dict) -> tuple[th.TickerVerdict, int | None, bool]:
+    """The verdict, the last HTTP status, and whether the run must stop asking (the market
+    opened, or the retry-wait budget is spent)."""
     for attempt in range(1, ALPACA_ATTEMPTS + 1):
+        if run.market_is_open():
+            return th.TickerVerdict("not_checked", _STOP_MARKET.symphony_reason), None, True
         status, body, retry_after = _alpaca_attempt(run, ticker, headers)
         verdict = (
             th.classify_asset_failure()
@@ -300,8 +316,13 @@ def _read_asset(run: _Run, ticker: str, headers: dict) -> tuple[th.TickerVerdict
         )
         retryable = status is None or status == _HTTP_RATE_LIMIT or status >= _HTTP_SERVER_ERROR
         if not retryable or attempt == ALPACA_ATTEMPTS:
-            return verdict, status
-        time.sleep(_retry_wait(retry_after))
+            return verdict, status, False
+        wait = _retry_wait(retry_after)
+        if status == _HTTP_RATE_LIMIT:
+            if run.alpaca_waited + wait > ALPACA_RETRY_BUDGET_SECONDS:
+                return verdict, status, True
+            run.alpaca_waited += wait
+        time.sleep(wait)
     raise AssertionError("unreachable")  # pragma: no cover
 
 
@@ -314,11 +335,11 @@ def _ask_alpaca(run: _Run, tickers: list[str], key: str, secret: str) -> dict:
         if stop_reason:
             verdicts[ticker] = th.TickerVerdict("not_checked", stop_reason)
             continue
-        verdict, status = _read_asset(run, ticker, headers)
+        verdict, status, halt = _read_asset(run, ticker, headers)
         verdicts[ticker] = verdict
-        if status in (_HTTP_UNAUTHORIZED, _HTTP_FORBIDDEN):
+        if halt or status in (_HTTP_UNAUTHORIZED, _HTTP_FORBIDDEN):
             stop_reason = verdict.reason
-        elif status is None or status >= _HTTP_SERVER_ERROR:
+        elif status is None or status == _HTTP_RATE_LIMIT or status >= _HTTP_SERVER_ERROR:
             streak += 1
             if streak >= ALPACA_FAILURE_STREAK_LIMIT:
                 stop_reason = verdict.reason
@@ -383,8 +404,35 @@ def _read_trees(run: _Run, symphonies: dict) -> tuple[dict, list[dict]]:
     return judged, not_checked
 
 
+_WARNING_FIELDS = frozenset(
+    {
+        "symphony_id",
+        "display_name",
+        "ticker",
+        "reason",
+        "asset_nodes",
+        "conditions",
+        "held",
+        "found_at",
+        "announced",
+    }
+)
+
+
+def _stored_row_id(run_id) -> int | None:
+    rows = database.get_advisor_observations_for_role(th.RUN_ROLE, RUN_SCAN_LIMIT)
+    return next((r.get("id") for r in rows if r.get("subject_id") == run_id), None)
+
+
 def _previous_warnings(latest_completed: dict | None, announced: set) -> list[dict]:
-    warnings = [dict(w) for w in (latest_completed or {}).get("warnings") or []]
+    stored = (latest_completed or {}).get("warnings") or []
+    warnings = [dict(w) for w in stored if isinstance(w, dict) and w.keys() >= _WARNING_FIELDS]
+    if len(warnings) != len(stored):
+        # Only the row id is named: the unreadable data itself is never logged.
+        logger.warning(
+            "stored ticker check warning skipped as unreadable: row %s",
+            _stored_row_id((latest_completed or {}).get("run_id")),
+        )
     for warning in warnings:
         if (warning["symphony_id"], warning["ticker"]) in announced:
             warning["announced"] = True
@@ -479,8 +527,9 @@ def _store_announcement(run_id: str, pairs: list[dict]) -> None:
     )
 
 
-def _post_new_pairs(run_id: str, record: dict, webhook_url: str) -> None:
-    """Post each pair found dead in this run and not announced before; stop at the first failure."""
+def _post_new_pairs(run_id: str, record: dict, webhook_url: str) -> tuple[int, int]:
+    """Post each pair found dead in this run and not announced before; stop at the first
+    failure. Returns the messages posted and the messages that failed."""
     pairs = sorted(
         (
             w
@@ -490,6 +539,7 @@ def _post_new_pairs(run_id: str, record: dict, webhook_url: str) -> None:
         key=lambda w: (w["display_name"].casefold(), w["symphony_id"], w["ticker"]),
     )
     taken = 0
+    posted = 0
     for index, message in enumerate(th.discord_messages(pairs)):
         if index:
             time.sleep(DISCORD_SPACING_SECONDS)
@@ -505,11 +555,13 @@ def _post_new_pairs(run_id: str, record: dict, webhook_url: str) -> None:
             )
             if not 200 <= response.status_code < 300:
                 logger.warning("discord post failed: HTTP %d", response.status_code)
-                return
+                return posted, 1
             _store_announcement(run_id, in_message)
+            posted += 1
         except Exception as exc:  # noqa: BLE001 - posting never fails the stored run
             logger.warning("discord post or announcement failed: %s", type(exc).__name__)
-            return
+            return posted, 1
+    return posted, 0
 
 
 def run_ticker_health_check(
@@ -545,7 +597,8 @@ def run_ticker_health_check(
     except Exception as exc:  # noqa: BLE001 - the outcome is still reported to the caller
         logger.warning("ticker check run row not stored: %s", type(exc).__name__)
         return RunOutcome(run.run_id, "failed", False)
-    logger.info("ticker check ended: status=%s", ended.status)
+    posted, failed = 0, 0
     if record["completed"] and webhook_url:
-        _post_new_pairs(run.run_id, record, webhook_url)
+        posted, failed = _post_new_pairs(run.run_id, record, webhook_url)
+    logger.info("ticker check ended: status=%s posted=%d failed=%d", ended.status, posted, failed)
     return RunOutcome(run.run_id, ended.status, record["completed"])

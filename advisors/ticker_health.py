@@ -75,7 +75,11 @@ def tree_ticker_uses(tree) -> dict[str, TickerUse]:
         if not isinstance(node, dict):
             continue
         ticker = node.get("ticker")
-        if node.get("step") == "asset" and isinstance(ticker, str) and ticker != "%":
+        if (
+            node.get("step") == "asset"
+            and isinstance(ticker, str)
+            and ticker != _PLACEHOLDER_TICKER
+        ):
             assets[ticker] = assets.get(ticker, 0) + 1
         is_condition = not node.get("is-else-condition?") and (
             node.get("step") == "if-child" or isinstance(node.get("condition"), dict)
