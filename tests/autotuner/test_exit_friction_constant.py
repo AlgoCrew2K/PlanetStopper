@@ -207,8 +207,9 @@ def test_every_statement_of_the_exit_cost_stands_on_its_own_basis(surface):
     missing = [phrase for phrase in _REQUIRED_PHRASES if phrase not in text]
     held = [phrase for phrase in _REFUSED_PHRASES if phrase in text]
 
-    assert missing == [], f"{surface} does not state: {missing}"
-    assert held == [], f"{surface} still states the retired derivation: {held}"
+    assert (missing, held) == ([], []), (
+        f"{surface} does not state {missing} and still states the retired derivation {held}"
+    )
 
 
 # ---------------------------------------------------------------------------
