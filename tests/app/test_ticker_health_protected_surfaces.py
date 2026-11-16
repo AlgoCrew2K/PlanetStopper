@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -30,6 +29,7 @@ import pytest
 import app as app_module
 from tests.advisors import _ticker_health_http_router as t
 from tests.app import _tenure_review_job_builders as jb
+from tests.app.test_tenure_review_end_to_end import run_tick as run_review_tick
 from tests.app.test_ticker_health_scheduling import (
     ACCOUNT,
     DEAD,
@@ -78,12 +78,6 @@ def _review_world(monkeypatch, tmp_path, database_name: str):
     return router.install(monkeypatch)
 
 
-def _run_review_tick() -> None:
-    """The 03:45 tick, with the thread it starts run on the spot."""
-    with patch("threading.Thread", jb.ImmediateThread):
-        app_module._run_retirement_recommender_tick()
-
-
 def _stored_review_records() -> dict:
     return {
         "run": [_scrub(row["raw_response"]) for row in jb.run_rows()],
@@ -96,7 +90,7 @@ class TestTheTenureReviewIsUnchanged:
         self, monkeypatch, tmp_path
     ):
         _review_world(monkeypatch, tmp_path, "review_alone.db")
-        _run_review_tick()
+        run_review_tick()
         alone = _stored_review_records()
         assert len(alone["run"]) == 1, "test premise: the review stored its run row"
         assert alone["recommendations"], "test premise: the world yields a recommendation"
@@ -105,7 +99,7 @@ class TestTheTenureReviewIsUnchanged:
         set_clocks(monkeypatch, router, jb.NOW_ET, app_clock=False)
         need("_ticker_health_run_body")("nightly")
         assert run_records()[0]["completed"] is True, "test premise: the check run completed"
-        _run_review_tick()
+        run_review_tick()
         after = _stored_review_records()
 
         assert after == alone

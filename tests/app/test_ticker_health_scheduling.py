@@ -84,6 +84,7 @@ from tests.advisors import _composer_http_router as h
 from tests.advisors import _ticker_health_http_router as t
 from tests.app import _tenure_review_job_builders as jb
 from tests.app.test_scheduler_survival import _func_of, _run_loop, _set_due
+from tests.app.test_startup_account_refresh import _main_if_node
 
 ET = ZoneInfo("America/New_York")
 ACCOUNT = h.ACCOUNT_ID
@@ -636,6 +637,13 @@ class TestAStartedRun:
         assert len(record["warnings"]) == 2
 
 
+def _make_minute_jobs_due(jobs) -> None:
+    """Every job that repeats each minute is due on this pass."""
+    for job in jobs:
+        if job.unit == "minutes":
+            job.next_run = dt.datetime.now() - dt.timedelta(seconds=1)
+
+
 class TestInsideASession:
     @pytest.mark.parametrize("trigger", ["nightly", "catch_up"])
     def test_a_start_stores_a_skipped_run_makes_no_request_and_keeps_the_earlier_result(
@@ -665,9 +673,7 @@ class TestInsideASession:
         def _before(tick, jobs):
             join_engine_threads()
             _set_due(jobs, {tick_fn: 5} if tick == 1 else {})
-            for job in jobs:
-                if job.unit == "minutes":
-                    job.next_run = dt.datetime.now() - dt.timedelta(seconds=1)
+            _make_minute_jobs_due(jobs)
 
         _run_loop(monkeypatch, ticks=3, before_tick=_before)
         join_engine_threads()
@@ -1165,17 +1171,6 @@ def _functions_naming(source: str, name: str) -> set[str]:
             ):
                 found.add(node.name)
     return found
-
-
-def _main_if_node(source: str) -> ast.If:
-    return next(
-        node
-        for node in ast.parse(source).body
-        if isinstance(node, ast.If)
-        and isinstance(node.test, ast.Compare)
-        and isinstance(node.test.left, ast.Name)
-        and node.test.left.id == "__name__"
-    )
 
 
 _MAIN_ORDER = ("startup_refresh", "catch_up", "scheduler_thread")
