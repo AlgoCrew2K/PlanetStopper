@@ -1314,7 +1314,9 @@ class TestDesignSystemStyling:
             ".ticker-health-notice",
             ".ticker-health-earlier",
         ):
-            assert not RAW_COLOUR.search(rule_bodies(css, selector)), selector
+            body = rule_bodies(css, selector)
+            assert body, f"no style rule names {selector}"
+            assert not RAW_COLOUR.search(body), selector
 
     def test_the_elements_carry_no_inline_style_and_no_control(self, css_and_page):
         _, page = css_and_page
