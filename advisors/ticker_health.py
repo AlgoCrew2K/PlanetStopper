@@ -25,7 +25,8 @@ DISCORD_CONTENT_LIMIT = 2000
 _PLACEHOLDER_TICKER = "%"
 _PLAIN_TICKER = re.compile(r"[A-Z][A-Z0-9]*(?:\.[A-Z0-9]+)?")
 _DISCORD_SPECIAL = frozenset("\\*_~`|<>#-[]()@:")
-_LINE_BREAKS = re.compile(r"\r\n|\r|\n")
+# Every boundary str.splitlines honours, so a name cannot add a line to a Discord message.
+_LINE_BREAKS = re.compile("\r\n|[\n\r\x0b\x0c\x1c\x1d\x1e\x85  ]")
 _ELLIPSIS = "..."
 _HELD_TEXT = {"held": "Held now.", "not_held": "Not held now."}
 _HELD_UNKNOWN_TEXT = "Holding unknown."
