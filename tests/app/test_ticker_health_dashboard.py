@@ -1226,11 +1226,15 @@ class TestSecurity:
         assert all("text" in child for p in elements(page.notice, "p") for child in p["children"])
         assert str(markupsafe.escape(bad)) in page.html
 
-    def test_no_session_means_a_redirect_to_login_and_no_check_result(self, world, auth_client):  # noqa: F811
+    def test_no_session_means_a_redirect_to_login_and_no_check_result(self, world, monkeypatch):
         roster(world.router, X)
         world.run()
+        # The page is read before the auth gate is switched on for the process.
         assert world.page().warning is not None, "the dead-ticker warning is not on the page"
-        response = auth_client.get("/", follow_redirects=False)
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "test-pass-abc123")
+        monkeypatch.setenv("SECRET_KEY", "test-secret-key-xyz789")
+        monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        response = world.client.get("/", follow_redirects=False)
         assert response.status_code == 302
         assert "/login" in response.headers["Location"]
         body = response.get_data(as_text=True)
