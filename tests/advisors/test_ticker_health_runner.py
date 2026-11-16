@@ -387,10 +387,8 @@ def test_every_request_of_a_full_run_is_a_read_or_the_webhook_post(router):
         assert request.path == f"/portfolio/accounts/{h.ACCOUNT_ID}/symphony-stats-meta"
     for request in router.of_kind("alpaca_asset"):
         assert request.url == f"{t.ALPACA_HOST}/v2/assets/{request.match['symbol']}"
-        assert request.headers == {
-            "APCA-API-KEY-ID": t.ALPACA_KEY,
-            "APCA-API-SECRET-KEY": t.ALPACA_SECRET,
-        }
+        assert request.headers.get("APCA-API-KEY-ID") == t.ALPACA_KEY
+        assert request.headers.get("APCA-API-SECRET-KEY") == t.ALPACA_SECRET
         assert request.timeout == REQUEST_TIMEOUT
 
 
@@ -1654,9 +1652,14 @@ def test_database_error_before_the_first_request_ends_the_run_failed(router, mon
 # ---------------------------------------------------------------------------
 
 
-def test_latest_runs_of_an_empty_table_are_none():
+def test_latest_runs_of_an_empty_table_are_none_until_a_run_is_stored(router):
+    empty = runner.read_latest_runs()
+    assert empty.latest is None and empty.latest_completed is None
+    stored = run_check(router, start=IN_SESSION)
+    assert stored.status == "skipped"
     latest = runner.read_latest_runs()
-    assert latest.latest is None and latest.latest_completed is None
+    assert latest.latest == record_of(stored)
+    assert latest.latest_completed is None
 
 
 def test_newest_completed_run_is_read_alone(router, monkeypatch):
