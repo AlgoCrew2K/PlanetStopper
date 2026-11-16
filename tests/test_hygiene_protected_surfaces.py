@@ -193,8 +193,8 @@ _SCOPE = {
 _PINNED_SCOPE_DIGESTS = {
     "alpha_bot_execution.py": "2d555aacd952b4848483db6ba5fdbb44fe898442fa0b30d91009ca7c498e9a7e",
     "math_engine.py": "de998d4bb0f7b57c98c06b15b9f48850b92c5fd58426b0b98ed0141765b6ac3e",
-    # re-taken at f57d2e0d for preconditions-replay-load-once (request-scoped replay read); the slice's scope pin tests/test_preconditions_replay_protected_scope.py proves the change stays inside its listed edits.
-    "autotuner.py": "21dcdb8ea205c0ae1a70a16360cbea4f8630db9bb6b09f5262c5eebeeb062238",
+    # re-taken at cc3eca2d for backtest-slippage-calibration (calibrated backtest slippage default); tests/test_backtest_slippage_calibration_protected_scope.py proves the change stays inside its listed edits.
+    "autotuner.py": "f1b280b56198bf21b0660bb5a4da5e544f5e92ef2319acbc0eff2f93e7ef32f8",
     "regime_classifier.py": "7a5fc8dae2c3d1c88d4c84513b4f9b8a20b00ab133b29a75d0986340964e7693",
 }
 

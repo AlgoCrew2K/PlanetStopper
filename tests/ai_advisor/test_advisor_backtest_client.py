@@ -1779,8 +1779,9 @@ class TestDvmCapitalKeyMismatchFallback:
 # ---------------------------------------------------------------------------
 
 _LF_DIGESTS = {
+    # re-taken at cc3eca2d for backtest-slippage-calibration (calibrated backtest slippage default); tests/test_backtest_slippage_calibration_protected_scope.py proves the change stays inside its listed edits.
     "advisors/composer_backtest_client.py": (
-        "bf1281b030e215e4f779697fd46849e854b46692f8945781c15e59cf2ab87661"
+        "401dd0b83bc13cac8e79e2f5a619c6b7114aeeb341786c2abce2a28e031e4d36"
     ),
     "tests/fixtures/composer/backtest_inline_v1.json": (
         "a2dfa7992f11d0a008476591a526f0e20386e29b227fcfe61ff93940aa7ee7bf"
