@@ -3,7 +3,7 @@
 > M2 AI Advisor building block: submits an inline symphony definition to Composer's `POST /api/v0.1/backtest` and parses the response into a typed `BacktestResult` the gate layer (`advisors/backtest_gate_engine.py`) consumes directly.
 
 **Source:** `advisors/composer_backtest_client.py`
-**Last updated:** 2026-07-17 (math-r2, `DE-MATH-R2-001` AC-5 — `_extract_returns` emits simple returns instead of log returns at the producer boundary)
+**Last updated:** 2026-11-16
 
 *This is this module's first `docs/generated/` entry — it had no prior doc-gen coverage. Full-module coverage reflects that this cycle's diff (`e57c2970`) touched the module for the first time under doc-gen; created now rather than left undocumented indefinitely.*
 

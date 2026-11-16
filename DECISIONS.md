@@ -11900,3 +11900,42 @@ Recorded in `feature-plans/BACKLOG.md`: NB-12 (GIL contention from any other slo
 ### Reference
 
 `feature-plans/preconditions-replay-load-once.md`.
+
+---
+
+## backtest-slippage-calibration: the default backtest slippage is calibrated to live results (2026-11-16)
+
+Source: `feature-plans/backtest-slippage-calibration.md` and `feature-plans/approach/backtest-slippage-calibration.md`. Base `c3e12882`, slice head `fdc63132`. `git diff c3e12882 fdc63132 -- alpha_bot_execution.py math_engine.py` is empty. The slice head's full CI run, supplied by the PM, was 29486 passed and 0 failed.
+
+### Defect
+
+`advisors/composer_backtest_client._DEFAULT_SLIPPAGE_PERCENT` was `0.005`, with a comment saying it matched the Composer UI defaults. `slippage_percent` is a decimal fraction (0.0001 is 0.01%) and Composer's own default is 0.0001, one basis point (Composer help center and the unofficial SDK docs for the same endpoint, accessed 2026-11-16). So `0.005` was 0.5% per trade, 50 times Composer's default, and the comment was false. How Composer applies slippage per trade (formula, sides) is unverified.
+
+Evidence (PM measurement, 2026-11-16): eight live symphonies, each current tree backtested (Composer backtest v2, broker alpaca) at slippage 0, 0.001 and 0.005 and compared day by day with Composer's realized deposit-adjusted daily returns over the 87 trading days since each tree's last edit (46 for one symphony), 2026-07-15 to 2026-11-13. Simple mean of the eight per-symphony gaps, live minus backtest: -6.45, +0.875 and +29.9 basis points a day at 0, 0.001 and 0.005. At 0.001 three of the eight backtest above live; per symphony the gap runs from -11.4 to +9.3 basis points a day at 0.001. Daily correlation of live with backtest was 0.976 to 0.996. Composer's own 1 basis point default would leave the backtest about 5.8 basis points a day above live on these trees. The evidence lives in a source comment beside the constant, not in a committed fixture.
+
+### Fix
+
+- The default is `0.001` (0.1% per trade), the measured setting closest to live and slightly conservative on the mean. The default comment now states the unit, the calibration and that only capital, fee flags, broker and version match the Composer UI.
+- Every advisor backtest surface, the SPY baselines and the tenure review take this one default.
+- `autotuner.SIM_EXIT_FRICTION_PCT` keeps 0.5 percentage points. It is no longer described as derived from the backtest default; its comment says it models the cost of a full-position exit in the replay, a different cost from per-trade backtest slippage. Its magnitude is an unmeasured assumption carried over from the old default, not a calibrated value.
+- Stored advisor observations and incubation rows recorded on the old basis are not rewritten. The mixed-basis period is accepted.
+
+### Tests
+
+Tests cover the default value and unit, each backtest surface using the one default, the incubation tick, the exit cost constant and its stated basis, and the content pins re-taken over `advisors/composer_backtest_client.py` and `autotuner.py` (scope pin `tests/test_backtest_slippage_calibration_protected_scope.py`). Test counts are not restated here beyond the CI figure above.
+
+### Reviews
+
+qa PASS with hidden pass PASS, code-reviewer PASS, quant-code-reviewer PASS and the Composer client review PASS, all at `fdc63132`.
+
+### Backlog
+
+Recorded in `feature-plans/BACKLOG.md`: calibrate `SIM_EXIT_FRICTION_PCT`, the calibration evidence living only in a source comment, the uncompiled `composer-api-researcher` stub, QA-3, QA-4, QA-5 and CR-2.
+
+### Files changed
+
+`advisors/composer_backtest_client.py`, `autotuner.py`; tests under `tests/advisors/`, `tests/ai_advisor/`, `tests/autotuner/`, `tests/ui/`, `tests/fixtures/backtest_slippage_calibration/` and `tests/` (scope pin, re-taken pins); docs: `docs/generated/advisors_composer_backtest_client.md`, `docs/generated/autotuner.md`, `docs/generated/INDEX.md`, `feature-plans/BACKLOG.md`, `.claude/CLAUDE.md` (Key Files rows for `autotuner.py` and `advisors/composer_backtest_client.py`).
+
+### Reference
+
+`feature-plans/backtest-slippage-calibration.md`.
