@@ -176,13 +176,25 @@ def read_latest_runs(*, scan_limit: int = RUN_SCAN_LIMIT) -> LatestRuns:
     return LatestRuns(latest, next((r for r in records if r and r.get("completed") is True), None))
 
 
-def _announced_pairs() -> set[tuple[str, str]]:
+def _announced_pairs(previous_run_id: str | None) -> set[tuple[str, str]]:
+    """Pairs announced by the previous completed run; older announcements never count."""
     rows = database.get_advisor_observations_for_role(th.ANNOUNCEMENT_ROLE, ANNOUNCEMENT_READ_LIMIT)
     pairs = set()
     for row in rows:
         record = _record_of(row) or {}
-        pairs.update((p[0], p[1]) for p in record.get("pairs") or [])
+        if record.get("run_id") == previous_run_id:
+            pairs.update((p[0], p[1]) for p in record.get("pairs") or [])
     return pairs
+
+
+def _no_answer_reason(verdicts: dict) -> str:
+    """Why Alpaca never answered: a refusal first, else the first failure in ask order."""
+    reasons = [v.reason for v in verdicts.values()]
+    refused = th.classify_asset_answer(401, None).reason
+    unreachable = th.classify_asset_failure().reason
+    if refused in reasons:
+        return refused
+    return unreachable if all(r == unreachable for r in reasons) else reasons[0]
 
 
 # ---------------------------------------------------------------------------
@@ -381,7 +393,7 @@ def _previous_warnings(latest_completed: dict | None, announced: set) -> list[di
 
 def _evaluate(run: _Run, account_ids, labels, key, secret) -> _Ended:
     latest_completed = read_latest_runs().latest_completed
-    announced = _announced_pairs()
+    announced = _announced_pairs((latest_completed or {}).get("run_id"))
     if not account_ids:
         return _Ended("unavailable", reason="no Composer account configured")
     if not (_has_text(key) and _has_text(secret)):
@@ -402,7 +414,7 @@ def _evaluate(run: _Run, account_ids, labels, key, secret) -> _Ended:
         tickers_asked=len(tickers),
         tickers_answered=answered,
     ):
-        return _Ended("unavailable", reason=list(verdicts.values())[-1].reason)
+        return _Ended("unavailable", reason=_no_answer_reason(verdicts))
     for entry in judged.values():
         entry["verdicts"] = {t: verdicts[t] for t in entry["uses"] if t in verdicts}
     warnings = th.carry_warnings(
