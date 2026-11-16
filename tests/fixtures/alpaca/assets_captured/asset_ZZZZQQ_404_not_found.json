@@ -1,0 +1,9 @@
+{
+ "request": "GET /v2/assets/ZZZZQQ",
+ "status": 404,
+ "content_type": "application/json; charset=UTF-8",
+ "body": {
+  "code": 40410000,
+  "message": "asset not found for ZZZZQQ"
+ }
+}

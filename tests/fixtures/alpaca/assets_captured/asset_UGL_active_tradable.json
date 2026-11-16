@@ -1,0 +1,28 @@
+{
+ "request": "GET /v2/assets/UGL",
+ "status": 200,
+ "content_type": "application/json; charset=UTF-8",
+ "body": {
+  "id": "b2592ada-333b-410c-bb5f-96015b27ba4c",
+  "class": "us_equity",
+  "exchange": "ARCA",
+  "symbol": "UGL",
+  "name": "ProShares Ultra Gold",
+  "status": "active",
+  "tradable": true,
+  "marginable": true,
+  "maintenance_margin_requirement": 100,
+  "margin_requirement_long": "100",
+  "margin_requirement_short": "100",
+  "shortable": true,
+  "easy_to_borrow": true,
+  "borrow_status": "easy_to_borrow",
+  "fractionable": true,
+  "attributes": [
+   "ptp_with_exception",
+   "fractional_eh_enabled",
+   "has_options",
+   "overnight_tradable"
+  ]
+ }
+}

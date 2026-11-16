@@ -1,0 +1,24 @@
+{
+ "request": "GET /v2/assets/AKAN",
+ "status": 200,
+ "body": {
+  "id": "75b5be9a-62c5-4ac9-a60b-7e77a4b04133",
+  "class": "us_equity",
+  "exchange": "NASDAQ",
+  "symbol": "AKAN",
+  "name": "Akanda Corp. Common Shares",
+  "status": "active",
+  "tradable": false,
+  "marginable": false,
+  "maintenance_margin_requirement": 100,
+  "margin_requirement_long": "100",
+  "margin_requirement_short": "100",
+  "shortable": false,
+  "easy_to_borrow": false,
+  "borrow_status": "hard_to_borrow",
+  "fractionable": false,
+  "attributes": [
+   "overnight_tradable"
+  ]
+ }
+}

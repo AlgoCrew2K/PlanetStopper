@@ -1,0 +1,23 @@
+{
+ "request": "GET /v2/assets/SHNY",
+ "status": 200,
+ "content_type": "application/json; charset=UTF-8",
+ "body": {
+  "id": "e32e7487-567f-41b8-bcbd-888bd86fc76c",
+  "class": "us_equity",
+  "exchange": "ARCA",
+  "symbol": "SHNY",
+  "name": "MicroSectors Gold 3x Leveraged ETN",
+  "status": "inactive",
+  "tradable": false,
+  "marginable": false,
+  "maintenance_margin_requirement": 100,
+  "margin_requirement_long": "100",
+  "margin_requirement_short": "100",
+  "shortable": false,
+  "easy_to_borrow": false,
+  "borrow_status": "hard_to_borrow",
+  "fractionable": false,
+  "attributes": []
+ }
+}

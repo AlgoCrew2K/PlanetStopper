@@ -1,0 +1,674 @@
+{
+ "symphonies": [
+  {
+   "id": "hvPiGP1O7AHfutHE3Fjy",
+   "name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "QQQ",
+     "allocation": 0.192319625
+    },
+    {
+     "ticker": "YINN",
+     "allocation": 0.099040258
+    },
+    {
+     "ticker": "UUP",
+     "allocation": 0.066498969
+    },
+    {
+     "ticker": "SHY",
+     "allocation": 0.066053347
+    },
+    {
+     "ticker": "HDGE",
+     "allocation": 0.135275341
+    },
+    {
+     "ticker": "EDZ",
+     "allocation": 0.209657979
+    },
+    {
+     "ticker": "YANG",
+     "allocation": 0.095118974
+    },
+    {
+     "ticker": "QID",
+     "allocation": 0.070375005
+    },
+    {
+     "ticker": "EVT",
+     "allocation": 0.064598949
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-12",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "5XjzXjdGnjh99MIsdM97",
+   "name": "Land of Feaver'd Allocations: Intelligent Novas",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "QQQ",
+     "allocation": 0.19232223
+    },
+    {
+     "ticker": "YINN",
+     "allocation": 0.099040309
+    },
+    {
+     "ticker": "UUP",
+     "allocation": 0.066524721
+    },
+    {
+     "ticker": "SHY",
+     "allocation": 0.066070622
+    },
+    {
+     "ticker": "HDGE",
+     "allocation": 0.135276469
+    },
+    {
+     "ticker": "EDZ",
+     "allocation": 0.209625349
+    },
+    {
+     "ticker": "YANG",
+     "allocation": 0.095104414
+    },
+    {
+     "ticker": "QID",
+     "allocation": 0.070378303
+    },
+    {
+     "ticker": "EVT",
+     "allocation": 0.06460836
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-12",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "MoAkUHnavSYw3oONiUxe",
+   "name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "STPZ",
+     "allocation": 0.013725453
+    },
+    {
+     "ticker": "ROM",
+     "allocation": 0.017654093
+    },
+    {
+     "ticker": "SOXX",
+     "allocation": 0.053673002
+    },
+    {
+     "ticker": "QQQ",
+     "allocation": 0.073963007
+    },
+    {
+     "ticker": "YINN",
+     "allocation": 0.053808756
+    },
+    {
+     "ticker": "GDX",
+     "allocation": 0.009350361
+    },
+    {
+     "ticker": "HYG",
+     "allocation": 0.007258677
+    },
+    {
+     "ticker": "AIQ",
+     "allocation": 0.014009457
+    },
+    {
+     "ticker": "XTL",
+     "allocation": 0.004650041
+    },
+    {
+     "ticker": "LQD",
+     "allocation": 0.008641746
+    },
+    {
+     "ticker": "UGL",
+     "allocation": 0.009476258
+    },
+    {
+     "ticker": "EDZ",
+     "allocation": 0.22953652
+    },
+    {
+     "ticker": "YANG",
+     "allocation": 0.052927756
+    },
+    {
+     "ticker": "QLD",
+     "allocation": 0.018368423
+    },
+    {
+     "ticker": "GLD",
+     "allocation": 0.013351018
+    },
+    {
+     "ticker": "XLK",
+     "allocation": 0.035792373
+    },
+    {
+     "ticker": "USD",
+     "allocation": 0.013373651
+    },
+    {
+     "ticker": "DOG",
+     "allocation": 0.343510468
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-13",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "qF5ZU7ALjrlhxrGEwsyJ",
+   "name": "Planet of the Golden Age (Buy Copy)",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "STPZ",
+     "allocation": 0.011646527
+    },
+    {
+     "ticker": "DDM",
+     "allocation": 0.007127762
+    },
+    {
+     "ticker": "UWM",
+     "allocation": 0.006977923
+    },
+    {
+     "ticker": "SOXX",
+     "allocation": 0.033624682
+    },
+    {
+     "ticker": "QQQ",
+     "allocation": 0.050582179
+    },
+    {
+     "ticker": "YINN",
+     "allocation": 0.121769065
+    },
+    {
+     "ticker": "GDX",
+     "allocation": 0.004657955
+    },
+    {
+     "ticker": "HYG",
+     "allocation": 0.006692424
+    },
+    {
+     "ticker": "AIQ",
+     "allocation": 0.010809031
+    },
+    {
+     "ticker": "NUGT",
+     "allocation": 0.007019561
+    },
+    {
+     "ticker": "XTL",
+     "allocation": 0.003506152
+    },
+    {
+     "ticker": "LQD",
+     "allocation": 0.004878365
+    },
+    {
+     "ticker": "TECL",
+     "allocation": 0.005164665
+    },
+    {
+     "ticker": "UGL",
+     "allocation": 0.006658754
+    },
+    {
+     "ticker": "EDZ",
+     "allocation": 0.516192149
+    },
+    {
+     "ticker": "URTY",
+     "allocation": 0.003428973
+    },
+    {
+     "ticker": "YANG",
+     "allocation": 0.119056762
+    },
+    {
+     "ticker": "QLD",
+     "allocation": 0.014079151
+    },
+    {
+     "ticker": "FAS",
+     "allocation": 0.002848911
+    },
+    {
+     "ticker": "GLD",
+     "allocation": 0.010124307
+    },
+    {
+     "ticker": "LTL",
+     "allocation": 0.002473715
+    },
+    {
+     "ticker": "XLK",
+     "allocation": 0.021013871
+    },
+    {
+     "ticker": "SCHD",
+     "allocation": 0.002661434
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-13",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "q7WQHwLzt49cMgFBzHsX",
+   "name": "Planet of the Golden Age: Arrival of the NewRunners",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "STPZ",
+     "allocation": 0.010995706
+    },
+    {
+     "ticker": "SOXL",
+     "allocation": 0.00638368
+    },
+    {
+     "ticker": "SOXX",
+     "allocation": 0.035327799
+    },
+    {
+     "ticker": "QQQ",
+     "allocation": 0.052213131
+    },
+    {
+     "ticker": "YINN",
+     "allocation": 0.121881752
+    },
+    {
+     "ticker": "AIQ",
+     "allocation": 0.010451487
+    },
+    {
+     "ticker": "XTL",
+     "allocation": 0.009906799
+    },
+    {
+     "ticker": "XLB",
+     "allocation": 0.005254315
+    },
+    {
+     "ticker": "EDZ",
+     "allocation": 0.516492119
+    },
+    {
+     "ticker": "YANG",
+     "allocation": 0.119135706
+    },
+    {
+     "ticker": "QLD",
+     "allocation": 0.014088677
+    },
+    {
+     "ticker": "GLD",
+     "allocation": 0.010698368
+    },
+    {
+     "ticker": "XLK",
+     "allocation": 0.020898473
+    },
+    {
+     "ticker": "USD",
+     "allocation": 0.009471133
+    },
+    {
+     "ticker": "VTWO",
+     "allocation": 0.009726799
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-13",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "Gpaw3IhZghQPRE6AdEKx",
+   "name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "STPZ",
+     "allocation": 0.015152515
+    },
+    {
+     "ticker": "ROM",
+     "allocation": 0.009445612
+    },
+    {
+     "ticker": "XLV",
+     "allocation": 0.003984473
+    },
+    {
+     "ticker": "SOXX",
+     "allocation": 0.030297883
+    },
+    {
+     "ticker": "QQQ",
+     "allocation": 0.045968161
+    },
+    {
+     "ticker": "YINN",
+     "allocation": 0.104575492
+    },
+    {
+     "ticker": "GDX",
+     "allocation": 0.010013019
+    },
+    {
+     "ticker": "HYG",
+     "allocation": 0.008009027
+    },
+    {
+     "ticker": "AIQ",
+     "allocation": 0.015548055
+    },
+    {
+     "ticker": "NUGT",
+     "allocation": 0.006526521
+    },
+    {
+     "ticker": "XTL",
+     "allocation": 0.005081855
+    },
+    {
+     "ticker": "LQD",
+     "allocation": 0.009538431
+    },
+    {
+     "ticker": "UGL",
+     "allocation": 0.009129562
+    },
+    {
+     "ticker": "BTAL",
+     "allocation": 0.02636132
+    },
+    {
+     "ticker": "EDZ",
+     "allocation": 0.436909412
+    },
+    {
+     "ticker": "YANG",
+     "allocation": 0.100766073
+    },
+    {
+     "ticker": "QLD",
+     "allocation": 0.011296326
+    },
+    {
+     "ticker": "EDV",
+     "allocation": 0.021995698
+    },
+    {
+     "ticker": "QID",
+     "allocation": 0.006927815
+    },
+    {
+     "ticker": "GLD",
+     "allocation": 0.007754378
+    },
+    {
+     "ticker": "TLT",
+     "allocation": 0.017916385
+    },
+    {
+     "ticker": "XLK",
+     "allocation": 0.022905951
+    },
+    {
+     "ticker": "SCHD",
+     "allocation": 0.006026094
+    },
+    {
+     "ticker": "USD",
+     "allocation": 0.008221842
+    },
+    {
+     "ticker": "SQQQ",
+     "allocation": 0.032925478
+    },
+    {
+     "ticker": "UYG",
+     "allocation": 0.005371504
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-13",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "8FAXAnQmYi1INDubazeC",
+   "name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "BIL",
+     "allocation": 0.061668274
+    },
+    {
+     "ticker": "EDC",
+     "allocation": 0.39854473
+    },
+    {
+     "ticker": "GLD",
+     "allocation": 0.145850167
+    },
+    {
+     "ticker": "UGL",
+     "allocation": 0.003350603
+    },
+    {
+     "ticker": "USD",
+     "allocation": 0.236303701
+    },
+    {
+     "ticker": "DULL",
+     "allocation": 0.056238192
+    },
+    {
+     "ticker": "YINN",
+     "allocation": 0.092366713
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-11",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "iaSOOUsmnCJHiZvbrWfs",
+   "name": "(INVEST) LQD + EYEG 5 ways Full Market",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "DOG",
+     "allocation": 0.480546982
+    },
+    {
+     "ticker": "EDZ",
+     "allocation": 0.350424713
+    },
+    {
+     "ticker": "SCHD",
+     "allocation": 0.000842669
+    },
+    {
+     "ticker": "URTY",
+     "allocation": 0.003807691
+    },
+    {
+     "ticker": "YANG",
+     "allocation": 0.080831176
+    },
+    {
+     "ticker": "YINN",
+     "allocation": 0.08257482
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-13",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "nOyb55RMGVCKPiYXv7TI",
+   "name": "Corporate Chaos 5 ways ",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "QLD",
+     "allocation": 0.490102983
+    },
+    {
+     "ticker": "UST",
+     "allocation": 0.508857865
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-13",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "lW4ZzWuqR8tEO2DhXbil",
+   "name": "Planet of the Paragons: EYEG of the LQD",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "DOG",
+     "allocation": 0.480353562
+    },
+    {
+     "ticker": "EDZ",
+     "allocation": 0.354401938
+    },
+    {
+     "ticker": "YANG",
+     "allocation": 0.081750048
+    },
+    {
+     "ticker": "YINN",
+     "allocation": 0.082536501
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-13",
+   "last_rebalance_attempted_on": "2026-11-13"
+  },
+  {
+   "id": "n2ooAZTvBRN6ZzpMmWmU",
+   "name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4 | 10.19.2022",
+   "asset_class": "EQUITIES",
+   "asset_classes": [
+    "EQUITIES"
+   ],
+   "holdings": [
+    {
+     "ticker": "YINN",
+     "allocation": 0.056484069
+    },
+    {
+     "ticker": "SPXL",
+     "allocation": 0.010239058
+    },
+    {
+     "ticker": "SPXU",
+     "allocation": 0.141051341
+    },
+    {
+     "ticker": "TECL",
+     "allocation": 0.156269996
+    },
+    {
+     "ticker": "TQQQ",
+     "allocation": 0.090157306
+    },
+    {
+     "ticker": "EDC",
+     "allocation": 0.258289377
+    },
+    {
+     "ticker": "GLD",
+     "allocation": 0.059863803
+    },
+    {
+     "ticker": "QQQU",
+     "allocation": 0.010045558
+    },
+    {
+     "ticker": "BIL",
+     "allocation": 0.165151632
+    },
+    {
+     "ticker": "USD",
+     "allocation": 0.027911237
+    }
+   ],
+   "is_paused": false,
+   "rebalance_frequency": "daily",
+   "last_rebalance_on": "2026-11-11",
+   "last_rebalance_attempted_on": "2026-11-13"
+  }
+ ]
+}

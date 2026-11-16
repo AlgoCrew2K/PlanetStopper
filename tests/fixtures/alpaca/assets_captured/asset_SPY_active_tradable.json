@@ -1,0 +1,28 @@
+{
+ "request": "GET /v2/assets/SPY",
+ "status": 200,
+ "content_type": "application/json; charset=UTF-8",
+ "body": {
+  "id": "b28f4066-5c6d-479b-a2af-85dc1a8f16fb",
+  "class": "us_equity",
+  "exchange": "ARCA",
+  "symbol": "SPY",
+  "name": "State Street SPDR S&P 500 ETF Trust",
+  "status": "active",
+  "tradable": true,
+  "marginable": true,
+  "maintenance_margin_requirement": 30,
+  "margin_requirement_long": "30",
+  "margin_requirement_short": "30",
+  "shortable": true,
+  "easy_to_borrow": true,
+  "borrow_status": "easy_to_borrow",
+  "fractionable": true,
+  "attributes": [
+   "fractional_eh_enabled",
+   "has_options",
+   "options_late_close",
+   "overnight_tradable"
+  ]
+ }
+}
