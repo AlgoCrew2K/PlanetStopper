@@ -1213,6 +1213,29 @@ class TestEachCheckTimeIsPrintedOnce:
         assert page.feature_text().count(stamp(ended_at(first))) == 1
         assert_each_fact_is_stated_once(page)
 
+    def test_lines_carried_from_one_earlier_check_each_keep_the_suffix_and_the_notice_repeats_no_time(
+        self, world
+    ):
+        """The suffix is per-row data: the earlier time repeats across those lines only, the lead's
+        time is printed once and the notice prints neither time."""
+        roster(world.router, X, Y)
+        first = world.run(night(0))
+        world.router.set_tree(X, h.error_reply(503))
+        world.router.set_tree(Y, h.error_reply(503))
+        second = world.run(night(1))
+        page = world.page()
+        assert page.lead() == f"{LEAD} Checked {stamp(ended_at(second))}."
+        by_name = sorted([X, Y], key=lambda sid: name_of(sid).casefold())
+        assert page.lines() == [
+            (shny_line(sid), earlier(stamp(ended_at(first)))) for sid in by_name
+        ]
+        text = page.feature_text()
+        assert text.count(stamp(ended_at(second))) == 1
+        assert text.count(stamp(ended_at(first))) == 2
+        for notice in page.notices():
+            assert stamp(ended_at(first)) not in notice and stamp(ended_at(second)) not in notice
+        assert len(page.notices()) == 2, "each symphony the run could not read is named once"
+
     @pytest.mark.parametrize("dead", [True, False], ids=["after_a_warning", "after_a_clean_check"])
     def test_no_account_configured_names_the_last_check_only_when_no_warning_does(
         self, world, dead

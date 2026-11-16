@@ -192,7 +192,10 @@ def test_the_notice_box_matches_the_market_state_banner_in_box_and_type(probe, w
             f"{width}px: the notice's {fact} is {notice[fact]!r}, the market-state banner's is "
             f"{market[fact]!r}"
         )
-    assert notice["left"] == pytest.approx(market["left"], abs=0.5), f"{width}px: box left edges"
+    # The market-state banner is hidden by default, so it has no box; the shown fleet banner's
+    # box is the page column's left edge the notice must start at.
+    fleet = _facts(probe, FLEET)
+    assert notice["left"] == pytest.approx(fleet["left"], abs=0.5), f"{width}px: box left edges"
     _assert_inside_the_page(probe, notice, f"{width}px notice")
 
 

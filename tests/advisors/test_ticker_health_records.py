@@ -64,7 +64,8 @@ completed check's stamp (the warning's ``checked``), F the failed run's stamp, H
 in whole hours read from ``STALE_AFTER`` at call time:
 
 - A line's ``from_check`` is ``None`` when its ``found_at`` prints as L, else its own stamp. This
-  holds whether the latest run completed or not.
+  holds whether the latest run completed or not. A suffix is per-row data: two lines carried from
+  one earlier check each keep it, so that time may repeat across those suffixes only.
 - Latest run unavailable or skipped: ``"Ticker check unavailable: {reason}."``; failed:
   ``"Ticker check failed on {F}."``. Either ends `` Last completed check {L}.`` only when a
   completed check exists and no warning is shown, or `` No completed check yet.`` when none exists,
@@ -1254,6 +1255,25 @@ class TestEachCheckTimeIsPrintedOnce:
             "QXGD": EARLIER_STAMP,
             "PLRZ": None,
         }
+
+    def test_lines_carried_from_one_earlier_check_each_keep_the_suffix_and_the_notices_repeat_no_time(
+        self,
+    ):
+        """A line's suffix is per-row data, so the earlier time repeats across those lines only;
+        the lead's time and the notices' times stay once and no notice repeats a time a line or the
+        lead already shows."""
+        run = run_record(
+            warnings=[
+                warning(found_at=EARLIER),
+                warning("idB", "PLRZ", display_name="Other fund", found_at=EARLIER),
+            ],
+            not_checked=not_checked(symphonies=[NOT_CHECKED_Y]),
+        )
+        result = view(run, run)
+        assert result["warning"]["checked"] == ENDED_STAMP
+        assert [x["from_check"] for x in result["warning"]["lines"]] == [EARLIER_STAMP] * 2
+        assert result["notices"] == [NOT_CHECKED_TEXT]
+        assert not STAMP_TEXT.findall(" ".join(result["notices"]))
 
     def test_a_line_whose_time_prints_as_the_leads_time_carries_no_suffix(self):
         """The rule is on the printed time: a line found half a minute after the newest check's
