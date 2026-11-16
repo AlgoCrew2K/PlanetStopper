@@ -1695,7 +1695,9 @@ def test_account_the_gate_stops_after_the_first_request_is_named_with_the_gate_r
     outcome = completed_run(router, **options)
     rec = record_of(outcome)
     assert len(router.composer_requests()) == 1
-    assert rec["not_checked"]["accounts"] == [{"label": LABELS[h.SECOND_ACCOUNT_ID], "reason": reason}]
+    assert rec["not_checked"]["accounts"] == [
+        {"label": LABELS[h.SECOND_ACCOUNT_ID], "reason": reason}
+    ]
     assert rec["not_checked"]["symphonies"] == [
         not_checked_symphony(X, reason),
         not_checked_symphony(Y, reason),
