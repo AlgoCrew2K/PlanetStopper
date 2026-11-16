@@ -52,6 +52,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1331,3 +1332,55 @@ class TestDesignSystemStyling:
                 assert "style" not in node["attrs"]
                 assert node["tag"] not in ("button", "input", "script", "select", "textarea")
                 assert not has_class(node, "section-header")
+
+
+# ---------------------------------------------------------------------------
+# A failure anywhere in the ticker health view never breaks the page
+# ---------------------------------------------------------------------------
+
+UNREADABLE = "The ticker check result could not be read."
+
+
+def _break_the_view_by_import(monkeypatch):
+    from tests.app import _tenure_review_job_builders as jb
+
+    jb.fail_imports_of(monkeypatch, "advisors.ticker_health")
+
+
+def _break_the_view_by_the_stored_run_read(monkeypatch):
+    def fail():
+        raise sqlite3.OperationalError("table-detail-that-must-not-appear")
+
+    monkeypatch.setattr("advisors.ticker_health_runner.read_latest_runs", fail)
+
+
+def _break_the_view_by_the_page_text(monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("text-detail-that-must-not-appear")
+
+    monkeypatch.setattr("advisors.ticker_health.page_view", fail)
+
+
+class TestAFailureInTheViewNeverBreaksThePage:
+    @pytest.mark.parametrize(
+        "break_it",
+        [
+            pytest.param(_break_the_view_by_import, id="the module cannot be imported"),
+            pytest.param(_break_the_view_by_the_stored_run_read, id="the stored run read fails"),
+            pytest.param(_break_the_view_by_the_page_text, id="the page text raises"),
+        ],
+    )
+    def test_the_page_answers_with_one_notice_and_every_other_part_intact(self, world, break_it):
+        roster(world.router, X)
+        world.run()
+        break_it(world.monkeypatch)
+
+        page = world.page()
+
+        assert page.warning is None, "a warning shown from a view that failed"
+        assert page.notices() == [UNREADABLE]
+        assert page.testid("hero-section") is not None, "the rest of the dashboard is missing"
+        ids = [n.get("attrs", {}).get("id") for n in walk(page.root) if "tag" in n]
+        assert "market-state-banner" in ids
+        assert "table-detail-that-must-not-appear" not in page.html
+        assert "text-detail-that-must-not-appear" not in page.html

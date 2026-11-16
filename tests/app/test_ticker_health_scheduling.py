@@ -429,7 +429,12 @@ class TestOtherReaderRunning:
         assert running is True
         assert predicate() is False
 
-    def test_an_error_while_finding_out_answers_running_so_the_check_waits(self, monkeypatch):
+    def test_an_error_while_finding_out_reaches_the_runner_and_is_never_swallowed_or_guessed(
+        self, monkeypatch
+    ):
+        """The runner names the cause of a check that cannot answer, so the predicate lets the
+        error out: an answer of True would make the run wait out the whole period for a job that
+        may not exist, and an answer of False would let it overlap one."""
         predicate = need("_ticker_health_other_reader_running")
 
         def broken(*_args, **_kwargs):
@@ -437,13 +442,12 @@ class TestOtherReaderRunning:
 
         with monkeypatch.context() as patch:
             patch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
-            by_state = predicate()
+            with pytest.raises(RuntimeError):
+                predicate()
         with monkeypatch.context() as patch:
             patch.setattr(threading, "enumerate", broken)
-            by_threads = predicate()
-
-        assert by_state is True
-        assert by_threads is True
+            with pytest.raises(RuntimeError):
+                predicate()
 
 
 # ---------------------------------------------------------------------------
@@ -751,6 +755,35 @@ class TestWaitingForTheOtherReaders:
         assert len(polls) == 3
         (record,) = run_records()
         assert record["completed"] is True
+
+
+class TestAStateThatCannotBeReadIsNamedNotGuessed:
+    def test_a_review_state_that_cannot_be_read_stores_a_skipped_run_with_the_true_cause(
+        self, world, monkeypatch, caplog
+    ):
+        body = need("_ticker_health_run_body")
+        set_clocks(monkeypatch, world, NIGHT)
+
+        def broken(*_args, **_kwargs):
+            raise RuntimeError("state-detail-that-must-not-appear")
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+
+        with caplog.at_level(logging.DEBUG):
+            body("nightly")
+
+        (record,) = run_records()
+        assert record["status"] == "skipped"
+        assert record["reason"] == "could not tell whether another Composer job was running"
+        assert world.requests == [], "the check made a request it could not clear"
+        assert sum(world.sleeps) < runner.GATE_WAIT_LIMIT_SECONDS
+        flagged = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "alphabot.ticker_health" and r.levelno >= logging.WARNING
+        ]
+        assert len(flagged) == 1 and "RuntimeError" in flagged[0], flagged
+        assert "state-detail-that-must-not-appear" not in caplog.text
 
 
 # ---------------------------------------------------------------------------

@@ -2299,3 +2299,63 @@ def test_an_unlabeled_account_id_that_is_not_plain_is_still_named_by_position(ro
     rec = record_of(outcome)
     assert [a["label"] for a in rec["not_checked"]["accounts"]] == ["account 1"]
     assert "../x" not in json.dumps(rec)
+
+
+# ---------------------------------------------------------------------------
+# A wait check that cannot answer
+# ---------------------------------------------------------------------------
+
+CANNOT_TELL = "could not tell whether another Composer job was running"
+
+
+def _broken_wait_check():
+    raise RuntimeError(f"state unreadable {t.ALPACA_KEY} {t.WEBHOOK_URL}")
+
+
+def _own_warnings(caplog) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "alphabot.ticker_health" and r.levelno >= logging.WARNING
+    ]
+
+
+def test_a_wait_check_that_raises_skips_the_run_with_its_own_cause(router, caplog):
+    """The run is stored skipped for the cause that happened, makes no request, does not wait
+    out the period it waits for another job, and logs one WARNING naming the class only."""
+    roster(router, X)
+    with caplog.at_level(logging.DEBUG):
+        outcome = run_check(router, other_reader_running=_broken_wait_check)
+    assert (outcome.status, outcome.completed) == ("skipped", False)
+    assert record_of(outcome)["reason"] == CANNOT_TELL
+    assert router.requests == []
+    assert sum(router.sleeps) < OTHER_READER_LIMIT_SECONDS
+    warnings = _own_warnings(caplog)
+    assert len(warnings) == 1 and "RuntimeError" in warnings[0], warnings
+    assert "state unreadable" not in caplog.text
+    assert forbidden_in(caplog.text) == []
+    assert router.of_kind("discord") == []
+
+
+def test_a_wait_check_that_starts_raising_mid_run_names_the_symphonies_left(router, caplog):
+    ids = [X, Y, t.CORPORATE_CHAOS_ID]
+    roster(router, *ids)
+
+    def breaks_after_the_first_tree():
+        if router.of_kind("score"):
+            raise RuntimeError("state unreadable")
+        return False
+
+    with caplog.at_level(logging.DEBUG):
+        outcome = completed_run(
+            router, other_reader_running=breaks_after_the_first_tree, webhook_url=None
+        )
+    rec = record_of(outcome)
+    assert router.score_ids() == ids[:1]
+    assert rec["not_checked"]["symphonies"] == [
+        not_checked_symphony(i, CANNOT_TELL) for i in ids[1:]
+    ]
+    assert warning_pairs(rec) == {(X, "SHNY")}
+    warnings = _own_warnings(caplog)
+    assert len(warnings) == 1 and "RuntimeError" in warnings[0], warnings
+    assert "state unreadable" not in caplog.text
