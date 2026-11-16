@@ -1213,6 +1213,23 @@ class TestEachCheckTimeIsPrintedOnce:
         assert page.feature_text().count(stamp(ended_at(first))) == 1
         assert_each_fact_is_stated_once(page)
 
+    @pytest.mark.parametrize("dead", [True, False], ids=["after_a_warning", "after_a_clean_check"])
+    def test_no_account_configured_names_the_last_check_only_when_no_warning_does(
+        self, world, dead
+    ):
+        first = _earlier_check(world, dead=dead)
+        world.run(night(1), status="unavailable", account_ids=[])
+        page = world.page()
+        reason = "Ticker check unavailable: no Composer account configured."
+        if dead:
+            assert page.notices() == [reason]
+            assert page.lead() == f"{LEAD} Checked {stamp(ended_at(first))}."
+        else:
+            assert page.notices() == [f"{reason} Last completed check {stamp(ended_at(first))}."]
+            assert page.warning is None
+        assert page.feature_text().count(stamp(ended_at(first))) == 1
+        assert_each_fact_is_stated_once(page)
+
     def test_a_stale_latest_check_with_a_warning_says_how_long_not_when(self, world):
         first = _earlier_check(world, dead=True)
         page = _page_when(world, first, first, stale=True)
