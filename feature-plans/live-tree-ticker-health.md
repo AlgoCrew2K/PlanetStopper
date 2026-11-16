@@ -21,9 +21,9 @@ When a ticker that a live symphony's current Composer tree buys or reads in a co
 - A nightly off-hours check judges every ticker each live tree names as an asset or as any condition operand (AC-1), against Alpaca's asset status read that night (AC-2).
 - The dashboard page `/` shows one warning line per symphony and dead ticker (AC-3), and a muted notice whenever the check could not judge something, never an all-clear (AC-4).
 - One Discord message per newly found symphony and ticker pair, never repeated until it clears (AC-5); a fixed ticker's warning clears (AC-6).
-- The check makes no Composer request while the market is open or while another Composer job runs, never runs twice at once, and leaves no partial result (AC-7).
-- Each completed session is checked before the next open: at the nightly start time, or at a daemon start while the market is closed when a session is still uncovered; a missed session is named on the dashboard (AC-10).
-- Terms used throughout: a run **ends** when it stops for any reason (finished, skipped, unavailable, failed or stopped by the daemon); a check **completed** when its run reached every live symphony of the configured accounts, each either judged or reported not checked with its cause, and Alpaca answered (D-6). A symphony is **judged** when its tree was read; a ticker is **verified** when Alpaca gave a clear answer for it, and **could not be verified** otherwise. A completed check **covers** every session that closed before its run started. A session is **missed** when the next session opened before a completed check covered it. Checked times and staleness count completed checks only.
+- The check makes no Composer request while the market is open or while another in-process off-hours Composer reader runs, never runs twice at once, and leaves no partial result (AC-7).
+- The check runs every calendar night and catches up a missed night at the next daemon start outside market hours (AC-10).
+- Terms used throughout: a run **ends** when it stops for any reason (finished, skipped, unavailable, failed or stopped by the daemon); a run **completes** when it ends after reading at least one account's roster and obtaining Alpaca's answer for at least one ticker, and a completed run may still leave symphonies or tickers not checked; a symphony is **judged** by a run that read its tree, and a ticker is **judged** by a run that read Alpaca's answer for it. Checked times and staleness count completed runs only (D-6).
 - The engine, Composer write paths, the tenure review, `/health`, the header and the Strategy Builder's tradeable set stay as at the ref (AC-8); credentials and names stay out of logs, markup and mentions (AC-9).
 
 ## Requirements as Given
@@ -94,7 +94,7 @@ When a ticker that a live symphony's current Composer tree buys or reads in a co
 | R-44 | Earlier criteria on the nightly tick, market gate, `/health`, header and universe provider are found and reconciled | G-16 | AC-7, AC-8, AC-10 | full |
 
 ## User Tasks
-Workflow (dashboard): no workflow file: the repository has no `.claude/workflows/` directory at the ref, so T-1 and T-2 below are the spec writer's draft, not an operator-confirmed workflow [PM-ASSUMED] (D-10).
+Workflow (dashboard): no workflow file: the repository has no `.claude/workflows/` directory at the ref, so no confirmed workflow exists for the dashboard page.
 
 ### T-1: Learn that a live symphony references a dead ticker and confirm the fix
 
@@ -110,7 +110,7 @@ Workflow (dashboard): no workflow file: the repository has no `.claude/workflows
 | Step | User action | Input | Expected result | Scenario (S id) |
 |---|---|---|---|---|
 | 1 | Opens `/` after a night on which Alpaca could not be read | none | a muted notice says the ticker check was unavailable and why, with the last completed check's time; earlier warnings still show with their own time | S-4.7, S-4.6 |
-| 2 | Opens `/` after a night on which one symphony's tree could not be read | none | the notice names that symphony as not checked with the cause; warnings for the others reflect that night | S-4.1 |
+| 2 | Opens `/` after a night on which one symphony's tree could not be read | none | the notice names that symphony as not checked with the reason; warnings for the others reflect that night | S-4.1 |
 
 ## Earlier criteria on the same surface
 
@@ -149,7 +149,7 @@ Rule: When the nightly check reads a live symphony's current tree from Composer'
 | S-1.7 | N1 | T named only inside an inner condition of a compound condition nested in another compound condition | the nightly check completes | T is judged |
 | S-1.8 | N1 | T bought by 25 asset nodes and read by one if-child that compares two of T's own indicators (T on both sides) | the nightly check completes and Alpaca reports T inactive | one warning line for that symphony and T, reading "Used by 25 asset nodes and 1 condition." (a condition naming T on both sides counts once); T is judged once in the run |
 | S-1.9 | N1 | a live tree with no asset node and no condition | the nightly check completes | the symphony is counted as checked; no warning line and no notice for it |
-| S-1.10 | N1 | a live tree whose `asset_class` is present and is not `EQUITIES` | the nightly check completes | none of its tickers is sent to Alpaca; the notice names the symphony as not checked with the cause "asset class not covered by the check" |
+| S-1.10 | N1 | a live tree whose `asset_class` is present and is not `EQUITIES` | the nightly check completes | none of its tickers is sent to Alpaca; the notice names the symphony as not checked with the reason "asset class not covered by the check" |
 | S-1.11 | N7 | the trees the asset swap engine, the community loader, the plan compiler and the weekly suggestions scheduler read (callers at `advisors/asset_swap_engine.py:878`, `:1167`, `advisors/community_strats.py:349`, `advisors/plan_tree_compiler.py:549`, `advisors/weekly_suggestions_scheduler.py:378`) | each reads the tickers of a tree containing legacy operands | each receives the same ticker set as at the ref |
 
 Negative coverage: N1 S-1.3, S-1.4, S-1.5, S-1.6, S-1.7, S-1.8, S-1.9, S-1.10 · N2 n/a: the check refuses no tree; a tree it cannot cover is reported not checked (S-1.10) · N3 covered by AC-4 (S-4.1 to S-4.5) · N4 n/a: a nightly job with no caller to authorize · N5 covered by AC-7 (S-7.4) · N6 covered by AC-4 (S-4.1 to S-4.5) · N7 S-1.11 · N8 n/a: each tree is read once per run and no edit is held open
@@ -157,7 +157,7 @@ Questions: none
 
 ### AC-2: The verdict comes from Alpaca's status read that night
 Requirement items: R-2, R-3, R-4, R-9, R-24, R-25
-Rule: When the nightly check verifies a ticker, the check shall read that ticker's asset record from Alpaca during that run and report the ticker dead when Alpaca clearly reports it inactive, not tradable, or not listed; if Alpaca's answer for a ticker cannot be obtained or is neither a clear tradable nor a clear inactive or not-tradable answer, then the check shall report that the ticker could not be verified, as AC-4 shows it, never healthy and never dead.
+Rule: When the nightly check judges a ticker, the check shall read that ticker's asset record from Alpaca during that run and report the ticker dead when Alpaca reports it inactive, not tradable, or not listed; if Alpaca's answer for a ticker cannot be obtained or read, then the check shall report that ticker not checked, as AC-4 shows it, never healthy and never dead.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
@@ -171,15 +171,14 @@ Rule: When the nightly check verifies a ticker, the check shall read that ticker
 | S-2.8 | B | Alpaca's status for T changed to inactive after the previous run, and the Strategy Builder's weekly tradeable set, cached 3 days earlier, still lists T | the nightly check completes | T is dead on the dashboard and in Discord after this run |
 | S-2.9 | N6 | every Alpaca request in the run times out or fails to connect | the run ends | no ticker is dead or healthy from this run; the run reads "unavailable: Alpaca unreachable" (S-4.7); no Discord message; earlier warnings stay as in S-4.6 |
 | S-2.10 | N4 | Alpaca answers 401 or 403 | the run ends | the run reads "unavailable: Alpaca refused the credentials"; no ticker is dead or healthy from this run |
-| S-2.11 | N6 | Alpaca answers 429 or 5xx for some tickers and 200 for the rest | the nightly check completes | the answered tickers are verified; each unanswered ticker could not be verified, and the notice counts them per symphony with the cause "Alpaca rate limit" or "Alpaca unavailable" (S-4.8) |
-| S-2.12 | N3 | Alpaca answers 200 for T with a body lacking `status` or `tradable`, or with a value of either that is neither a clear yes nor a clear no | the nightly check completes | T could not be verified, with the cause "Alpaca answer unclear"; T is never reported dead |
+| S-2.11 | N6 | Alpaca answers 429 or 5xx for some tickers and 200 for the rest | the nightly check completes | the answered tickers are judged; each unanswered ticker is not checked and the notice counts them per symphony with the reason "Alpaca rate limit" or "Alpaca unavailable" (S-4.8) |
+| S-2.12 | N3 | Alpaca answers 200 for T with a body lacking `status` or `tradable` | the nightly check completes | T is not checked with the reason "Alpaca response unreadable" |
 | S-2.13 | N7 | the tradeable-set cache row read by the Strategy Builder and Asset Swaps, as it stood before the run | the nightly check completes | the row's content and timestamp are unchanged; the check neither reads nor refreshes it |
 | S-2.14 | N3 | the Alpaca key or secret is absent from the configuration | the run ends | no Alpaca request is sent; the run reads "unavailable: Alpaca credentials not configured" |
 | S-2.15 | N5 | T named by two live symphonies | the nightly check completes | T is judged once in the run; both symphonies show their own line for T when T is dead |
-| S-2.16 | N6 | Alpaca answers T with a status other than 200, 401, 403, 404, 429 or 5xx (another 4xx, or a 3xx) | the nightly check completes | T could not be verified, with the cause "Alpaca rejected the read"; it is never read as "not listed" or dead |
-| S-2.17 | N1 | the live trees name at least 303 distinct tickers (the lower bound measured from the repository's captures) | the nightly check completes | every ticker is verified or could not be verified, and the run never sent more than 200 Alpaca requests in any 60 seconds (Alpaca's published limit) |
+| S-2.16 | N6 | Alpaca answers T with a status other than 200, 401, 403, 404, 429 or 5xx (another 4xx, or a 3xx) | the nightly check completes | T is not checked with the reason "Alpaca rejected the request"; it is never read as "not listed" or dead |
 
-Negative coverage: N1 S-2.2, S-2.3, S-2.4, S-2.6, S-2.7, S-2.17 · N2 n/a: nothing is refused; an unclear answer leaves the ticker unverified (S-2.12) · N3 S-2.12, S-2.14 · N4 S-2.10 · N5 S-2.15 · N6 S-2.9, S-2.11, S-2.16 · N7 S-2.13 · N8 n/a: each ticker is read once per run and no edit is held open
+Negative coverage: N1 S-2.2, S-2.3, S-2.4, S-2.6, S-2.7 · N2 n/a: nothing is refused; an unreadable answer leaves the ticker not checked (S-2.12) · N3 S-2.12, S-2.14 · N4 S-2.10 · N5 S-2.15 · N6 S-2.9, S-2.11, S-2.16 · N7 S-2.13 · N8 n/a: each ticker is read once per run and no edit is held open
 Questions: Q-1, Q-2
 
 ### AC-3: The dashboard names each dead ticker in each live symphony
@@ -195,7 +194,7 @@ Rule: When the latest completed check found a dead ticker in a live symphony, th
 | S-3.5 | N1 | dead tickers B and A in symphony Y and C in symphony X | the operator opens `/` | three lines in display-name order, then ticker order: X C, Y A, Y B |
 | S-3.6 | N1 | X's roster name is empty or blank | the operator opens `/` | the line names X by its Composer hash id |
 | S-3.7 | N1 | X listed by two configured accounts, holding T in one of them | the operator opens `/` | one line per dead ticker for X, not one per account; it ends "Held now." |
-| S-3.8 | B | a completed check covers the most recent completed session, judged every symphony, verified every ticker and found no dead ticker | the operator opens `/` | no warning and no notice of this feature appear on the page |
+| S-3.8 | B | the latest check completed within 36 hours, judged every symphony and every ticker, and found no dead ticker | the operator opens `/` | no warning and no notice of this feature appear on the page |
 | S-3.9 | N7 | any stored result | the operator opens `/` | the render makes no Composer and no Alpaca request; it shows the stored result only |
 | S-3.10 | N4 | no session, with the authentication checks enabled | `GET /` is sent | redirect to the login page; the response carries no check result |
 | S-3.11 | N7 | a stored result with dead tickers, and a fleet alert | the operator opens `/` | the fleet banner and the market-state banner are byte-identical to the ref (`templates/index.html:1283-1316`); the header engine label reads as it would with no dead ticker |
@@ -203,41 +202,38 @@ Rule: When the latest completed check found a dead ticker in a live symphony, th
 | S-3.13 | N8 | a check run is in progress and an earlier run completed | the operator opens `/` | the earlier completed run's result is shown; nothing from the run in progress appears |
 
 Negative coverage: N1 S-3.2, S-3.4, S-3.5, S-3.6, S-3.7, S-3.12 · N2 n/a: the page refuses nothing beyond the existing auth gate (S-3.10) · N3 S-3.3 · N4 S-3.10 · N5 covered by AC-7 (S-7.4) · N6 covered by AC-4 · N7 S-3.9, S-3.11 · N8 S-3.13
-Questions: Q-3
+Questions: Q-3, Q-8
 
 ### AC-4: The dashboard says when the check could not judge, never all clear
 Requirement items: R-18, R-25, R-26
-Rule: If the latest run ended without completing, left any live symphony not checked or any ticker unverified, or a session was missed and no later completed check covers it, then the dashboard page `/` shall show a muted notice naming what was not checked or verified and the cause, or which session was last checked and which was missed, and shall keep showing each earlier warning for a symphony or ticker the latest run did not judge or verify, followed by "(from the check at YYYY-MM-DD HH:MM ET)".
+Rule: If the latest run ended without completing, left any live symphony or ticker not checked, or no run has completed within the last 36 hours, then the dashboard page `/` shall show a muted notice naming what was not checked and why, and shall keep showing each earlier warning for a symphony or ticker the latest run did not judge, followed by "(from the check at YYYY-MM-DD HH:MM ET)".
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
-| S-4.1 | B | Composer's score read for symphony Y times out or cannot connect, and every other symphony's tree is read | the run completes and the operator opens `/` | the notice reads "Not checked: Y (Composer unreachable)."; every other symphony is judged and its warnings reflect this run |
-| S-4.22 | N6 | the score read for Y answers 5xx | the run completes | the notice reads "Not checked: Y (Composer unavailable)." |
+| S-4.1 | B | Composer's score read for symphony Y answers 5xx or times out, and every other symphony's tree is read | the run completes and the operator opens `/` | the notice reads "Not checked: Y (Composer unavailable)."; every other symphony is judged and its warnings reflect this run |
 | S-4.2 | N6 | the score read for Y answers 404 | the run completes | the notice reads "Not checked: Y (definition not found)." |
 | S-4.3 | N6 | the score read for Y answers 401 or 403 | the run completes | the notice reads "Not checked: Y (Composer refused the request)." |
 | S-4.4 | N6 | the score read for Y answers 200 with a body that is not a tree | the run completes | the notice reads "Not checked: Y (definition unreadable)." |
-| S-4.5 | N6 | the roster read for one configured account times out or cannot connect, and the other accounts' rosters are read | the run completes | the notice reads "Not checked: symphonies of the {account label} account (Composer unreachable)."; the other accounts' symphonies are judged |
-| S-4.23 | N6 | the roster read for one account answers 5xx | the run completes | the notice reads "Not checked: symphonies of the {account label} account (Composer unavailable)." |
+| S-4.5 | N6 | the roster read for one configured account answers 5xx or times out, and the other accounts' rosters are read | the run completes | the notice reads "Not checked: symphonies of the {account label} account (Composer unavailable)."; the other accounts' symphonies are judged |
 | S-4.6 | N3 | Y had a warning for T from the previous run, and the latest run did not judge Y | the operator opens `/` | the line for Y and T still shows, followed by "(from the check at" and the previous run's time; no Discord message is sent about it |
 | S-4.7 | N6 | the latest run ended without completing because it read no roster or no Alpaca answer | the operator opens `/` | the notice reads "Ticker check unavailable: {reason}. Last completed check YYYY-MM-DD HH:MM ET." (or "No completed check yet." in place of the last sentence when none exists); earlier warnings show as in S-4.6 |
-| S-4.8 | N3 | Alpaca left k tickers of X unanswered (S-2.11) | the operator opens `/` | the notice reads "k tickers in X could not be verified (Alpaca rate limit)." with k the count from that run |
+| S-4.8 | N3 | Alpaca left k tickers of X unanswered (S-2.11) | the operator opens `/` | the notice reads "k tickers in X could not be checked (Alpaca rate limit)." with k the count from that run |
 | S-4.9 | N3 | no check run has ever completed | the operator opens `/` | the notice reads "No ticker check has run yet." |
-| S-4.10 | N3 | session D closed, no completed check covered it before session D+1 opened, and no later check has completed | the operator opens `/` during or after session D+1 | the notice reads "Session YYYY-MM-DD was missed: no check completed before the next open. Last checked session YYYY-MM-DD." with D and the newest covered session; the stored warnings still show |
+| S-4.10 | N3 | the newest completed check finished more than 36 hours before the page is rendered | the operator opens `/` | the notice reads "No ticker check has completed since YYYY-MM-DD HH:MM ET." (Q-4); the stored warnings still show |
 | S-4.11 | N3 | no Composer account is configured | the run ends and the operator opens `/` | no request is sent; the notice reads "Ticker check unavailable: no Composer account configured." |
 | S-4.12 | N1 | the configured accounts' rosters are read and list no symphony | the run completes and the operator opens `/` | no warning and no notice of this feature appear |
 | S-4.13 | N7 | a Composer error answer whose body carries text | the run completes | the notice shows only the fixed reason; no response body, header or exception text appears on the page |
-| S-4.14 | N1 | Friday's session was covered by a completed check, and the operator opens `/` on Saturday, on Sunday or on a market holiday | the page renders | no missed-session notice appears |
-| S-4.24 | N8 | session D closed at 16:00 ET and the night's check has not started yet | the operator opens `/` at 20:00 ET | no missed-session notice appears; D is not missed until session D+1 opens |
-| S-4.15 | N6 | the score read for Y answers a status the read client classes as rejected (a 3xx, which is not followed, a 400, a 422 or another 4xx) | the run completes | the notice reads "Not checked: Y (Composer rejected the read)." |
+| S-4.14 | N1 | runs completed on Friday, Saturday and Sunday nights (AC-10) | the operator opens `/` on Sunday or on a market holiday | no stale notice appears |
+| S-4.15 | N6 | the score read for Y answers a status the read client classes as rejected (a 3xx, which is not followed, a 400, a 422 or another 4xx) | the run completes | the notice reads "Not checked: Y (Composer rejected the request)." |
 | S-4.16 | N1 | a roster entry whose symphony id is not a plain id of letters, digits, "_" and "-" | the run completes | no score request is sent for it; the notice reads "Not checked: Y (symphony id not usable)." |
 | S-4.17 | N4 | the roster read for one account answers 401 or 403 | the run completes | the notice reads "Not checked: symphonies of the {account label} account (Composer refused the request)." |
 | S-4.18 | N6 | the roster read for one account answers 404 | the run completes | the notice reads "Not checked: symphonies of the {account label} account (account not found)." |
-| S-4.19 | N6 | the roster read for one account answers a rejected status (a 3xx, a 400, a 422 or another 4xx) | the run completes | the notice reads "Not checked: symphonies of the {account label} account (Composer rejected the read)." |
+| S-4.19 | N6 | the roster read for one account answers a rejected status (a 3xx, a 400, a 422 or another 4xx) | the run completes | the notice reads "Not checked: symphonies of the {account label} account (Composer rejected the request)." |
 | S-4.20 | N6 | the roster read for one account answers 200 with a body that is not a roster, or the account id is not a plain id | the run completes | the notice reads "Not checked: symphonies of the {account label} account (Composer response unreadable)."; no request is sent for a non-plain account id |
-| S-4.21 | N6 | the roster read for one account answers 429 | the run continues | S-7.6 applies: no further Composer request in the run, so the remaining accounts and symphonies are not checked with the cause "Composer rate limit" |
+| S-4.21 | N6 | the roster read for one account answers 429 | the run continues | S-7.6 applies: no further Composer request in the run, so the remaining accounts and symphonies are not checked with the reason "Composer rate limit" |
 
-Negative coverage: N1 S-4.12, S-4.14, S-4.16 · N2 n/a: nothing is refused; an unreadable source leaves its items not checked · N3 S-4.6, S-4.8, S-4.9, S-4.10, S-4.11 · N4 S-4.17 · N5 covered by AC-7 (S-7.4) · N6 S-4.2, S-4.3, S-4.4, S-4.5, S-4.7, S-4.15, S-4.18, S-4.19, S-4.20, S-4.21, S-4.22, S-4.23 · N7 S-4.13 · N8 S-4.24
-Questions: none
+Negative coverage: N1 S-4.12, S-4.14, S-4.16 · N2 n/a: nothing is refused; an unreadable source leaves its items not checked · N3 S-4.6, S-4.8, S-4.9, S-4.10, S-4.11 · N4 S-4.17 · N5 covered by AC-7 (S-7.4) · N6 S-4.2, S-4.3, S-4.4, S-4.5, S-4.7, S-4.15, S-4.18, S-4.19, S-4.20, S-4.21 · N7 S-4.13 · N8 covered by AC-3 (S-3.13)
+Questions: Q-4, Q-8
 
 ### AC-5: One Discord message per newly found dead ticker
 Requirement items: R-1, R-6, R-11, R-12, R-13, R-14, R-20, R-28, R-33
@@ -270,7 +266,7 @@ Rule: When a completed check judges a symphony and finds that a ticker it warned
 | S-6.1 | B | a warning for (X, T), and Alpaca now reports T active and tradable | the next run completes and the operator opens `/` | no line for (X, T) |
 | S-6.2 | B | a warning for (X, T), and the operator has removed every use of T from X's tree | the next run completes and the operator opens `/` | no line for (X, T) |
 | S-6.3 | N6 | a warning for (X, T), and the next run could not read X's tree | the run completes | the line for (X, T) stays, with the earlier run's time (S-4.6) |
-| S-6.4 | N6 | a warning for (X, T), and the next run could not verify T | the run completes | the line for (X, T) stays, with the earlier run's time |
+| S-6.4 | N6 | a warning for (X, T), and the next run could not read T's Alpaca answer | the run completes | the line for (X, T) stays, with the earlier run's time |
 | S-6.5 | N1 | a warning for (X, T), and X no longer appears on any configured account's roster | the next run completes, every roster read | no line for X |
 | S-6.6 | N1 | T dead in X and Y, and T removed from X's tree only | the next run completes | the line for (Y, T) stays and the line for (X, T) goes |
 | S-6.7 | N7 | (X, T) clears | the run completes | no Discord message is sent for the clearing (NB-7) |
@@ -280,27 +276,25 @@ Questions: none
 
 ### AC-7: The check reads Composer only off-hours and alone, and leaves no partial result
 Requirement items: R-21, R-30, R-31, R-32, R-40, R-44
-Rule: If the market is open, a check run is already in progress, or another Composer job is running (the 03:30 incubation tick, the 03:45 tenure review and retirement run, their Run-now forms, or the Monday weekly suggestions job), then the check shall make no Composer request, waiting while that holds and, if the market opens first, skipping and saying so on the dashboard; and a run that ends early shall leave the previous completed result in place and post nothing from its unfinished part.
+Rule: If the market is open, a check run is already in progress, or an in-process off-hours Composer reader (the 03:30 incubation tick, the tenure review or the retirement run) is making Composer requests, then the check shall make no Composer request, and a run that ends early shall leave the previous completed result in place and post nothing from its unfinished part.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
 | S-7.1 | B | removed: moved to S-10.1 under AC-10, which owns the schedule | none | none |
-| S-7.12 | B | no market session is open, no other check run is in progress and no other Composer job is running | a run starts | the run makes its Composer reads and completes |
+| S-7.12 | B | no market session is open, no other check run is in progress and no in-process off-hours Composer reader is running | a run starts | the run makes its Composer reads and completes |
 | S-7.2 | N2 | `market_calendar.get_market_state` reads "open" when a run would start | the run would start | no Composer request is made; the run is stored as "skipped: market open"; the previous result stays shown |
-| S-7.3 | N2 | the market opens while a run is in progress | the run continues | no Composer request after the open; each symphony not yet read is not checked with the cause "market opened" |
+| S-7.3 | N2 | the market opens while a run is in progress | the run continues | no Composer request after the open; each symphony not yet read is not checked with the reason "market opened" |
 | S-7.4 | N5 | a run is in progress | a second start of the check is triggered | no second run starts and the second start writes nothing |
-| S-7.5 | N5 | the 03:30 incubation tick or the 03:45 tenure review and retirement run is making Composer requests | the check is due | the check makes no Composer request until that job has ended; if the market opens first, the run ends with every unread symphony not checked with the cause "another Composer job was running" |
-| S-7.13 | N5 | the operator starts the retirement Run now or the tenure review Run now while the check is reading Composer | the Run now runs | the check makes no Composer request until the Run now has ended, then resumes; the Run now route answers as at the ref |
-| S-7.14 | N5 | the Monday weekly suggestions job, a separate process, is running | the check is due | the check makes no Composer request until that job has ended, as in S-7.5 |
-| S-7.6 | N6 | Composer answers 429 to any request of the check | the run continues | no further Composer request in that run; each symphony not yet read is not checked with the cause "Composer rate limit" |
+| S-7.5 | N5 | the 03:30 incubation tick, the tenure review or the retirement run is making Composer requests | the check is due | the check makes no Composer request until that run has ended (Q-7) |
+| S-7.6 | N6 | Composer answers 429 to any request of the check | the run continues | no further Composer request in that run; each symphony not yet read is not checked with the reason "Composer rate limit" |
 | S-7.7 | N8 | the daemon stops while a run is in progress | the daemon restarts and the operator opens `/` | `/` shows the previous completed result and no line from the stopped run; no Discord message was sent for the stopped run's findings; the catch-up rule of AC-10 (S-10.4) decides the next run |
 | S-7.8 | N7 | market hours | each minute passes | the engine is spawned at each `:00` as at the ref; the check makes no request |
 | S-7.9 | N7 | the scheduler's slots at the ref (02:00, 03:00, 03:30, 03:45, 04:15, 04:30, `app.py:3090-3107`) | a day passes | each runs at its time as at the ref |
 | S-7.10 | N6 | the check raises an unexpected error | the run ends | the scheduler keeps running; the run is stored as failed with the exception type name only; `/` shows the previous result and the notice "Ticker check failed on YYYY-MM-DD HH:MM ET." |
-| S-7.11 | N1 | a run reading 11 trees | the run completes | no two of the check's Composer requests started less than 1 second apart (Composer's documented 1 request a second, shared by every Composer reader on the one API key) |
+| S-7.11 | N1 | a run reading 11 trees | the run completes | the check made no more than 10 Composer requests in any 60 seconds (the per-run budget at `advisors/composer_portfolio_client.py:27-34`) |
 
-Negative coverage: N1 S-7.11 · N2 S-7.2, S-7.3 · N3 covered by AC-4 (S-4.9, S-4.10) · N4 n/a: a scheduled job with no caller · N5 S-7.4, S-7.5, S-7.13, S-7.14 · N6 S-7.6, S-7.10 · N7 S-7.8, S-7.9 · N8 S-7.7
-Questions: none
+Negative coverage: N1 S-7.11 · N2 S-7.2, S-7.3 · N3 covered by AC-4 (S-4.9, S-4.10) · N4 n/a: a scheduled job with no caller · N5 S-7.4, S-7.5 · N6 S-7.6, S-7.10 · N7 S-7.8, S-7.9 · N8 S-7.7
+Questions: Q-7
 
 ### AC-8: Protected surfaces stay as they are
 Requirement items: R-19, R-34, R-35, R-40, R-41, R-42, R-44
@@ -330,30 +324,29 @@ Rule: When the check runs, renders or posts, no Alpaca key, Composer key or Disc
 | S-9.1 | B | a run in which the Discord post fails and an Alpaca read fails | the run completes | its log lines carry status codes, fixed reasons and exception type names only; none of the Alpaca key, the Alpaca secret, the Composer key or the webhook URL appears |
 | S-9.2 | N1 | a symphony display name containing an HTML image tag with an `onerror` attribute | the operator opens `/` | the name shows as literal text; no element is created from it |
 | S-9.3 | N1 | a symphony display name containing `@everyone` or a Discord user mention | the message is posted | the message pings no one; the name reads literally |
-| S-9.4 | N1 | a tree ticker containing a slash, a space or `..` | the nightly check completes | no Alpaca request target is formed from it; the notice names that ticker in its symphony as could not be verified, with the cause "ticker form not supported" |
+| S-9.4 | N1 | a tree ticker containing a slash, a space or `..` | the nightly check completes | no Alpaca request target is formed from it; the notice names that ticker in its symphony as not checked with the reason "ticker form not checked" |
 | S-9.5 | N7 | an Alpaca error answer whose body carries text | the run completes | neither the page, the Discord message nor the log carries that body |
 
 Negative coverage: N1 S-9.2, S-9.3, S-9.4 · N2 n/a: nothing is refused beyond S-9.4's not-checked ticker · N3 n/a: the rule judges what is written, not a computed value · N4 covered by AC-3 (S-3.10) · N5 n/a: repetition does not change what is written · N6 S-9.1 · N7 S-9.5 · N8 n/a: no edit exists on these paths
 Questions: none
 
-### AC-10: Each completed session is checked before the next open, with a catch-up after downtime
+### AC-10: The check runs every night and catches up a missed night
 Requirement items: R-10, R-21, R-44
-Rule: When the nightly start time arrives or the daemon starts while the market is closed, and no completed check covers the most recent completed session, the check shall start one run, subject to AC-7, so that whenever the daemon runs while the market is closed between a session's close and the next open, a completed check covers that session before the open.
+Rule: When the nightly start time arrives, or the daemon starts outside market hours and no run has completed since the most recent session close, the check shall start one run, so that whenever the daemon runs outside market hours between a session's close and the next open, a run completes in that interval.
 
 | ID | Kind | Given | When | Then |
 |---|---|---|---|---|
 | S-10.1 | B | Alpaca marks T inactive during session D, T is in a live tree, and the daemon runs from D's close to D+1's open | session D+1 opens | the warning for T is on `/` and its Discord message has been posted |
-| S-10.2 | N1 | Friday's session is covered by a completed check | the nightly start time arrives on Saturday, on Sunday or on a market holiday | no run starts and no Composer request is made |
-| S-10.3 | N6 | the daemon was down at the nightly start time and starts at 06:00 ET on a trading day, with no completed check covering the previous session | the daemon starts | one catch-up run starts and completes before the 09:30 open |
-| S-10.4 | N8 | the daemon stopped mid-run (S-7.7) and restarts while the market is closed | the daemon starts | one catch-up run starts, because no completed check covers the most recent completed session |
-| S-10.5 | N5 | a completed check covers the most recent completed session | the daemon restarts while the market is closed | no catch-up run starts |
-| S-10.6 | N2 | the daemon starts during market hours with no completed check covering the previous session | the daemon starts | no run starts and no Composer request is made; the dashboard shows the missed-session notice of S-4.10 |
+| S-10.2 | N1 | a Saturday, a Sunday or an NYSE holiday | the nightly start time arrives | a run starts and completes as on a trading day |
+| S-10.3 | N6 | the daemon was down at the nightly start time and starts at 06:00 ET on a trading day, with no run completed since the previous close | the daemon starts | one catch-up run starts and completes before the 09:30 open |
+| S-10.4 | N8 | the daemon stopped mid-run (S-7.7) and restarts outside market hours | the daemon starts | one catch-up run starts, because no run completed since the most recent close |
+| S-10.5 | N5 | a run has completed since the most recent session close | the daemon restarts outside market hours | no catch-up run starts |
+| S-10.6 | N2 | the daemon starts during market hours with no run completed since the previous close | the daemon starts | no run starts and no Composer request is made; the next run is the nightly one; the stale notice applies once 36 hours pass (S-4.10) |
 | S-10.7 | N5 | a catch-up run is in progress when the nightly start time arrives | the nightly start time arrives | no second run starts (S-7.4) |
 | S-10.8 | N1 | the host clock in UTC, with Eastern time in its standard and its daylight offset | the nightly start time arrives in each offset | the start falls after that day's session close (13:00 ET on an early-close day) and the run completes before the next open |
-| S-10.9 | N5 | the daemon starts while the market is closed and the 03:30 incubation tick is running | the daemon starts | the catch-up run makes no Composer request until the tick has ended (S-7.5) |
 
-Negative coverage: N1 S-10.2, S-10.8 · N2 S-10.6 · N3 covered by AC-4 (S-4.9, S-4.10) · N4 n/a: a scheduled job with no caller · N5 S-10.5, S-10.7, S-10.9 · N6 S-10.3 · N7 covered by AC-7 (S-7.9) · N8 S-10.4
-Questions: none
+Negative coverage: N1 S-10.2, S-10.8 · N2 S-10.6 · N3 covered by AC-4 (S-4.9, S-4.10) · N4 n/a: a scheduled job with no caller · N5 S-10.5, S-10.7 · N6 S-10.3 · N7 covered by AC-7 (S-7.9) · N8 S-10.4
+Questions: Q-4
 
 ## Rule-by-Entry-Point Matrix
 
@@ -364,9 +357,8 @@ Questions: none
 | AC-6 a warning clears only on a judged fix | S-6.3 | S-6.3 | S-6.1 | S-6.7 | n/a: no log line is required for a clearing |
 | AC-7 no Composer request while the market is open | S-7.2 | S-7.3 | n/a: the page reads only the stored result and makes no request | n/a: posting makes no Composer request | n/a: the log makes no request |
 | AC-7 no second concurrent run | S-7.4 | S-7.4 | n/a: the page starts no run | n/a: posting starts no run | n/a: the log starts no run |
-| AC-7 no Composer request while another Composer job runs | S-7.5 | S-10.9 | n/a: the page starts no run | n/a: posting starts no run | n/a: the log starts no run |
 | AC-9 names and credentials only as plain text | S-9.4 | S-9.4 | S-9.2 | S-9.3 | S-9.1 |
-| AC-10 a missed session is caught up while the market is closed | S-10.2 | S-10.3 | n/a: the page starts no run | n/a: posting starts no run | n/a: the log starts no run |
+| AC-10 a missed night is caught up outside market hours | S-10.2 | S-10.3 | n/a: the page starts no run | n/a: posting starts no run | n/a: the log starts no run |
 
 ## Not Building
 Non-goals:
@@ -428,14 +420,13 @@ The run posted one Discord message naming Example Copper Rotation, `AbCdEf012345
 Failure case: on the following night every Alpaca request times out. The page shows the muted notice "Ticker check unavailable: Alpaca unreachable. Last completed check 2026-11-16 23:12 ET." and keeps the QXGD line followed by "(from the check at 2026-11-16 23:12 ET)"; no Discord message is posted and no warning clears (S-2.9, S-4.6, S-4.7, S-6.4).
 
 ## Fail-Closed Behaviour
-Every input the check cannot judge leaves its symphony not checked or its ticker unverified, never healthy and never dead:
-- Alpaca unreachable, refused, rate limited, unavailable, rejected or unreadable: the ticker could not be verified, or the run ends without completing, with a fixed cause (S-2.9, S-2.10, S-2.11, S-2.12, S-2.14, S-2.16); only a not-found answer reads "not listed" (S-2.4); earlier warnings stay (S-4.6, S-6.4).
+Every input the check cannot judge leaves its item not checked, never healthy:
+- Alpaca unreachable, refused, rate limited, unavailable, rejected or unreadable: the ticker or the run is not checked with a fixed reason (S-2.9, S-2.10, S-2.11, S-2.12, S-2.14, S-2.16); only a not-found answer reads "not listed" (S-2.4); earlier warnings stay (S-4.6, S-6.4).
 - Composer roster or score read refused, not found, rate limited, unavailable, rejected or unreadable, or an id that is not a plain id: the account or symphony is not checked with one fixed reason per class (score: S-4.1, S-4.2, S-4.3, S-4.4, S-4.15, S-4.16, S-7.6; roster: S-4.5, S-4.17, S-4.18, S-4.19, S-4.20, S-4.21); earlier warnings stay (S-6.3).
-- A tree of another asset class: not checked (S-1.10); a ticker that is not a plain symbol: could not be verified (S-9.4).
+- A tree of another asset class, or a ticker that is not a plain symbol: not checked (S-1.10, S-9.4).
 - The market open: no Composer request; the run is stored as skipped (S-7.2, S-7.3).
 - A second start while a run is in progress: refused, nothing written (S-7.4, S-10.7).
 - A daemon start during market hours: no catch-up run (S-10.6).
-- Another Composer job running: no Composer request until it ends; skipped with its cause if the market opens first (S-7.5, S-7.13, S-7.14, S-10.9).
 The existing read client classes failures as refused, not found, rate limited, unavailable, rejected and unreadable (`advisors/composer_portfolio_client.py:86-96`, `:114-148`); each maps to one fixed reason above.
 
 ## Authorities Touched
@@ -468,7 +459,7 @@ none: no consumer-facing route, body, configuration or stored data changes meani
 - Authorization: the warning renders behind the existing dashboard auth gate (S-3.10); the check adds no route and no POST, so CSRF does not apply.
 - Data exposure: no credential, response body or exception message reaches a log, the page or Discord (S-4.13, S-9.1, S-9.5).
 - Client-side rendering: server-rendered text through the template's autoescape; no client script builds markup from the result (S-9.2).
-- Abuse and rate limits: Composer requests stay off-hours, paced and stopped on the first 429 (S-7.2, S-7.6, S-7.11, S-10.6); Alpaca failures leave tickers unverified (S-2.11, S-2.16) and Alpaca requests stay within 200 a minute (S-2.17); Discord mentions are disabled (S-9.3).
+- Abuse and rate limits: Composer requests stay off-hours, paced and stopped on the first 429 (S-7.2, S-7.6, S-7.11, S-10.6); Alpaca failures leave items not checked (S-2.11, S-2.16); Discord mentions are disabled (S-9.3).
 These match the Sensitive header: security for the new use of the Alpaca keys and the webhook URL (AC-9).
 
 ## Prerequisites
@@ -491,15 +482,15 @@ No design system is declared; the dashboard's own styling conventions in `templa
 | AC | Scenarios | Test level | Real-entrypoint test |
 |---|---|---|---|
 | AC-1 | S-1.1, S-1.2, S-1.3, S-1.4, S-1.5, S-1.6, S-1.7, S-1.8, S-1.9, S-1.10, S-1.11 | unit over captured trees, plus the scheduled entry | the check run started through its scheduler entry with Composer and Alpaca at the HTTP seam |
-| AC-2 | S-2.1, S-2.2, S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.10, S-2.11, S-2.12, S-2.13, S-2.14, S-2.15, S-2.16, S-2.17 | unit over captured Alpaca answers, plus the scheduled entry | as AC-1 |
+| AC-2 | S-2.1, S-2.2, S-2.3, S-2.4, S-2.5, S-2.6, S-2.7, S-2.8, S-2.9, S-2.10, S-2.11, S-2.12, S-2.13, S-2.14, S-2.15, S-2.16 | unit over captured Alpaca answers, plus the scheduled entry | as AC-1 |
 | AC-3 | S-3.1, S-3.2, S-3.3, S-3.4, S-3.5, S-3.6, S-3.7, S-3.8, S-3.9, S-3.10, S-3.11, S-3.12, S-3.13 | route test of `GET /` | `GET /` through the Flask test client with auth on for S-3.10 |
-| AC-4 | S-4.1, S-4.2, S-4.3, S-4.4, S-4.5, S-4.6, S-4.7, S-4.8, S-4.9, S-4.10, S-4.11, S-4.12, S-4.13, S-4.14, S-4.15, S-4.16, S-4.17, S-4.18, S-4.19, S-4.20, S-4.21, S-4.22, S-4.23, S-4.24 | route test of `GET /` over stored results from real runs | as AC-3 |
+| AC-4 | S-4.1, S-4.2, S-4.3, S-4.4, S-4.5, S-4.6, S-4.7, S-4.8, S-4.9, S-4.10, S-4.11, S-4.12, S-4.13, S-4.14, S-4.15, S-4.16, S-4.17, S-4.18, S-4.19, S-4.20, S-4.21 | route test of `GET /` over stored results from real runs | as AC-3 |
 | AC-5 | S-5.1, S-5.2, S-5.3, S-5.4, S-5.5, S-5.6, S-5.7, S-5.8, S-5.9, S-5.10, S-5.11, S-5.12 | unit with the webhook at the HTTP seam, plus the scheduled entry | as AC-1, asserting the posted payloads |
 | AC-6 | S-6.1, S-6.2, S-6.3, S-6.4, S-6.5, S-6.6, S-6.7 | two consecutive runs, then `GET /` | as AC-1 then AC-3 |
-| AC-7 | S-7.2, S-7.3, S-7.4, S-7.5, S-7.6, S-7.7, S-7.8, S-7.9, S-7.10, S-7.11, S-7.12, S-7.13, S-7.14 | scheduler and run tests with a fixed Eastern clock | the scheduler registration and the run entry |
+| AC-7 | S-7.2, S-7.3, S-7.4, S-7.5, S-7.6, S-7.7, S-7.8, S-7.9, S-7.10, S-7.11, S-7.12 | scheduler and run tests with a fixed Eastern clock | the scheduler registration and the run entry |
 | AC-8 | S-8.1, S-8.2, S-8.3, S-8.4, S-8.5, S-8.6, S-8.7, S-8.8, S-8.9 | source scans, the engine pin test, the migration test | the extended no-trade scans |
 | AC-9 | S-9.1, S-9.2, S-9.3, S-9.4, S-9.5 | log capture, route render, payload assertion | as AC-1 and AC-3 |
-| AC-10 | S-10.1, S-10.2, S-10.3, S-10.4, S-10.5, S-10.6, S-10.7, S-10.8, S-10.9 | scheduler and daemon-start tests with a fixed Eastern clock | the scheduler registration and the daemon-start path |
+| AC-10 | S-10.1, S-10.2, S-10.3, S-10.4, S-10.5, S-10.6, S-10.7, S-10.8 | scheduler and daemon-start tests with a fixed Eastern clock | the scheduler registration and the daemon-start path |
 
 Gates: `ruff format --check`, `ruff check`, a scoped pytest run of the touched test folders (never `-n auto` and never more than 4 workers), CI green on the exact SHA, and the PM's live functional check after the PR review: on the droplet, after one nightly run, `/` shows a line for each live symphony whose tree names a ticker Alpaca reports inactive or not tradable, each line checked by hand against Alpaca's asset record, and one Discord message for each.
 
@@ -511,13 +502,13 @@ Fixture provenance: Composer score bodies captured from the producer (the comple
 - One Discord message per pair over those runs, read in the channel.
 
 ## Known-Unconfirmed and Standing Risk
-- Distinct judged tickers: at least 303 in the repository's captures (the 11 trimmed real trees plus the complete case4 capture, placeholders excluded, legacy operands included), and the roster capture `tests/fixtures/composer/symphony_stats_meta.json` lists 338 distinct symbols in its per-symphony `tickers` field. The live total is higher than the trimmed count; how it sits under Alpaca's request limit (200 a minute in Alpaca's public documentation) depends on the read shape the approach picks; the spec fixes only the limit (S-2.17). Read-only query for the live total: pull each live symphony's score body and count the distinct judged tickers.
+- Distinct judged tickers: at least 303 in the repository's captures (the 11 trimmed real trees plus the complete case4 capture, placeholders excluded, legacy operands included), and the roster capture `tests/fixtures/composer/symphony_stats_meta.json` lists 338 distinct symbols in its per-symphony `tickers` field. The live total is higher than the trimmed count; how it sits under Alpaca's request limit (200 a minute in Alpaca's public documentation) depends on the read shape the approach picks. Read-only query for the live total: pull each live symphony's score body and count the distinct judged tickers.
 - The roster's per-symphony `tickers` field lists symbols in Composer's `EQUITIES::SYMBOL//USD` form; whether it lists every condition operand of the tree is unconfirmed, so it is not the authority for AC-1 (the score tree is).
 - Whether Composer writes any ticker in a form Alpaca writes differently (share classes) is unconfirmed; the complete capture and the trimmed trees hold only plain uppercase symbols of 1 to 6 letters. Read-only query: list the judged tickers that contain a character other than a letter. S-9.4 reports such a ticker as not checked rather than dead.
 - A ticker Composer supports and Alpaca does not list would read dead under Q-2's default. Read-only query: compare the judged tickers against Alpaca's full asset list once.
 - The roster entry's `holdings` shape is taken from the engine's reader (`alpha_bot_execution.py:920-927`) and from `tests/fixtures/composer/symphony_stats_meta.json`, whose provenance is unrecorded (Definition of Done).
 - The PM's live read of 2026-11-16 counted 25 SHNY asset nodes and one SHNY condition in each of the two trees; the July trimmed captures of the same ids show 25 and 1, and 50 and 2. Trees change, so tests derive counts from their fixtures and never hardcode them.
-- Composer's 1 request a second is taken from the PM's ruling that every Composer read from the droplet shares one limit on one API key; the read client's comment budgets 25 a minute for its portfolio endpoints (`advisors/composer_portfolio_client.py:27-34`), and the per-endpoint limits are not documented in the repository. The account refresh every minute at all hours (`app.py:3085-3089`) is accepted background load. The weekly suggestions job runs in a separate process on a systemd timer (Mondays 04:00 ET, `docs/DEPLOYMENT.md:363`), so the check must learn that it is running from outside its own process (S-7.14).
+- Composer readers the check cannot wait for: an operator-started tenure review or retirement Run now during the check's run, the weekly suggestions job (a separate process on a systemd timer, Mondays 04:00 ET, `docs/DEPLOYMENT.md:363`) and the account refresh every minute at all hours (`app.py:3085-3089`). The client comment budgets 25 a minute for its portfolio endpoints (`advisors/composer_portfolio_client.py:27-34`); whether `/score`, `/backtest` and the portfolio reads share one limit is not documented. The first 429 stops the check's requests (S-7.6). Q-7.
 - A daily slot whose time passes while the daemon is down is not re-run by the scheduler (`app.py:3090-3107` registers daily slots only); AC-10's catch-up start covers this check only.
 - The tenure review runner reads a `logic_holdings` state key (`advisors/tenure_review_runner.py:130-133`) that no module in the repository writes; the engine writes `current_holdings` (`alpha_bot_execution.py:920-927`). Outside this plan's scope; reported to the PM as a sibling finding (Follow-Ups).
 - Alpaca's paper host is assumed to serve the same asset status as the live host for this purpose (`DECISIONS.md:1807` records that the keys are paper keys).
@@ -530,11 +521,11 @@ Fixture provenance: Composer score bodies captured from the producer (the comple
 | Q-1 | What counts as "no price data" for a ticker Alpaca lists as active and tradable? | AC-2 | Nothing: that is price staleness, which intake answer 6 excludes; "no price data" is covered by "not listed at Alpaca" | |
 | Q-2 | Is a ticker Alpaca does not list at all reported as dead? | AC-2, AC-3 | Yes, with its own reason "not listed at Alpaca", so the operator can tell it from an inactive ticker | |
 | Q-3 | Should a dead ticker also turn the header engine label "Degraded" or add a `/health` degraded reason? | AC-3, AC-8 | No: both report the engine's health, a degraded reason outranks Live and Closed in the header (`static/chrome.js:373-375`), and an unfixed tree would hide the engine's real state for days; the dashboard warning and Discord carry it | |
-| Q-4 | removed: ruled by the PM as D-8 [PM-ASSUMED] | none | none | |
-| Q-5 | Should an unavailable or partial check post to Discord? | AC-5 | No; the dashboard notice states it, and the missed-session notice appears once a session is missed | |
+| Q-4 | After how long without a completed run does the dashboard say the check is stale? | AC-4, AC-10 | 36 hours; the check runs every calendar night (S-10.2), so weekends and holidays never read stale and one missed night does not either | |
+| Q-5 | Should an unavailable or partial check post to Discord? | AC-5 | No; the dashboard notice states it, and the stale notice appears after 36 hours | |
 | Q-6 | If the daemon stops after Discord accepted a message and before it was recorded, is one repeat acceptable? | AC-5 | Yes: a repeated message is preferred over a lost one | |
-| Q-7 | removed: ruled by the PM as D-9 [PM-ASSUMED] | none | none | |
-| Q-8 | removed: ruled by the PM as D-10 [PM-ASSUMED] | none | none | |
+| Q-7 | Which Composer readers does the check wait for? | AC-7 | The in-process off-hours readers it can see (the 03:30 incubation tick, the tenure review and the retirement run); an operator-started Run now, the out-of-process weekly suggestions job and the minute account refresh are neither blocked nor waited for, and the check stops on the first 429 and reports the rest not checked | |
+| Q-8 | Do T-1 and T-2 describe how you use the dashboard for this? No confirmed dashboard workflow file exists | AC-3, AC-4 | Yes, as written | |
 
 ## Decisions
 
@@ -545,13 +536,8 @@ Fixture provenance: Composer score bodies captured from the producer (the comple
 | D-3 | Node use is reported as two counts, asset nodes and conditions | A condition-only ticker has no asset node; one count would hide it |
 | D-4 | An announcement is keyed by the Composer hash id and the ticker | A rename must not re-announce (S-5.10); hash and display name do not join |
 | D-5 | Sensitive is marked security for AC-9 | The project's marking covers credentials, and the check is a new sender of two |
-| D-6 | A run "ends" for any stop; a check "completed" when every live symphony was judged or reported not checked with its cause and Alpaca answered; checked times and staleness count completed checks [PM-ASSUMED] | PM ruling 4: one word for two states let a night where everything failed reset the stale clock |
-| D-7 | The promise is that each completed session is checked before the next open; the check runs at the nightly start time or at a daemon start while the market is closed, when no completed check covers the latest completed session; if the open arrives first, the dashboard names the last checked session and the missed one [PM-ASSUMED] | PM ruling 2: the scheduler never re-runs a missed slot (`app.py:3090-3107`), so a restart or downtime would otherwise lose a session silently |
-| D-8 | Staleness is counted in trading sessions: the notice appears only when a session was missed and no later completed check covers it; weekends and holidays never produce it [PM-ASSUMED] | PM ruling 1: an hour count reads stale every weekend |
-| D-9 | Every Composer read from the droplet shares one limit on one API key; the check runs only while the market is closed, never overlaps the 03:30 incubation tick, the 03:45 tenure review and retirement run, their Run-now forms or the Monday weekly suggestions job, waits or skips and says so, and paces itself to 1 Composer request a second; the minute account refresh is accepted background load [PM-ASSUMED] | PM ruling on the auditor's question 9 |
-| D-10 | No confirmed dashboard workflow file exists; T-1 and T-2 stand as the spec writer's draft, marked as such [PM-ASSUMED] | PM ruling on the auditor's question 10 |
-| D-11 | Failure wording is by cause, one scenario each: Composer unreachable, Composer unavailable, Composer rate limit, Composer rejected the read (redirect, 400, 422), Composer refused the request; an Alpaca answer that is neither clearly tradable nor clearly inactive or not tradable leaves the ticker "could not be verified", never dead [PM-ASSUMED] | PM ruling 3 |
-| D-12 | Alpaca request count, batching and pacing are Gate-2 choices; the spec fixes the outcome and the limits: at least 303 distinct tickers and 200 Alpaca requests a minute [PM-ASSUMED] | PM ruling 7 |
+| D-6 | A run "ends" for any stop and "completes" only after reading a roster and at least one Alpaca answer; checked times and staleness count completed runs | One word for two states let a night where everything failed reset the stale clock |
+| D-7 | The check runs every calendar night and catches up at a daemon start outside market hours | The scheduler never re-runs a missed slot, and a per-session cadence would read stale every weekend |
 
 ## Docs to Update
 - `docs/generated/`: one file per touched module, including the check's module and `app.py`'s scheduler and dashboard sections.
