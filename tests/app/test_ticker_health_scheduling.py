@@ -71,6 +71,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+import requests
 from bs4 import BeautifulSoup
 
 import app as app_module
@@ -803,6 +804,46 @@ class TestOneRunAtATime:
         need("_run_ticker_health_tick")()
 
         assert len(run_records()) == 2
+
+    def test_the_lock_is_held_through_the_discord_phase_of_a_run(
+        self, world, monkeypatch, tmp_path
+    ):
+        isolate_env(
+            monkeypatch,
+            tmp_path,
+            ACCOUNT_ROTH=ACCOUNT,
+            ALPACA_KEY=t.ALPACA_KEY,
+            ALPACA_SECRET=t.ALPACA_SECRET,
+            DISCORD_WEBHOOK_URL=t.WEBHOOK_URL,
+        )
+        set_clocks(monkeypatch, world, NIGHT)
+        entered, release = threading.Event(), threading.Event()
+        real_post = requests.post
+
+        def held_post(url, **kwargs):
+            response = real_post(url, **kwargs)
+            entered.set()
+            release.wait(timeout=WAIT_S)
+            return response
+
+        monkeypatch.setattr(requests, "post", held_post)
+        first = start_run("nightly")
+        assert entered.wait(timeout=10), "the run never reached its Discord post"
+        rows_before = len(run_records())
+        requests_before = len(world.requests)
+        jb.install_inline_threads(monkeypatch)
+
+        need("_run_ticker_health_tick")()
+        need("_start_ticker_health_catch_up")()
+        during = len(world.requests) - requests_before
+        release.set()
+        first.join(timeout=WAIT_S)
+
+        assert rows_before == 1, "test premise: the run row is stored before the posts"
+        assert not first.is_alive()
+        assert during == 0, "a start made requests while the first run was still posting"
+        assert len(run_records()) == 1
+        assert len(world.discord_posts()) == 1
 
 
 # ---------------------------------------------------------------------------

@@ -61,8 +61,11 @@ Requests
   once per run, a 0.5 second ``time.sleep`` after every attempt, at most 2 attempts on 429, 5xx
   and a transport error (the wait between attempts is an integer ``Retry-After`` clamped to
   0..30 else 2), no retry on 401, 403, 404 or another status. The first 401 or 403 stops every
-  further Alpaca request. Five consecutive tickers ending unreachable or unavailable (429 does
-  not count) stop the rest, which read the last reason. One ``timing_log.emit("alpaca", "GET",
+  further Alpaca request. Five consecutive tickers ending unreachable, unavailable or rate
+  limited stop the rest, which read the last reason; the seconds one run spends waiting between
+  attempts are capped by one budget (120), after which the rest read "Alpaca rate limit"; the
+  market gate applies before every Alpaca attempt (the rest read "market opened"). One
+  ``timing_log.emit("alpaca", "GET",
   "/v2/assets", status=..., ms=...)`` per attempt, never carrying the symbol.
 - Discord: ``requests.post(webhook_url, json={"content": text, "allowed_mentions": {"parse":
   []}}, timeout=10, allow_redirects=False)``, ``time.sleep(1.5)`` between messages, only after a
@@ -103,6 +106,7 @@ import pytest
 import requests
 
 import database
+from advisors import ticker_health as th
 from advisors import ticker_health_runner as runner
 from tests.advisors import _composer_http_router as h
 from tests.advisors import _ticker_health_http_router as t
@@ -708,7 +712,7 @@ def test_five_consecutive_failed_tickers_stop_the_rest_of_the_alpaca_reads(route
     ]
 
 
-def test_a_rate_limited_answer_does_not_count_toward_the_failure_streak(router):
+def test_a_rate_limited_answer_counts_toward_the_failure_streak(router):
     roster(router, X)
     router.set_tree(X, t.tree_with(assets=[f"T{i}" for i in range(7)]))
     router.alpaca_by_symbol.clear()
@@ -716,7 +720,9 @@ def test_a_rate_limited_answer_does_not_count_toward_the_failure_streak(router):
     outcome = run_check(router)
     assert outcome.status == "unavailable"
     assert record_of(outcome)["reason"] == "Alpaca rate limit"
-    assert Counter(router.asset_symbols()) == {f"T{i}": ALPACA_ATTEMPTS for i in range(7)}
+    assert Counter(router.asset_symbols()) == {
+        f"T{i}": ALPACA_ATTEMPTS for i in range(ALPACA_STREAK_LIMIT)
+    }
 
 
 def test_an_answer_between_failures_resets_the_streak(router):
@@ -1581,17 +1587,20 @@ def test_run_started_while_the_market_is_open_is_skipped_before_any_request(rout
 
 
 def test_market_that_opens_mid_run_stops_composer_reads_and_names_the_symphonies_left(router):
-    """S-7.3: no Composer request after the open; judged symphonies still count; Alpaca goes on."""
+    """S-7.3: no Composer request after the open; judged symphonies still count. The market
+    gate also applies to Alpaca, so a market open before the first ticker is asked ends the run
+    unavailable with every ticker read "market opened"."""
     ids = [X, Y, t.CORPORATE_CHAOS_ID]
     roster(router, *ids)
     clock = t.FlippingClock(router, t.NIGHT, JUST_AFTER_OPEN, after_requests=3)
-    outcome = completed_run(router, clock=clock)
+    outcome = run_check(router, clock=clock)
+    assert (outcome.status, outcome.completed) == ("unavailable", False)
     rec = record_of(outcome)
+    assert rec["reason"] == "market opened"
     assert len(router.composer_requests()) == 3
     assert router.score_ids() == ids[:2]
-    assert rec["not_checked"]["symphonies"] == [not_checked_symphony(ids[2], "market opened")]
-    assert warning_pairs(rec) == {(X, "SHNY"), (Y, "SHNY")}
-    assert router.asset_symbols() == tickers_of(t.captured_tree())
+    assert router.asset_symbols() == []
+    assert "warnings" not in rec
 
 
 def test_market_that_opens_while_waiting_for_another_job_skips_the_run(router):
@@ -1964,3 +1973,329 @@ def test_the_exit_alert_and_end_of_day_senders_are_unchanged():
     assert hashlib.sha256(raw).hexdigest() == REPORTING_SHA256, (
         "reporting.py changed; stop and ask before re-pinning"
     )
+
+
+# ---------------------------------------------------------------------------
+# A bounded Alpaca phase and a market gate on it
+# ---------------------------------------------------------------------------
+
+# The seconds one run may spend waiting between Alpaca attempts. The value is the PM's ruling;
+# the implementer names the constant. Between 3 and 4 full waits (30 seconds each) fit under it,
+# whichever way a wait that would land exactly on the budget is ruled.
+ALPACA_RETRY_BUDGET_SECONDS = 120
+
+
+def _numbered_tickers(count: int) -> list[str]:
+    return [f"T{i:02d}" for i in range(count)]
+
+
+def _count_entries(rec: dict) -> dict[str, int]:
+    """Not-checked ticker counts of the run's record by reason, summed over symphonies."""
+    found: Counter = Counter()
+    for entry in rec["not_checked"]["tickers"]:
+        found[entry["reason"]] += entry.get("count", 1)
+    return dict(found)
+
+
+class _OpensAfterAssetRequests:
+    """The market reads closed until the router has seen ``after_requests`` Alpaca asset
+    requests, then open: a market that opens during the Alpaca phase."""
+
+    def __init__(self, router, after_requests: int) -> None:
+        self._router = router
+        self._after = after_requests
+
+    def __call__(self) -> datetime:
+        made = len(self._router.asset_requests())
+        return JUST_AFTER_OPEN if made >= self._after else t.NIGHT
+
+
+def test_rate_limited_failed_and_unavailable_tickers_share_one_failure_streak(router):
+    """Five consecutive tickers ending in any failure (429, 5xx, transport) stop the rest, which
+    read the last failure's reason; an answered ticker before them is judged."""
+    roster(router, X)
+    tickers = _numbered_tickers(10)
+    router.set_tree(X, t.tree_with(assets=tickers))
+    router.alpaca_by_symbol.clear()
+    scripted = {
+        tickers[0]: t.healthy_reply(tickers[0]),
+        tickers[1]: alpaca_status(429),
+        tickers[2]: transport_error(),
+        tickers[3]: alpaca_status(503),
+        tickers[4]: alpaca_status(429),
+        tickers[5]: alpaca_status(429),
+    }
+    router.alpaca_default = lambda symbol: scripted[symbol]
+    outcome = completed_run(router, webhook_url=None)
+    assert Counter(router.asset_symbols()) == {
+        tickers[0]: 1,
+        **{symbol: ALPACA_ATTEMPTS for symbol in tickers[1:6]},
+    }
+    assert _count_entries(record_of(outcome)) == {
+        "Alpaca rate limit": 3 + 4,
+        "Alpaca unreachable": 1,
+        "Alpaca unavailable": 1,
+    }
+
+
+def test_an_answer_resets_the_streak_after_rate_limited_tickers(router):
+    roster(router, X)
+    tickers = _numbered_tickers(10)
+    router.set_tree(X, t.tree_with(assets=tickers))
+    router.alpaca_by_symbol.clear()
+    healthy = {tickers[4], tickers[9]}
+    router.alpaca_default = lambda symbol: (
+        t.healthy_reply(symbol) if symbol in healthy else alpaca_status(429)
+    )
+    outcome = completed_run(router, webhook_url=None)
+    assert set(router.asset_symbols()) == set(tickers)
+    assert _count_entries(record_of(outcome)) == {"Alpaca rate limit": 8}
+
+
+def test_the_time_a_run_waits_on_alpaca_retries_is_capped_by_one_budget(router):
+    """Every ticker answers 429 once (Retry-After 30) and then answers. Without a budget the
+    run waits 30 seconds per ticker for every ticker; with it the waits stop under the budget,
+    no ticker after the stop is asked, and each reads "Alpaca rate limit"."""
+    roster(router, X)
+    tickers = _numbered_tickers(12)
+    router.set_tree(X, t.tree_with(assets=tickers))
+    router.alpaca_by_symbol.clear()
+    for symbol in tickers:
+        router.set_alpaca(
+            symbol, [alpaca_status(429, **{"Retry-After": str(RETRY_CAP)}), t.healthy_reply(symbol)]
+        )
+    outcome = completed_run(router, webhook_url=None)
+    rec = record_of(outcome)
+    waited = sum(s for s in router.sleeps if s == RETRY_CAP)
+    assert waited <= ALPACA_RETRY_BUDGET_SECONDS, f"waited {waited} s on Alpaca retries"
+    assert waited >= ALPACA_RETRY_BUDGET_SECONDS - 2 * RETRY_CAP
+    answered = rec["counts"]["tickers_answered"]
+    assert 3 <= answered <= 4
+    assert rec["counts"]["tickers_asked"] == len(tickers)
+    asked = list(dict.fromkeys(router.asset_symbols()))
+    assert asked == tickers[: len(asked)], "tickers are asked in sorted order and stop for good"
+    assert len(asked) < len(tickers)
+    assert _count_entries(rec) == {"Alpaca rate limit": len(tickers) - answered}
+
+
+def test_a_market_that_opens_during_the_alpaca_phase_stops_the_asking(router):
+    roster(router, X)
+    router.set_tree(X, t.tree_with(assets=["AAA", "BBB", "CCC", "SHNY"]))
+    outcome = completed_run(
+        router, clock=_OpensAfterAssetRequests(router, after_requests=3), webhook_url=None
+    )
+    rec = record_of(outcome)
+    assert router.asset_symbols() == ["AAA", "BBB", "CCC"]
+    assert rec["warnings"] == []
+    assert rec["not_checked"]["tickers"] == [
+        {"symphony_id": X, "display_name": name_of(X), "reason": "market opened", "count": 1}
+    ]
+
+
+def test_the_market_gate_applies_before_a_retry_too(router):
+    roster(router, X)
+    router.set_tree(X, t.tree_with(assets=["AAA", "BBB"]))
+    router.alpaca_by_symbol.clear()
+    router.set_alpaca("AAA", alpaca_status(429))
+    router.set_alpaca("BBB", t.healthy_reply("BBB"))
+    run_check(router, clock=_OpensAfterAssetRequests(router, after_requests=1), webhook_url=None)
+    assert router.asset_symbols() == ["AAA"], "an Alpaca request was made while the market is open"
+
+
+# ---------------------------------------------------------------------------
+# A stored warning the reader cannot use
+# ---------------------------------------------------------------------------
+
+
+def _two_symphonies_with_a_dead_ticker(router):
+    roster(router, X, Y)
+    for symphony_id in (X, Y):
+        router.set_tree(symphony_id, t.tree_with(assets=["SHNY", "SPY"]))
+
+
+def _break_a_stored_warning(row_id: int, symphony_id: str, field: str) -> None:
+    """A derived form of a real stored run: the same row with one warning's field removed."""
+    row = next(r for r in rows(RUN_ROLE) if r["id"] == row_id)
+    record = row["raw_response"]
+    for warning in record["warnings"]:
+        if warning["symphony_id"] == symphony_id:
+            del warning[field]
+    conn = database.get_connection()
+    try:
+        conn.execute(
+            "UPDATE advisor_observations SET raw_response = ? WHERE id = ?",
+            (json.dumps(record), row_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _warnings_naming(caplog, row_id: int) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "alphabot.ticker_health"
+        and r.levelno == logging.WARNING
+        and re.search(rf"\b{row_id}\b", r.getMessage())
+    ]
+
+
+@pytest.mark.parametrize("field", ["found_at", "announced"])
+@pytest.mark.parametrize("unread", [False, True], ids=["judged again", "carried unread"])
+def test_a_stored_warning_missing_a_field_is_skipped_with_one_warning_naming_the_row(
+    router, caplog, field, unread
+):
+    _two_symphonies_with_a_dead_ticker(router)
+    first = completed_run(router, webhook_url=None)
+    row_id = next(r["id"] for r in rows(RUN_ROLE) if r["subject_id"] == first.run_id)
+    _break_a_stored_warning(row_id, X, field)
+    if unread:
+        router.set_tree(X, h.error_reply(503))
+    with caplog.at_level(logging.DEBUG):
+        second = run_check(router, start=night(1))
+    assert (second.status, second.completed) == ("completed", True)
+    pairs = warning_pairs(record_of(second))
+    assert (Y, "SHNY") in pairs
+    assert ((X, "SHNY") in pairs) is (not unread)
+    skipped = _warnings_naming(caplog, row_id)
+    assert len(skipped) == 1, skipped
+    for private in (X, Y, "SHNY", field, name_of(X)):
+        assert private not in skipped[0], private
+
+
+def test_a_stored_warning_that_stays_unusable_is_skipped_by_every_later_run(router, caplog):
+    """The broken row stays the newest completed one while later runs do not complete: each
+    later completing run still skips it and never fails on it."""
+    _two_symphonies_with_a_dead_ticker(router)
+    first = completed_run(router, webhook_url=None)
+    row_id = next(r["id"] for r in rows(RUN_ROLE) if r["subject_id"] == first.run_id)
+    _break_a_stored_warning(row_id, X, "found_at")
+    router.alpaca_by_symbol.clear()
+    router.alpaca_default = lambda symbol: transport_error()
+    assert run_check(router, start=night(1)).status == "unavailable"
+    router.alpaca_by_symbol["SHNY"] = t.shny_reply()
+    router.alpaca_default = t.healthy_reply
+    with caplog.at_level(logging.DEBUG):
+        third = run_check(router, start=night(2))
+    assert (third.status, third.completed) == ("completed", True)
+    assert len(_warnings_naming(caplog, row_id)) == 1
+
+
+# ---------------------------------------------------------------------------
+# The end-of-run line comes after Discord and counts the posts
+# ---------------------------------------------------------------------------
+
+
+class _OrderedLog(logging.Handler):
+    """Each record of the check's logger with the number of Discord posts made when it was
+    written."""
+
+    def __init__(self, router) -> None:
+        super().__init__(level=logging.DEBUG)
+        self._router = router
+        self.seen: list[tuple[int, str, int]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.seen.append(
+            (record.levelno, record.getMessage(), len(self._router.of_kind("discord")))
+        )
+
+
+def _run_with_ordered_log(router, **overrides):
+    handler = _OrderedLog(router)
+    logger = logging.getLogger("alphabot.ticker_health")
+    previous = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        outcome = run_check(router, **overrides)
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous)
+    return outcome, handler.seen
+
+
+@pytest.mark.parametrize(
+    ("replies", "webhook", "posted", "failed"),
+    [
+        pytest.param((), t.WEBHOOK_URL, 1, 0, id="one message accepted"),
+        pytest.param((h.error_reply(500),), t.WEBHOOK_URL, 0, 1, id="one message refused"),
+        pytest.param((), None, 0, 0, id="no webhook"),
+    ],
+)
+def test_the_end_line_follows_the_discord_phase_and_counts_the_posts(
+    router, replies, webhook, posted, failed
+):
+    _two_symphonies_with_a_dead_ticker(router)
+    router.set_discord(*replies)
+    outcome, seen = _run_with_ordered_log(router, webhook_url=webhook)
+    info = [(msg, count) for level, msg, count in seen if level == logging.INFO]
+    assert len(info) == 2, info
+    end_message, posts_made_when_written = info[1]
+    assert outcome.status == "completed" and "completed" in end_message
+    assert posts_made_when_written == len(router.of_kind("discord")) == posted + failed
+    assert re.search(rf"\bposted=({posted})\b", end_message), end_message
+    assert re.search(rf"\bfailed=({failed})\b", end_message), end_message
+    assert forbidden_in(end_message) == []
+    assert h.ACCOUNT_ID not in end_message
+
+
+# ---------------------------------------------------------------------------
+# An account with no label is never shown by its Composer id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("labels", "ids", "failing", "shown"),
+    [
+        pytest.param(
+            {h.ACCOUNT_ID: "Roth IRA"},
+            [h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID],
+            h.SECOND_ACCOUNT_ID,
+            "account 2",
+            id="second account has no label",
+        ),
+        pytest.param(
+            {h.ACCOUNT_ID: "", h.SECOND_ACCOUNT_ID: "Individual"},
+            [h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID],
+            h.ACCOUNT_ID,
+            "account 1",
+            id="a blank label",
+        ),
+        pytest.param(
+            {},
+            [h.SECOND_ACCOUNT_ID, h.ACCOUNT_ID],
+            h.ACCOUNT_ID,
+            "account 2",
+            id="no labels, numbered by position",
+        ),
+    ],
+)
+def test_an_account_without_a_label_is_named_by_its_position_never_by_its_id(
+    router, labels, ids, failing, shown
+):
+    roster(router, X)
+    router.statistics_by_account[failing] = h.error_reply(503)
+    outcome = completed_run(router, webhook_url=None, account_ids=ids, account_labels=labels)
+    rec = record_of(outcome)
+    assert [a["label"] for a in rec["not_checked"]["accounts"]] == [shown]
+    stored = json.dumps(rec)
+    notices = " ".join(th.page_view(rec, rec, t.NIGHT)["notices"])
+    for raw in (h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID):
+        assert raw not in stored, "the raw account id is in the stored row"
+        assert raw not in notices, "the raw account id is on the page"
+    assert shown in notices
+
+
+def test_an_unlabeled_account_id_that_is_not_plain_is_still_named_by_position(router):
+    roster(router, X)
+    outcome = completed_run(
+        router,
+        webhook_url=None,
+        account_ids=["../x", h.ACCOUNT_ID],
+        account_labels={h.ACCOUNT_ID: "Roth IRA"},
+    )
+    rec = record_of(outcome)
+    assert [a["label"] for a in rec["not_checked"]["accounts"]] == ["account 1"]
+    assert "../x" not in json.dumps(rec)
