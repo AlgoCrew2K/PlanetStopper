@@ -7,9 +7,11 @@ Run from the repository root, with nothing but tests and feature plans changed s
 It runs each entry point of ``tests/advisors/_slippage_surface_worlds.RUNNERS`` under pytest (the
 suite's own autouse fixtures, the model registry seed and the database isolation, are part of
 the world), once per test, with ``-n0``. Each run writes one entry: every backtest request's
-URL, body form (``json`` or ``data``) and body with ``slippage_percent`` removed and the tree
-ids replaced by the order of their first appearance in the sequence, plus the run's gate
-outcome. The runner then merges the entries into ``request_sequences.json`` beside this file.
+URL, body form (``json`` or ``data``), every body field except the tree and
+``slippage_percent``, and the tree's ticker set and SHA-256 (tree ids replaced by the order of
+their first appearance in the sequence, because the constructors mint uuid4 ids), plus the run's
+gate outcome (``golden_view`` in the worlds module). The runner then merges the entries into
+``request_sequences.json`` beside this file.
 
 It refuses to run when anything outside ``tests/`` and ``feature-plans/`` differs from the ref,
 so the goldens are always the unchanged code's behaviour and never a later build's.
