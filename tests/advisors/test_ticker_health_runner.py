@@ -2359,3 +2359,58 @@ def test_a_wait_check_that_starts_raising_mid_run_names_the_symphonies_left(rout
     warnings = _own_warnings(caplog)
     assert len(warnings) == 1 and "RuntimeError" in warnings[0], warnings
     assert "state unreadable" not in caplog.text
+
+
+class _JumpsAfterTheFirstReading:
+    """The first reading (the run's start) is ``first``; every later one is ``later``: a run that
+    is already past its wait limit at its first Composer gate."""
+
+    def __init__(self, first: datetime, later: datetime) -> None:
+        self._first, self._later, self._calls = first, later, 0
+
+    def __call__(self) -> datetime:
+        self._calls += 1
+        return self._first if self._calls == 1 else self._later
+
+
+@pytest.mark.parametrize(
+    "past_limit", [False, True], ids=["within the wait limit", "past the wait limit"]
+)
+@pytest.mark.parametrize("when", ["first gate", "mid run"])
+def test_a_wait_check_that_raises_stops_at_once_with_its_own_cause(router, when, past_limit):
+    """The stop the raise sets is final: the gate returns at once, so no poll sleep follows it
+    and a run already past the wait limit never rewrites the cause to "another Composer job was
+    running", a cause that did not happen."""
+    ids = [X, Y, t.CORPORATE_CHAOS_ID]
+    roster(router, *ids)
+    late = t.NIGHT + timedelta(seconds=OTHER_READER_LIMIT_SECONDS + 1)
+    if when == "first gate":
+
+        def broken():
+            raise RuntimeError("state unreadable")
+
+        clock = _JumpsAfterTheFirstReading(t.NIGHT, late) if past_limit else None
+    else:
+
+        def broken():
+            if router.of_kind("score"):
+                raise RuntimeError("state unreadable")
+            return False
+
+        clock = t.FlippingClock(router, t.NIGHT, late, after_requests=2) if past_limit else None
+    overrides = {} if clock is None else {"clock": clock}
+
+    outcome = run_check(router, other_reader_running=broken, webhook_url=None, **overrides)
+
+    rec = record_of(outcome)
+    assert POLL_SECONDS not in router.sleeps, "a poll sleep followed the raise"
+    if when == "first gate":
+        assert (outcome.status, rec["reason"]) == ("skipped", CANNOT_TELL)
+        assert router.requests == []
+        assert router.sleeps == []
+    else:
+        assert outcome.status == "completed"
+        assert router.score_ids() == ids[:1]
+        assert rec["not_checked"]["symphonies"] == [
+            not_checked_symphony(i, CANNOT_TELL) for i in ids[1:]
+        ]
