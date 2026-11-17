@@ -333,6 +333,21 @@ functional impact -- the doc content itself is accurate, only the line pointers 
 - **QA-5:** S-1.8 compares the parser with itself.
 - **CR-2:** the 0.5 exit cost is pinned in three test files.
 
+### Dead-ticker check follow-ups (recorded 2026-11-17, `live-tree-ticker-health`, see `DECISIONS.md`)
+- **Dead `#market-state-banner` element:** no script un-hides it (`templates/index.html` market banner, already so at `10bc124c`). The ticker notice's box style copies its computed style.
+- **CR-3:** `run_ticker_health_check`, `_read_rosters`, `_retry_wait`, `_alpaca_attempt`, `_has_text` and `_evaluate` in `advisors/ticker_health_runner.py` have unannotated parameters or returns, and several `advisors/ticker_health.py` functions lack docstrings.
+- **CR-4:** `_post_new_pairs` recovers the pairs of a message by counting newlines in text that `ticker_health.discord_messages` builds; return each message with its pairs instead.
+- **CR-5:** the runner passes the literal 401 to `classify_asset_answer` while `_HTTP_UNAUTHORIZED` exists, and both modules define `_HTTP_OK` and `_HTTP_RATE_LIMIT`.
+- **CR-8:** the 01:30 slot registration in `run_scheduler` sits under the comment that describes the 03:00 lens pipeline slot; give it its own one-line comment above it.
+- **CR-9:** `_retry_wait` is a third private Retry-After parser beside `composer_backtest_client._retry_after_seconds` and `composer_series_client._retry_after_delay`.
+- **C2-F2:** a stored completed record whose `warnings` field has the wrong type (not a list) or whose warning has an unhashable `symphony_id` or `ticker` still fails every later run, and that record stays the newest completed one. Missing fields are tolerated; wrong types are not.
+- **C2-F3:** a catch-up start (no completed check since Friday's close, daemon started near 04:00 ET on a Monday) can overlap the out-of-process weekly suggestions job's Composer calls, which the in-process wait predicate cannot see.
+- **C2-F4:** the same misplaced scheduler comment as CR-8, raised by the pipelines review (the approach placed the slot before the 02:00 line).
+- **Unverified:** whether Alpaca's rate limit is shared between the paper trading host (the check's asset reads) and the data host (the engine's bar reads).
+- **Owed from the first production run:** the real distinct-ticker count across the live trees (`counts.tickers_asked` of the first `TICKER_HEALTH_RUN` row).
+- **`logic_holdings` has no writer:** `advisors/tenure_review_runner.py` (around lines 130 to 133) reads `logic_holdings`, which no module writes.
+- **CI browser job:** the G-SIBLING box proof lives only in `tests/app/test_ticker_health_banners_browser.py` (browser marker), which CI's plain pytest run deselects; add a browser job to CI.
+
 ---
 
 ## Deployment follow-on

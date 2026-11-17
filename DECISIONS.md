@@ -11939,3 +11939,46 @@ Recorded in `feature-plans/BACKLOG.md`: calibrate `SIM_EXIT_FRICTION_PCT`, the c
 ### Reference
 
 `feature-plans/backtest-slippage-calibration.md`.
+
+## live-tree-ticker-health: a nightly check that live symphony trees reference no dead tickers (2026-11-17)
+
+Source: `feature-plans/live-tree-ticker-health.md` and `feature-plans/approach/live-tree-ticker-health.md`. Base `10bc124c`, slice head `f2cf79ce`. `git diff 10bc124c f2cf79ce -- alpha_bot_execution.py math_engine.py` is empty. The plan named no decision id and none was supplied, so the heading carries the plan's slug.
+
+### Defect
+
+Nothing judged whether a ticker in a live Composer tree could still trade. The PM found a dead ticker in a live tree by hand. The only Alpaca asset reader, `advisors/universe_provider.py`, requests active assets on five exchanges and caches them for 7 days, so it cannot answer "within one trading day" and serves other consumers; it is neither read nor changed by the check. `symphony_schema.extract_tickers` misses legacy `lhs-val` and `rhs-val` operand tickers, so the check walks those itself and leaves `extract_tickers` as it was for its other callers.
+
+### Fix
+
+- `advisors/ticker_health.py` (pure) and `advisors/ticker_health_runner.py` (reads Composer rosters and `/score` trees, one Alpaca `GET /v2/assets/{ticker}` per distinct plain ticker on the paper trading host). The judge is Alpaca's status and listing: inactive or not tradable or a 404 is dead; 401, 403, 429, 5xx, an unreadable body and a transport error are not checked and never read as healthy or as a cleared warning. No Composer backtest is run (R-5 excluded, NB-6).
+- One stored `TICKER_HEALTH_RUN` row per run and one `TICKER_HEALTH_ANNOUNCEMENT` row per Discord message, in the existing `advisor_observations` table, no migration. A run completes under D-6 and only completed runs set checked times and staleness. A warning clears when the ticker is judged healthy or its symphony leaves every roster that was fully read, and is carried when not judged (D-4: announcements are keyed by Composer hash id and ticker, so a rename never re-announces).
+- `app.py`: a 01:30 `run_scheduler` slot (D-7: every calendar night; host `Etc/UTC`), a catch-up start at daemon start outside market hours when no completed run ended since the latest close, single-flight through `_TICKER_HEALTH_RUN_LOCK` held across the Discord phase, a wait for the other in-process Composer readers, and `_ticker_health_page_view` feeding `templates/index.html`. `_tenure_review_settings` now shares `_env_file_settings` with the new `_ticker_health_settings`. `composer_portfolio_client.is_plain_id` is the public form of the existing id check.
+- Dashboard `/`: an amber `.ticker-health-warning` and a grey `.ticker-health-notice` (D-1: the header label and `/health` stay engine health). "Held now" reads the roster of the same run, never the engine's frozen holdings (D-2). Node use is two counts, asset nodes and conditions (D-3).
+- Gates as built. Mode: none; the check never reads `LIVE_EXECUTION` or `live_mode` and adds no trade path (NB-22). Market: Composer reads stop when the market is open (a run that made no request is stored `skipped`, a run past its first request marks the rest not checked), and, after review finding F5, every Alpaca attempt also checks the market. Another Composer job: the run waits up to 2700 s, and a wait check that raises stops the run at once with its own cause (review finding CR-10, C2 fix).
+
+### PM rulings carried in the plan
+
+- D-13 (approval of the plan and approach): the scheduler digest pin is re-taken for the slot addition only; the two D-6 corner cases apply literally; real-response fixtures are the PM's captures, committed with provenance.
+- D-14, T-ONCE: each check time prints at most once across the warning and the notice. Clarification: a carried line's own "(from the check at t)" suffix is per-row data, so t may repeat across those suffixes only; the lead's time and every notice time still print once.
+- D-15, G-SIBLING: the warning box matches the fleet banner's computed radius, padding and bottom margin; the notice box matches the market-state banner's radius, padding, bottom margin, font size and weight; asserted as equality with the sibling's computed style; the sibling banners are byte-identical.
+- Review fixes carried through the cycle: pipelines findings F1 to F5 (a total 429 retry budget of 120 s per run, an end log line after Discord with the posted and failed counts, unreadable stored warnings skipped, single-flight across the Discord phase, the market gate on Alpaca); code-review findings CR-1, CR-2 (an account with no label shows as `account {position}`, never the Composer id), CR-6 (every Unicode line boundary in a name becomes one space in Discord text), CR-7 (a failing page view never breaks the page) and CR-10. The ids R1 to R5 named in the dispatch were not found in the plan, the approach, the review file or the review artifacts, so they are not itemized here.
+
+### Tests
+
+Tests under `tests/advisors/test_ticker_health_*.py`, `tests/app/test_ticker_health_*.py`, `tests/app/test_scheduler_survival.py` and `tests/security/test_ticker_health_no_trade_boundary.py`, with real Alpaca and Composer captures under `tests/fixtures/alpaca/assets_captured/` and `tests/fixtures/composer/ticker-health/` (provenance files alongside). The G-SIBLING box proof is `tests/app/test_ticker_health_banners_browser.py`, a browser-marker test that CI's plain pytest run deselects.
+
+### Review
+
+qa PASS at `f2cf79ce`: 20 of 20 injected faults killed, hidden scenarios 8 of 8. code-reviewer PASS and ux-expert PASS at `15ad550c`; pipelines-expert PASS at `21a01480` and earlier heads. Carried advisory, none blocking: CR-3 (missing annotations and docstrings), CR-4 (message pairs recovered by counting newlines in text built by another module), CR-5 (duplicated HTTP status literals), CR-8 (the 01:30 registration sits under the 03:00 lens pipeline comment), CR-9 (a third private Retry-After parser).
+
+### Backlog
+
+Recorded in `feature-plans/BACKLOG.md`: the dead `#market-state-banner` element, CR-3, CR-4, CR-5, CR-8, CR-9, C2-F2, C2-F3, C2-F4, the unverified shared Alpaca rate limit, the real distinct-ticker count owed from the first production run, `advisors/tenure_review_runner.py` reading `logic_holdings` which no module writes, and a CI browser job for the G-SIBLING proof.
+
+### Files changed
+
+`advisors/ticker_health.py`, `advisors/ticker_health_runner.py`, `advisors/composer_portfolio_client.py`, `app.py`, `templates/index.html`; tests and fixtures as above; docs: `docs/generated/advisors_ticker_health.md`, `docs/generated/advisors_ticker_health_runner.md`, `docs/generated/advisors_composer_portfolio_client.md`, `docs/generated/app.md`, `docs/generated/INDEX.md`, `.claude/CLAUDE.md`, `feature-plans/BACKLOG.md`.
+
+### Reference
+
+`feature-plans/live-tree-ticker-health.md`.

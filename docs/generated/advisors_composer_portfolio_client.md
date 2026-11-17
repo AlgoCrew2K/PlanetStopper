@@ -3,7 +3,7 @@
 > Read-only Composer portfolio client for the symphony tenure review: four GET reads, each one request with no retry and no redirect following, paced by a fixed sleep, never raising.
 
 **Source:** `advisors/composer_portfolio_client.py`
-**Last updated:** 2026-11-02
+**Last updated:** 2026-11-17
 
 ## Overview
 
@@ -17,6 +17,8 @@ Every function returns a small result object holding either data or a failure cl
 | `read_symphony_value_series(account_id, symphony_id, spacing_seconds=None)` | `GET /portfolio/accounts/{account}/symphonies/{symphony}` | `SeriesRead(failure, values)`: deposit-adjusted value by UTC date |
 | `read_symphony_definition(symphony_id, spacing_seconds=None)` | `GET /symphonies/{symphony}/score` | `DefinitionRead(failure, body)`: the current decision tree, status kept |
 | `read_daily_holdings(account_id, start, end, spacing_seconds=None)` | account daily holdings, in spans of at most `HOLDINGS_REQUEST_SPAN_DAYS = 30` days | `HoldingsRead(days, failed_spans)`: a rate-limited span ends the reads and it and every later span are listed as `FailedSpan` |
+
+`is_plain_id(identifier) -> bool` is the public form of the id check the client applies before putting an id in a request path; the dead-ticker runner uses it to skip an unusable id without a request.
 
 `COMPOSER_READ_TIMEOUT_SECONDS = 15` bounds each request. `COMPOSER_READ_SPACING_SECONDS = 6.0` is the sleep after every request whether or not it was answered; `is_valid_spacing_seconds` validates an override.
 
